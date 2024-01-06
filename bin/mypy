@@ -1,0 +1,3 @@
+#!/bin/bash
+
+docker compose run --no-deps --rm web mypy --install-types --non-interactive "$@"

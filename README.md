@@ -1,1 +1,1 @@
-# disco-daemon
+# Disco Daemon

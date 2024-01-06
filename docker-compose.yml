@@ -1,0 +1,19 @@
+version: '3'
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: disco/disco-daemon-dev
+    command: pserve development.ini --reload
+    ports:
+      - 6543:6543
+    volumes:
+      - .:/code:cached
+      - /code/disco.egg-info
+    restart: on-failure
+
+networks:
+  default:
+    name: disco_default
