@@ -11,6 +11,7 @@ services:
       - 6543:6543
     volumes:
       - .:/code:cached
+      - ./data:/code/data
       - /code/disco.egg-info
     restart: on-failure
 

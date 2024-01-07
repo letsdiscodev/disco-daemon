@@ -1,5 +1,5 @@
-# Disco DB
-disco.sqlite3
+# Disco Data
+data/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
