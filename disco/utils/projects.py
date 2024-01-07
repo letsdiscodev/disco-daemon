@@ -1,7 +1,7 @@
 import uuid
 
 from sqlalchemy.orm.session import Session as DBSession
-from discso.models import Project
+from disco.models import Project
 
 import logging
 
