@@ -2,33 +2,25 @@ from secrets import token_hex
 
 from sqlalchemy.orm.session import Session as DBSession
 
-from disco.models import AuthenticationToken
+from disco.models import ApiKey
 
 
-def create_auth_token(dbsession: DBSession, name: str) -> AuthenticationToken:
-    token = AuthenticationToken(
+def create_api_key(dbsession: DBSession, name: str) -> ApiKey:
+    api_key = ApiKey(
         id=token_hex(16),
         name=name,
     )
-    dbsession.add(token)
-    return token
+    dbsession.add(api_key)
+    return api_key
 
 
-def get_valid_token_by_id(
-    dbsession: DBSession, token_id: str
-) -> AuthenticationToken | None:
-    # this function is here to eventually handle expired or deleted tokens
-    token = get_auth_token_by_id(dbsession, token_id)
-    if token is None:
+def get_valid_api_key_by_id(dbsession: DBSession, api_key_id: str) -> ApiKey | None:
+    # this function is here to eventually handle expired or deleted API keys
+    api_key = get_api_key_by_id(dbsession, api_key_id)
+    if api_key is None:
         return None
-    return token
+    return api_key
 
 
-def get_auth_token_by_id(
-    dbsession: DBSession, token_id: str
-) -> AuthenticationToken | None:
-    return (
-        dbsession.query(AuthenticationToken)
-        .filter(AuthenticationToken.id == token_id)
-        .first()
-    )
+def get_api_key_by_id(dbsession: DBSession, api_key_id: str) -> ApiKey | None:
+    return dbsession.query(ApiKey).filter(ApiKey.id == api_key_id).first()

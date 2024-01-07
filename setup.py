@@ -25,7 +25,8 @@ setup(
         ],
         "console_scripts": [
             "disco_init=disco.scripts.init:main",
-            "disco_set_domain=disco.scripts.setdomain:main",
+            "disco_set_domain=disco.scripts.set_domain:main",
+            "disco_create_api_key=disco.scripts.create_api_key:main",
         ],
     },
 )

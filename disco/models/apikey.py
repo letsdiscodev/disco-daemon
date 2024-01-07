@@ -6,8 +6,8 @@ from sqlalchemy import Column, DateTime, String, Unicode
 from disco.models.meta import Base
 
 
-class AuthenticationToken(Base):
-    __tablename__ = "auth_tokens"
+class ApiKey(Base):
+    __tablename__ = "api_keys"
 
     id = Column(String(32), default=lambda: token_hex(16), primary_key=True)
     created = Column(DateTime, default=datetime.utcnow)
@@ -17,4 +17,4 @@ class AuthenticationToken(Base):
     log_id = Column(String(32), default=lambda: token_hex(16), nullable=False)
 
     def log(self):
-        return "AUTH_TOKEN_{log_id}".format(log_id=self.log_id)
+        return f"API_KEY_{self.log_id} ({self.name})"
