@@ -40,6 +40,7 @@ def projects_service_post(request):
         name=request.validated["name"],
         github_repo=request.validated["githubRepo"],
     )
+    request.response.status_code = 201
     return dict(
         project=dict(
             id=project.id,
