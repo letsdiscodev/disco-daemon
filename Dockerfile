@@ -1,6 +1,7 @@
 FROM python:3.11.6
 ENV PYTHONUNBUFFERED 0
 RUN apt-get update
+RUN apt-get install -y ssh docker.io
 COPY setup.py /code/
 COPY requirements.txt /code/
 COPY requirements-types.txt /code/

@@ -35,10 +35,12 @@ def projects_service_get(request):
     permission="create_project",
 )
 def projects_service_post(request):
-    project = create_project(
+    project, ssh_key_pub = create_project(
         dbsession=request.dbsession,
         name=request.validated["name"],
         github_repo=request.validated["githubRepo"],
+        domain=request.validated["domain"],
+        by_api_key=request.api_key,
     )
     request.response.status_code = 201
     return dict(
@@ -47,4 +49,5 @@ def projects_service_post(request):
             name=project.name,
             githubRepo=project.github_repo,
         ),
+        sshKeyPub=ssh_key_pub,
     )

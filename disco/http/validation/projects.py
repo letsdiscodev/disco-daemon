@@ -7,3 +7,4 @@ from disco.http.validation.preparers import PREPARERS
 class CreateProjectSchema(Schema):
     name = SchemaNode(String(), preparer=PREPARERS)
     githubRepo = SchemaNode(String(), preparer=PREPARERS)
+    domain = SchemaNode(String(), preparer=PREPARERS)

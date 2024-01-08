@@ -13,7 +13,10 @@ class Project(Base):
     created = Column(DateTime, default=datetime.utcnow)
     updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     name = Column(Unicode(255), nullable=False)
+    domain = Column(Unicode(255), nullable=False)
     github_repo = Column(Unicode(2048), nullable=False)
+    ssh_key_name = Column(Unicode(2048), nullable=False)
+    github_host = Column(Unicode(2048), nullable=False)
 
     def log(self):
         return f"PROJECT_{self.id} ({self.name})"

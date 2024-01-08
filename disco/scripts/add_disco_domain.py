@@ -4,7 +4,7 @@ import sys
 
 from pyramid.paster import setup_logging
 
-from disco.utils.caddy import set_disco_domain
+from disco.utils.caddy import add_disco_domain
 
 
 def usage(argv):
@@ -22,4 +22,4 @@ def main(argv=sys.argv):
     config_uri = argv[1]
     domain = argv[2]
     setup_logging(config_uri)
-    set_disco_domain(domain)
+    add_disco_domain(domain)

@@ -6,6 +6,7 @@ from sqlalchemy.orm import configure_mappers, sessionmaker
 # ``Base.metadata`` prior to any initialization routines.
 from disco.models.apikey import ApiKey  # noqa: F401
 from disco.models.project import Project  # noqa: F401
+from disco.models.deployment import Deployment  # noqa: F401
 
 # Run ``configure_mappers`` after defining all of the models to ensure
 # all relationships can be setup.
