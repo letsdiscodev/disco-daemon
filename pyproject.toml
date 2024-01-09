@@ -1,0 +1,3 @@
+[tool.ruff.lint]
+# Enable the isort rules.
+extend-select = ["I"]

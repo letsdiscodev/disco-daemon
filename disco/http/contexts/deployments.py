@@ -1,7 +1,8 @@
-from pyramid.security import Allow
-from disco.utils.projects import get_project_by_name
-
 import logging
+
+from pyramid.security import Allow
+
+from disco.utils.projects import get_project_by_name
 
 log = logging.getLogger(__name__)
 

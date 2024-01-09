@@ -1,7 +1,7 @@
 from cornice import Service
-from disco.utils.deployments import create_deployment
-from disco.http.contexts.deployments import ListContext
 
+from disco.http.contexts.deployments import ListContext
+from disco.utils.deployments import create_deployment
 
 deployments_service = Service(
     name="deployments_service",

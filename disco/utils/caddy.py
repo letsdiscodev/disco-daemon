@@ -1,4 +1,5 @@
 import requests
+
 from disco.models import Project
 
 HEADERS = {"Accept": "application/json"}
@@ -36,7 +37,7 @@ def add_disco_domain(domain: str) -> bool:
     return response.status_code == 200
 
 
-def add_project_route(project: Project) -> None:
+def add_project_route(project: Project) -> bool:
     url = f"{BASE_URL}/config/apps/http/servers/disco/routes"
     req_body = dict(
         handle=[
@@ -62,8 +63,10 @@ def add_project_route(project: Project) -> None:
     return response.status_code == 200
 
 
-def serve_container(project: Project, container_name: str) -> None:
-    url = f"{BASE_URL}/id/{project.name}"
+def serve_container(
+    project_name: str, project_domain: str, container_name: str
+) -> bool:
+    url = f"{BASE_URL}/id/{project_name}"
     req_body = dict(
         handle=[
             dict(
@@ -80,9 +83,9 @@ def serve_container(project: Project, container_name: str) -> None:
                 ],
             )
         ],
-        match=[dict(host=[project.domain])],
+        match=[dict(host=[project_domain])],
         terminal=True,
     )
-    req_body["@id"] = project.name
+    req_body["@id"] = project_name
     response = requests.patch(url, json=req_body, headers=HEADERS)
     return response.status_code == 200

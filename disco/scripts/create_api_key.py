@@ -1,13 +1,13 @@
 """Script that runs when installing Disco on a server"""
 import os
 import sys
-from disco.utils.auth import create_api_key
 
 import transaction
 from pyramid.paster import get_appsettings, setup_logging
 from pyramid.scripts.common import parse_vars
 
 from disco.models import get_engine, get_session_factory, get_tm_session
+from disco.utils.auth import create_api_key
 
 
 def usage(argv):

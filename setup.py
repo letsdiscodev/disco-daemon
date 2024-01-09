@@ -24,6 +24,7 @@ setup(
             "main = disco.http:main",
         ],
         "console_scripts": [
+            "disco_worker=disco.worker:main",
             "disco_init=disco.scripts.init:main",
             "disco_add_disco_domain=disco.scripts.add_disco_domain:main",
             "disco_create_api_key=disco.scripts.create_api_key:main",

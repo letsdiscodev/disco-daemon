@@ -1,10 +1,9 @@
 import subprocess
 
-
 SSH_PATH = "/root/.ssh"  # from host, mounted with Docker
 
 
-def create_deploy_key(name: str) -> str:
+def create_deploy_key(name: str) -> tuple[str, str]:
     _create_ssh_key(_path(name))
     _add_key_alias(name)
     return _github_host(name), _get_key_pub(name)

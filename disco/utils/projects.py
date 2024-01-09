@@ -1,17 +1,18 @@
+import logging
 import uuid
 
 from sqlalchemy.orm.session import Session as DBSession
-from disco.models import Project, ApiKey
-from disco.utils.sshkeys import create_deploy_key
+
+from disco.models import ApiKey, Project
 from disco.utils.caddy import add_project_route
-import logging
+from disco.utils.sshkeys import create_deploy_key
 
 log = logging.getLogger(__name__)
 
 
 def create_project(
     dbsession: DBSession, name: str, github_repo: str, domain: str, by_api_key: ApiKey
-) -> Project:
+) -> tuple[Project, str]:
     github_host, ssh_key_pub = create_deploy_key(name)
     project = Project(
         id=uuid.uuid4().hex,

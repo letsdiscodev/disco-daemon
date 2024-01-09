@@ -1,7 +1,7 @@
-from datetime import datetime
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Column, DateTime, String, Integer, ForeignKey
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import backref, relationship
 
 from disco.models.meta import Base
@@ -14,6 +14,7 @@ class Deployment(Base):
     created = Column(DateTime, default=datetime.utcnow)
     updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     number = Column(Integer, nullable=False)
+    status = Column(String(32), nullable=False)
     project_id = Column(
         String(32),
         ForeignKey("projects.id"),
@@ -23,7 +24,7 @@ class Deployment(Base):
     by_api_key_id = Column(
         String(32),
         ForeignKey("api_keys.id"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
 

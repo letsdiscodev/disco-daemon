@@ -1,16 +1,14 @@
 import subprocess
 
-from disco.models import Project
 
-
-def build_project(project: Project, build_number: int) -> None:
+def build_project(project_name: str, build_number: int) -> None:
     args = [
         "docker",
         "build",
         "--no-cache",
         "-t",
-        _image_name(project, build_number),
-        f"/code/projects/{project.name}/.",
+        _image_name(project_name, build_number),
+        f"/code/projects/{project_name}/.",
     ]
     try:
         subprocess.run(
@@ -23,19 +21,19 @@ def build_project(project: Project, build_number: int) -> None:
         raise Exception(ex.stdout.decode("utf-8")) from ex
 
 
-def start_container(project: Project, build_number: int) -> None:
+def start_container(project_name: str, build_number: int) -> None:
     args = [
         "docker",
         "run",
         "--name",
-        _container_name(project, build_number),
+        _container_name(project_name, build_number),
         "-d",
         "--restart",
         "unless-stopped",
         "--expose",
         "8000",
         "--network=disco-network",
-        _image_name(project, build_number),
+        _image_name(project_name, build_number),
     ]
     try:
         subprocess.run(
@@ -48,11 +46,11 @@ def start_container(project: Project, build_number: int) -> None:
         raise Exception(ex.stdout.decode("utf-8")) from ex
 
 
-def stop_container(project: Project, build_number: int) -> None:
+def stop_container(project_name: str, build_number: int) -> None:
     args = [
         "docker",
         "stop",
-        _container_name(project, build_number),
+        _container_name(project_name, build_number),
     ]
     try:
         subprocess.run(
@@ -65,11 +63,11 @@ def stop_container(project: Project, build_number: int) -> None:
         raise Exception(ex.stdout.decode("utf-8")) from ex
 
 
-def remove_container(project: Project, build_number: int) -> None:
+def remove_container(project_name: str, build_number: int) -> None:
     args = [
         "docker",
         "rm",
-        _container_name(project, build_number),
+        _container_name(project_name, build_number),
     ]
     try:
         subprocess.run(
@@ -82,9 +80,9 @@ def remove_container(project: Project, build_number: int) -> None:
         raise Exception(ex.stdout.decode("utf-8")) from ex
 
 
-def _image_name(project: Project, build_number: int) -> str:
-    return f"disco/project-{project.name}:{build_number}"
+def _image_name(project_name: str, build_number: int) -> str:
+    return f"disco/project-{project_name}:{build_number}"
 
 
-def _container_name(project: Project, build_number: int) -> str:
-    return f"disco-project-{project.name}-{build_number}"
+def _container_name(project_name: str, build_number: int) -> str:
+    return f"disco-project-{project_name}-{build_number}"

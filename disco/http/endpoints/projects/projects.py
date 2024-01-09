@@ -1,9 +1,9 @@
 from cornice import Service
+
+from disco.http.contexts.projects import ListContext
 from disco.http.validation.common import bound_schema_validator
 from disco.http.validation.projects import CreateProjectSchema
 from disco.utils.projects import create_project
-from disco.http.contexts.projects import ListContext
-
 
 projects_service = Service(
     name="projects_service",

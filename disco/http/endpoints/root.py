@@ -1,6 +1,5 @@
 from cornice import Service
 
-
 root_service = Service(
     name="root_service",
     path="/",
