@@ -18,6 +18,7 @@ def deployments_service_post(request):
     deployment = create_deployment(
         dbsession=request.dbsession,
         project=request.context.project,
+        pull=True,
         by_api_key=request.api_key,
     )
     request.response.status_code = 201

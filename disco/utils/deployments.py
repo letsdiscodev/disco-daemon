@@ -3,21 +3,36 @@ from typing import Literal
 
 from sqlalchemy.orm.session import Session as DBSession
 
-from disco.models import ApiKey, Deployment, Project
+from disco.models import ApiKey, Deployment, DeploymentEnvironmentVariable, Project
 from disco.utils.mq.tasks import enqueue_task
 
 
 def create_deployment(
-    dbsession: DBSession, project: Project, by_api_key: ApiKey
-) -> Deployment:
+    dbsession: DBSession,
+    project: Project,
+    pull: bool,
+    by_api_key: ApiKey,
+) -> Deployment | None:
+    number = get_next_deployment_number(dbsession, project)
+    if number == 1 and not pull:
+        return None
     deployment = Deployment(
         id=uuid.uuid4().hex,
-        number=get_next_deployment_number(dbsession, project),
+        number=number,
         project=project,
         status="QUEUED",
+        pull=pull,
         by_api_key=by_api_key,
     )
     dbsession.add(deployment)
+    for env_variable in project.env_variables:
+        deploy_env_var = DeploymentEnvironmentVariable(
+            id=uuid.uuid4().hex,
+            name=env_variable.name,
+            value=env_variable.value,
+            deployment=deployment,
+        )
+        dbsession.add(deploy_env_var)
     enqueue_task(
         dbsession=dbsession,
         task_name="PROCESS_DEPLOYMENT",
@@ -61,18 +76,24 @@ def build(
     github_repo: str,
     github_host: str,
     deployment_number: int,
+    pull: bool,
+    env_variables: list[tuple[str, str]],
     set_deployment_status,
 ) -> None:
     from disco.utils import caddy, docker, github
 
-    set_deployment_status("PULLING")
-    github.pull(
-        project_name=project_name, github_repo=github_repo, github_host=github_host
-    )
-    set_deployment_status("BUILDING")
-    docker.build_project(project_name, deployment_number)
+    if pull:
+        set_deployment_status("PULLING")
+        github.pull(
+            project_name=project_name, github_repo=github_repo, github_host=github_host
+        )
+        set_deployment_status("BUILDING")
+        docker.build_project(project_name, deployment_number)
+    else:
+        assert deployment_number > 1
+        docker.tag_previous_image_as_current(project_name, deployment_number)
     set_deployment_status("STARTING_CONTAINER")
-    docker.start_container(project_name, deployment_number)
+    docker.start_container(project_name, deployment_number, env_variables)
     caddy.serve_container(
         project_name,
         project_domain,
