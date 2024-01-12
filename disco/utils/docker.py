@@ -1,4 +1,9 @@
+import logging
 import subprocess
+
+from disco.models import ApiKey
+
+log = logging.getLogger(__name__)
 
 
 def build_project(project_name: str, build_number: int) -> None:
@@ -111,3 +116,68 @@ def _image_name(project_name: str, build_number: int) -> str:
 
 def _container_name(project_name: str, build_number: int) -> str:
     return f"disco-project-{project_name}-{build_number}"
+
+
+def get_all_volumes() -> list[str]:
+    args = [
+        "docker",
+        "volume",
+        "ls",
+    ]
+    try:
+        result = subprocess.run(
+            args=args,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        lines = result.stdout.decode("utf-8").split("\n")
+        lines.pop(0)  # headers
+        volumes = []
+        for line in lines:
+            if len(line) == 0:
+                continue
+            name = line.split(" ")[-1]
+            if name.startswith("disco-volume-"):
+                volumes.append(name[13:])
+        return volumes
+    except subprocess.CalledProcessError as ex:
+        raise Exception(ex.stdout.decode("utf-8")) from ex
+
+
+def create_volume(name: str, by_api_key: ApiKey) -> None:
+    log.info("Creating volume %s by %s", name, by_api_key.log())
+    args = [
+        "docker",
+        "volume",
+        "create",
+        f"disco-volume-{name}",
+    ]
+    try:
+        subprocess.run(
+            args=args,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+    except subprocess.CalledProcessError as ex:
+        raise Exception(ex.stdout.decode("utf-8")) from ex
+
+
+def delete_volume(name: str, by_api_key: ApiKey) -> None:
+    log.info("Deleting volume %s by %s", name, by_api_key.log())
+    args = [
+        "docker",
+        "volume",
+        "rm",
+        f"disco-volume-{name}",
+    ]
+    try:
+        subprocess.run(
+            args=args,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+    except subprocess.CalledProcessError as ex:
+        raise Exception(ex.stdout.decode("utf-8")) from ex
