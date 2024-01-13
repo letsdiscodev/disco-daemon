@@ -3,7 +3,14 @@ from typing import Literal
 
 from sqlalchemy.orm.session import Session as DBSession
 
-from disco.models import ApiKey, Deployment, DeploymentEnvironmentVariable, Project
+from disco.models import (
+    ApiKey,
+    Deployment,
+    DeploymentEnvironmentVariable,
+    DeploymentPublishedPort,
+    DeploymentVolume,
+    Project,
+)
 from disco.utils.mq.tasks import enqueue_task
 
 
@@ -11,17 +18,21 @@ def create_deployment(
     dbsession: DBSession,
     project: Project,
     pull: bool,
+    image: str | None,
     by_api_key: ApiKey,
 ) -> Deployment | None:
     number = get_next_deployment_number(dbsession, project)
-    if number == 1 and not pull:
+    if number == 1 and not pull and image is None:
         return None
+    if not pull and image is None:
+        image = project.deployments[0].image
     deployment = Deployment(
         id=uuid.uuid4().hex,
         number=number,
         project=project,
         status="QUEUED",
         pull=pull,
+        image=image,
         by_api_key=by_api_key,
     )
     dbsession.add(deployment)
@@ -33,6 +44,22 @@ def create_deployment(
             deployment=deployment,
         )
         dbsession.add(deploy_env_var)
+    for project_volume in project.volumes:
+        deploy_volume = DeploymentVolume(
+            id=uuid.uuid4().hex,
+            deployment=deployment,
+            name=project_volume.name,
+            destination=project_volume.destination,
+        )
+        dbsession.add(deploy_volume)
+    for project_published_port in project.published_ports:
+        deploy_published_port = DeploymentPublishedPort(
+            id=uuid.uuid4().hex,
+            deployment=deployment,
+            host_port=project_published_port.host_port,
+            container_port=project_published_port.container_port,
+        )
+        dbsession.add(deploy_published_port)
     enqueue_task(
         dbsession=dbsession,
         task_name="PROCESS_DEPLOYMENT",
@@ -77,30 +104,74 @@ def build(
     github_host: str,
     deployment_number: int,
     pull: bool,
+    image: str | None,
     env_variables: list[tuple[str, str]],
+    volumes: list[tuple[str, str]],
+    published_ports: list[tuple[int, int]],
+    exposed_ports: int | None,
     set_deployment_status,
 ) -> None:
     from disco.utils import caddy, docker, github
 
-    if pull:
+    assert not (pull and image is not None), "Can't pull when using image"
+    if image is not None:
+        # image deployment
+        if not docker.image_exists(image):
+            set_deployment_status("PULLING")
+            docker.pull_image(image)
+    elif pull:
+        # git pull deployment
         set_deployment_status("PULLING")
         github.pull(
             project_name=project_name, github_repo=github_repo, github_host=github_host
         )
         set_deployment_status("BUILDING")
         docker.build_project(project_name, deployment_number)
+        image = docker.image_name(project_name, deployment_number)
+    if len(published_ports) > 0:
+        if deployment_number > 1:
+            # since the port is published, we have to stop the existing container
+            # before starting the new one
+            set_deployment_status("STOPPING_CONTAINER")
+            docker.stop_container(project_name, deployment_number - 1)
+        set_deployment_status("STARTING_CONTAINER")
+        container = docker.container_name(project_name, deployment_number)
+        docker.start_container(
+            image=image,
+            container=container,
+            env_variables=env_variables,
+            volumes=volumes,
+            published_ports=published_ports,
+            exposed_ports=exposed_ports,
+        )
+        if project_domain is not None:
+            caddy.serve_container(
+                project_name,
+                project_domain,
+                docker.container_name(project_name, deployment_number),
+            )
+        if deployment_number > 1:
+            set_deployment_status("CLEAN_UP")
+            docker.remove_container(project_name, deployment_number - 1)
     else:
-        assert deployment_number > 1
-        docker.tag_previous_image_as_current(project_name, deployment_number)
-    set_deployment_status("STARTING_CONTAINER")
-    docker.start_container(project_name, deployment_number, env_variables)
-    caddy.serve_container(
-        project_name,
-        project_domain,
-        docker._container_name(project_name, deployment_number),
-    )
-    if deployment_number > 1:
-        set_deployment_status("CLEAN_UP")
-        docker.stop_container(project_name, deployment_number - 1)
-        docker.remove_container(project_name, deployment_number - 1)
+        set_deployment_status("STARTING_CONTAINER")
+        container = docker.container_name(project_name, deployment_number)
+        docker.start_container(
+            image=image,
+            container=container,
+            env_variables=env_variables,
+            volumes=volumes,
+            published_ports=[],
+            exposed_ports=exposed_ports,
+        )
+        if project_domain is not None:
+            caddy.serve_container(
+                project_name,
+                project_domain,
+                docker.container_name(project_name, deployment_number),
+            )
+        if deployment_number > 1:
+            set_deployment_status("CLEAN_UP")
+            docker.stop_container(project_name, deployment_number - 1)
+            docker.remove_container(project_name, deployment_number - 1)
     set_deployment_status("DONE")

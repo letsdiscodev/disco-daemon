@@ -11,19 +11,24 @@ log = logging.getLogger(__name__)
 
 
 def create_project(
-    dbsession: DBSession, name: str, github_repo: str, domain: str, by_api_key: ApiKey
+    dbsession: DBSession,
+    name: str,
+    github_repo: str | None,
+    domain: str | None,
+    by_api_key: ApiKey,
 ) -> tuple[Project, str]:
-    github_host, ssh_key_pub = create_deploy_key(name)
     project = Project(
         id=uuid.uuid4().hex,
         name=name,
         github_repo=github_repo,
         domain=domain,
         ssh_key_name=name,
-        github_host=github_host,
     )
+    github_host, ssh_key_pub = create_deploy_key(name)
+    project.github_host = github_host
     dbsession.add(project)
-    add_project_route(project)
+    if domain is not None:
+        add_project_route(project)
     log.info("%s created project %s", by_api_key.log(), project.log())
     return project, ssh_key_pub
 

@@ -56,6 +56,7 @@ def set_env_variables(
         dbsession=dbsession,
         project=project,
         pull=False,
+        image=None,
         by_api_key=by_api_key,
     )
     return deployment

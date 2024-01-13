@@ -19,7 +19,9 @@ def process_github_webhook(with_dbsession, task_body):
         project = get_project_by_id(dbsession, project_id)
         if project is None:
             raise Exception(f"Project {project_id} not found")
-        create_deployment(dbsession=dbsession, project=project, by_api_key=None)
+        create_deployment(
+            dbsession=dbsession, project=project, pull=True, image=None, by_api_key=None
+        )
 
     with_dbsession(start_github_build)
 
@@ -56,9 +58,20 @@ def process_deployment(with_dbsession, task_body):
         db_data["github_host"] = deployment.project.github_host
         db_data["deployment_number"] = deployment.number
         db_data["pull"] = deployment.pull
+        db_data["image"] = deployment.image
         db_data["env_variables"] = [
             (env_var.name, env_var.value) for env_var in deployment.env_variables
         ]
+        db_data["volumes"] = [
+            (volume.name, volume.destination) for volume in deployment.volumes
+        ]
+        db_data["published_ports"] = [
+            (published_port.host_port, published_port.container_port)
+            for published_port in deployment.published_ports
+        ]
+        db_data["exposed_ports"] = (
+            [8000] if db_data["project_domain"] is not None else []
+        )
 
     with_dbsession(get_db_data)
 
@@ -69,8 +82,12 @@ def process_deployment(with_dbsession, task_body):
         github_host=db_data["github_host"],
         deployment_number=db_data["deployment_number"],
         pull=db_data["pull"],
+        image=db_data["image"],
         env_variables=db_data["env_variables"],
+        volumes=db_data["volumes"],
         set_deployment_status=_set_deployment_status,
+        published_ports=db_data["published_ports"],
+        exposed_ports=db_data["exposed_ports"],
     )
 
 

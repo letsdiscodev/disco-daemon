@@ -12,7 +12,7 @@ def build_project(project_name: str, build_number: int) -> None:
         "build",
         "--no-cache",
         "-t",
-        _image_name(project_name, build_number),
+        image_name(project_name, build_number),
         f"/code/projects/{project_name}/.",
     ]
     try:
@@ -27,25 +27,44 @@ def build_project(project_name: str, build_number: int) -> None:
 
 
 def start_container(
-    project_name: str, build_number: int, env_variables: list[tuple[str, str]]
+    image: str,
+    container: str,
+    env_variables: list[tuple[str, str]],
+    volumes: list[tuple[str, str]],
+    published_ports: list[tuple[int, int]],
+    exposed_ports: list[int],
 ) -> None:
     env_var_args = []
+    volume_args = []
+    port_args = []
+    exposed_ports = []
     for var_name, var_value in env_variables:
         env_var_args.append("-e")
         env_var_args.append(f"{var_name}={var_value}")
+    for volume, destination in volumes:
+        volume_args.append("--mount")
+        volume_args.append(
+            f"type=volume,source=disco-volume-{volume},destination={destination}"
+        )
+    for host_port, container_port in published_ports:
+        port_args.append("--publish")
+        port_args.append(f"{host_port}:{container_port}")
+    for port in exposed_ports:
+        port_args.append("--expose")
+        port_args.append(str(port))
     args = [
         "docker",
         "run",
         "--name",
-        _container_name(project_name, build_number),
+        container,
         "-d",
         "--restart",
         "unless-stopped",
-        "--expose",
-        "8000",
         "--network=disco-network",
         *env_var_args,
-        _image_name(project_name, build_number),
+        *volume_args,
+        *port_args,
+        image,
     ]
     try:
         subprocess.run(
@@ -62,8 +81,8 @@ def tag_previous_image_as_current(project_name: str, build_number: int) -> None:
     args = [
         "docker",
         "tag",
-        _image_name(project_name, build_number - 1),
-        _image_name(project_name, build_number),
+        image_name(project_name, build_number - 1),
+        image_name(project_name, build_number),
     ]
     try:
         subprocess.run(
@@ -80,7 +99,7 @@ def stop_container(project_name: str, build_number: int) -> None:
     args = [
         "docker",
         "stop",
-        _container_name(project_name, build_number),
+        container_name(project_name, build_number),
     ]
     try:
         subprocess.run(
@@ -97,7 +116,7 @@ def remove_container(project_name: str, build_number: int) -> None:
     args = [
         "docker",
         "rm",
-        _container_name(project_name, build_number),
+        container_name(project_name, build_number),
     ]
     try:
         subprocess.run(
@@ -110,11 +129,11 @@ def remove_container(project_name: str, build_number: int) -> None:
         raise Exception(ex.stdout.decode("utf-8")) from ex
 
 
-def _image_name(project_name: str, build_number: int) -> str:
+def image_name(project_name: str, build_number: int) -> str:
     return f"disco/project-{project_name}:{build_number}"
 
 
-def _container_name(project_name: str, build_number: int) -> str:
+def container_name(project_name: str, build_number: int) -> str:
     return f"disco-project-{project_name}-{build_number}"
 
 
@@ -171,6 +190,42 @@ def delete_volume(name: str, by_api_key: ApiKey) -> None:
         "volume",
         "rm",
         f"disco-volume-{name}",
+    ]
+    try:
+        subprocess.run(
+            args=args,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+    except subprocess.CalledProcessError as ex:
+        raise Exception(ex.stdout.decode("utf-8")) from ex
+
+
+def image_exists(image: str) -> bool:
+    args = [
+        "docker",
+        "image",
+        "inspect",
+        image,
+    ]
+    try:
+        subprocess.run(
+            args=args,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+
+def pull_image(image: str) -> None:
+    args = [
+        "docker",
+        "pull",
+        image,
     ]
     try:
         subprocess.run(

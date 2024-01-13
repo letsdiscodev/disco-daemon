@@ -9,10 +9,18 @@ from disco.models.deployment import Deployment  # noqa: F401
 from disco.models.deploymentenvironmentvariable import (
     DeploymentEnvironmentVariable,  # noqa: F401
 )
+from disco.models.deploymentpublishedport import (
+    DeploymentPublishedPort,  # noqa: F401
+)
+from disco.models.deploymentvolume import DeploymentVolume  # noqa: F401
 from disco.models.project import Project  # noqa: F401
 from disco.models.projectenvironmentvariable import (
     ProjectEnvironmentVariable,  # noqa: F401
 )
+from disco.models.projectpublishedport import (
+    ProjectPublishedPort,  # noqa: F401
+)
+from disco.models.projectvolume import ProjectVolume  # noqa: F401
 from disco.models.task import Task  # noqa: F401
 
 # Run ``configure_mappers`` after defining all of the models to ensure

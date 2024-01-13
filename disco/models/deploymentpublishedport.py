@@ -1,20 +1,20 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, String, Unicode
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import backref, relationship
 
 from disco.models.meta import Base
 
 
-class DeploymentEnvironmentVariable(Base):
-    __tablename__ = "deployment_env_variables"
+class DeploymentPublishedPort(Base):
+    __tablename__ = "deployment_published_ports"
 
     id = Column(String(32), default=lambda: uuid.uuid4().hex, primary_key=True)
     created = Column(DateTime, default=datetime.utcnow)
     updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    name = Column(String(255), nullable=False)
-    value = Column(Unicode(4000), nullable=False)
+    host_port = Column(Integer, nullable=False)
+    container_port = Column(Integer, nullable=False)
     deployment_id = Column(
         String(32),
         ForeignKey("deployments.id"),
@@ -25,8 +25,8 @@ class DeploymentEnvironmentVariable(Base):
     deployment = relationship(
         "Deployment",
         foreign_keys=deployment_id,
-        backref=backref("env_variables"),
+        backref=backref("published_ports"),
     )
 
     def log(self):
-        return f"DEPLOY_ENV_VAR_{self.deployment_id}_{self.name}"
+        return f"DEPLOY_VOLLUME_{self.deployment_id}_{self.name}"

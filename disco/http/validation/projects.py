@@ -6,5 +6,5 @@ from disco.http.validation.preparers import PREPARERS
 # TODO proper validation
 class CreateProjectSchema(Schema):
     name = SchemaNode(String(), preparer=PREPARERS)
-    githubRepo = SchemaNode(String(), preparer=PREPARERS)
-    domain = SchemaNode(String(), preparer=PREPARERS)
+    githubRepo = SchemaNode(String(), preparer=PREPARERS, missing=None)
+    domain = SchemaNode(String(), preparer=PREPARERS, missing=None)

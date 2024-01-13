@@ -2,6 +2,9 @@ import subprocess
 
 SSH_PATH = "/root/.ssh"  # from host, mounted with Docker
 
+# TODO use project ID instead of name,
+#      because name can change
+
 
 def create_deploy_key(name: str) -> tuple[str, str]:
     _create_ssh_key(_path(name))

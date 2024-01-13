@@ -31,4 +31,6 @@ class SingleContext:
     def __acl__(self):
         return [
             (Allow, "api_key", "delete_volume"),
+            (Allow, "api_key", "attach_volume"),
+            (Allow, "api_key", "detach_volume"),
         ]
