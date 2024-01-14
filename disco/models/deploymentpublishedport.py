@@ -15,6 +15,7 @@ class DeploymentPublishedPort(Base):
     updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     host_port = Column(Integer, nullable=False)
     container_port = Column(Integer, nullable=False)
+    protocol = Column(String(30), nullable=False)
     deployment_id = Column(
         String(32),
         ForeignKey("deployments.id"),

@@ -72,6 +72,7 @@ def delete_env_variable(
         dbsession=dbsession,
         project=env_variable.project,
         pull=False,
+        image=None,
         by_api_key=by_api_key,
     )
     return deployment

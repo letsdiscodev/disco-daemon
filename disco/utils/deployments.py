@@ -58,6 +58,7 @@ def create_deployment(
             deployment=deployment,
             host_port=project_published_port.host_port,
             container_port=project_published_port.container_port,
+            protocol=project_published_port.protocol,
         )
         dbsession.add(deploy_published_port)
     enqueue_task(
@@ -89,7 +90,14 @@ def get_deployment_by_id(dbsession: DBSession, deployment_id: str) -> Deployment
 
 
 BUILD_STATUS = Literal[
-    "QUEUED", "STARTED", "PULLING", "BUILDING", "STARTING_CONTAINER", "CLEAN_UP", "DONE"
+    "QUEUED",
+    "STARTED",
+    "PULLING",
+    "BUILDING",
+    "PUSHING_IMAGE",
+    "STARTING_SERVICE",
+    "STOPPING_SERVICE",
+    "DONE",
 ]
 
 
@@ -98,7 +106,7 @@ def set_deployment_status(deployment: Deployment, status: BUILD_STATUS) -> None:
 
 
 def build(
-    project_name: str,
+    project_id: str,
     project_domain: str,
     github_repo: str,
     github_host: str,
@@ -107,71 +115,69 @@ def build(
     image: str | None,
     env_variables: list[tuple[str, str]],
     volumes: list[tuple[str, str]],
-    published_ports: list[tuple[int, int]],
-    exposed_ports: int | None,
+    published_ports: list[tuple[int, int, str]],
+    disco_domain: str,
     set_deployment_status,
 ) -> None:
     from disco.utils import caddy, docker, github
 
     assert not (pull and image is not None), "Can't pull when using image"
-    if image is not None:
-        # image deployment
-        if not docker.image_exists(image):
-            set_deployment_status("PULLING")
-            docker.pull_image(image)
-    elif pull:
+    assert (
+        pull or image is not None
+    ), "Either pulling to rebuild image, or using existing image"
+    assert disco_domain is not None
+    if pull:
         # git pull deployment
         set_deployment_status("PULLING")
         github.pull(
-            project_name=project_name, github_repo=github_repo, github_host=github_host
+            project_id=project_id, github_repo=github_repo, github_host=github_host
         )
         set_deployment_status("BUILDING")
-        docker.build_project(project_name, deployment_number)
-        image = docker.image_name(project_name, deployment_number)
+        docker.build_project(disco_domain, project_id, deployment_number)
+        image = docker.image_name(disco_domain, project_id, deployment_number)
+        set_deployment_status("PUSHING_IMAGE")
+        docker.push_image(disco_domain, project_id, deployment_number)
+    assert image is not None
     if len(published_ports) > 0:
         if deployment_number > 1:
             # since the port is published, we have to stop the existing container
             # before starting the new one
-            set_deployment_status("STOPPING_CONTAINER")
-            docker.stop_container(project_name, deployment_number - 1)
-        set_deployment_status("STARTING_CONTAINER")
-        container = docker.container_name(project_name, deployment_number)
-        docker.start_container(
+            set_deployment_status("STOPPING_SERVICE")
+            docker.stop_service(project_id, deployment_number - 1)
+        set_deployment_status("STARTING_SERVICE")
+        service = docker.service_name(project_id, deployment_number)
+        docker.start_service(
             image=image,
-            container=container,
+            name=service,
             env_variables=env_variables,
             volumes=volumes,
             published_ports=published_ports,
-            exposed_ports=exposed_ports,
+            command=None,  # for now
         )
         if project_domain is not None:
-            caddy.serve_container(
-                project_name,
+            caddy.serve_service(
+                project_id,
                 project_domain,
-                docker.container_name(project_name, deployment_number),
+                docker.service_name(project_id, deployment_number),
             )
-        if deployment_number > 1:
-            set_deployment_status("CLEAN_UP")
-            docker.remove_container(project_name, deployment_number - 1)
     else:
-        set_deployment_status("STARTING_CONTAINER")
-        container = docker.container_name(project_name, deployment_number)
-        docker.start_container(
+        set_deployment_status("STARTING_SERVICE")
+        service = docker.service_name(project_id, deployment_number)
+        docker.start_service(
             image=image,
-            container=container,
+            name=service,
             env_variables=env_variables,
             volumes=volumes,
             published_ports=[],
-            exposed_ports=exposed_ports,
+            command=None,  # for now
         )
         if project_domain is not None:
-            caddy.serve_container(
-                project_name,
+            caddy.serve_service(
+                project_id,
                 project_domain,
-                docker.container_name(project_name, deployment_number),
+                docker.service_name(project_id, deployment_number),
             )
         if deployment_number > 1:
             set_deployment_status("CLEAN_UP")
-            docker.stop_container(project_name, deployment_number - 1)
-            docker.remove_container(project_name, deployment_number - 1)
+            docker.stop_service(project_id, deployment_number - 1)
     set_deployment_status("DONE")

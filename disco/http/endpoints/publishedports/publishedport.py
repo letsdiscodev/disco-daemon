@@ -5,7 +5,7 @@ from disco.utils.publishedports import remove_published_port
 
 published_port_service = Service(
     name="published_port_service",
-    path="/projects/{project_name}/published-ports/{host_port}",
+    path="/projects/{project_name}/published-ports/{host_port}/{protocol}",
     http_cache=(None, dict(private=True)),
     factory=SingleContext,
 )

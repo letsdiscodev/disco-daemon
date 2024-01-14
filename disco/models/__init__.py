@@ -13,6 +13,7 @@ from disco.models.deploymentpublishedport import (
     DeploymentPublishedPort,  # noqa: F401
 )
 from disco.models.deploymentvolume import DeploymentVolume  # noqa: F401
+from disco.models.keyvalue import KeyValue  # noqa: F401
 from disco.models.project import Project  # noqa: F401
 from disco.models.projectenvironmentvariable import (
     ProjectEnvironmentVariable,  # noqa: F401

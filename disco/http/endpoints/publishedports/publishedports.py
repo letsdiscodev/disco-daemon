@@ -39,6 +39,7 @@ def published_ports_service_post(request):
         project=request.context.project,
         host_port=request.validated["hostPort"],
         container_port=request.validated["containerPort"],
+        protocol=request.validated["protocol"],
         by_api_key=request.api_key,
     )
     request.response.status_code = 201

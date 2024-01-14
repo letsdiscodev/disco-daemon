@@ -5,4 +5,4 @@ from disco.http.validation.preparers import PREPARERS
 
 # TODO proper validation
 class CreateDeploymentSchema(Schema):
-    image = SchemaNode(String(), preparer=PREPARERS)
+    image = SchemaNode(String(), preparer=PREPARERS, missing=None)

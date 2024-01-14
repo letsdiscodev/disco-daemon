@@ -11,6 +11,7 @@ def add_published_port(
     project: Project,
     host_port: int,
     container_port: int,
+    protocol: str,
     by_api_key: ApiKey,
 ) -> Deployment | None:
     # TODO if the port is already published, do nothing
@@ -19,6 +20,7 @@ def add_published_port(
         project=project,
         host_port=host_port,
         container_port=container_port,
+        protocol=protocol,
         by_api_key=by_api_key,
     )
     dbsession.add(project_volume)

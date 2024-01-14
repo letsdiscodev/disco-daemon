@@ -28,7 +28,7 @@ def create_project(
     project.github_host = github_host
     dbsession.add(project)
     if domain is not None:
-        add_project_route(project)
+        add_project_route(project_id=project.id, domain=project.domain)
     log.info("%s created project %s", by_api_key.log(), project.log())
     return project, ssh_key_pub
 

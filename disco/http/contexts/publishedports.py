@@ -38,6 +38,7 @@ class SingleContext:
                 port
                 for port in self.project.published_ports
                 if str(port.host_port) == request.matchdict["host_port"]
+                and port.protocol == request.matchdict["protocol"]
             ][0]
         except IndexError:
             raise HTTPNotFound()

@@ -7,11 +7,11 @@ import subprocess
 log = logging.getLogger(__name__)
 
 
-def pull(project_name: str, github_repo: str, github_host: str) -> None:
+def pull(project_id: str, github_repo: str, github_host: str) -> None:
     args = ["git", "pull"]
-    directory = f"/code/projects/{project_name}"
+    directory = f"/code/projects/{project_id}"
     if not os.path.isdir(directory):
-        _clone_project(project_name, github_repo, github_host)
+        _clone_project(project_id, github_repo, github_host)
     else:
         try:
             subprocess.run(
@@ -19,15 +19,15 @@ def pull(project_name: str, github_repo: str, github_host: str) -> None:
                 check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                cwd=f"/code/projects/{project_name}",
+                cwd=f"/code/projects/{project_id}",
             )
         except subprocess.CalledProcessError as ex:
             raise Exception(ex.stdout.decode("utf-8")) from ex
 
 
-def _clone_project(project_name: str, github_repo: str, github_host: str) -> None:
+def _clone_project(project_id: str, github_repo: str, github_host: str) -> None:
     url = github_repo.replace("github.com", github_host)
-    args = ["git", "clone", url, f"/code/projects/{project_name}"]
+    args = ["git", "clone", url, f"/code/projects/{project_id}"]
     try:
         subprocess.run(
             args=args,

@@ -15,6 +15,7 @@ class ProjectPublishedPort(Base):
     updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     host_port = Column(Integer, nullable=False, index=True)
     container_port = Column(Integer, nullable=False)
+    protocol = Column(String(30), nullable=False)
     project_id = Column(
         String(32),
         ForeignKey("projects.id"),

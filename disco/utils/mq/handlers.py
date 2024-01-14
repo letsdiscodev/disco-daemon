@@ -1,5 +1,7 @@
 import logging
 
+from disco.utils import keyvalues
+
 log = logging.getLogger(__name__)
 
 
@@ -52,7 +54,7 @@ def process_deployment(with_dbsession, task_body):
         deployment = get_deployment_by_id(dbsession, deployment_id)
         if deployment is None:
             raise Exception(f"Deployment {deployment_id} not found")
-        db_data["project_name"] = deployment.project.name
+        db_data["project_id"] = deployment.project.id
         db_data["project_domain"] = deployment.project.domain
         db_data["github_repo"] = deployment.project.github_repo
         db_data["github_host"] = deployment.project.github_host
@@ -66,17 +68,19 @@ def process_deployment(with_dbsession, task_body):
             (volume.name, volume.destination) for volume in deployment.volumes
         ]
         db_data["published_ports"] = [
-            (published_port.host_port, published_port.container_port)
+            (
+                published_port.host_port,
+                published_port.container_port,
+                published_port.protocol,
+            )
             for published_port in deployment.published_ports
         ]
-        db_data["exposed_ports"] = (
-            [8000] if db_data["project_domain"] is not None else []
-        )
+        db_data["disco_domain"] = keyvalues.get_value(dbsession, "DISCO_DOMAIN")
 
     with_dbsession(get_db_data)
 
     build(
-        project_name=db_data["project_name"],
+        project_id=db_data["project_id"],
         project_domain=db_data["project_domain"],
         github_repo=db_data["github_repo"],
         github_host=db_data["github_host"],
@@ -87,7 +91,7 @@ def process_deployment(with_dbsession, task_body):
         volumes=db_data["volumes"],
         set_deployment_status=_set_deployment_status,
         published_ports=db_data["published_ports"],
-        exposed_ports=db_data["exposed_ports"],
+        disco_domain=db_data["disco_domain"],
     )
 
 

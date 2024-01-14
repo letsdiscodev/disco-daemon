@@ -1,4 +1,4 @@
-from colander import Integer, Schema, SchemaNode
+from colander import Integer, Schema, SchemaNode, String
 
 from disco.http.validation.preparers import PREPARERS
 
@@ -7,3 +7,4 @@ from disco.http.validation.preparers import PREPARERS
 class AddPublishedPortSchema(Schema):
     hostPort = SchemaNode(Integer(), preparer=PREPARERS)
     containerPort = SchemaNode(Integer(), preparer=PREPARERS)
+    protocol = SchemaNode(String(), preparer=PREPARERS)
