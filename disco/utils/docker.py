@@ -59,6 +59,7 @@ def start_service(
         "--name",
         name,
         "--network=disco-network",
+        "--with-registry-auth",
         *more_args,
         image,
         *([command] if command is not None else []),
