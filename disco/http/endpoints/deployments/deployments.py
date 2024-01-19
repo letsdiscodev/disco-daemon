@@ -22,8 +22,8 @@ def deployments_service_post(request):
     deployment = create_deployment(
         dbsession=request.dbsession,
         project=request.context.project,
-        pull=request.validated["image"] is None,
-        image=request.validated["image"],
+        commit_hash=request.validated["commit"],
+        disco_config=request.validated["discoConfig"],
         by_api_key=request.api_key,
     )
     request.response.status_code = 201

@@ -9,13 +9,13 @@ BASE_URL = "http://caddy:1900"
 def set_empty_config() -> bool:
     url = f"{BASE_URL}/config/"
     req_body: dict[str, Any] = dict(apps=dict(http=dict(servers=dict())))
-    response = requests.post(url, json=req_body, headers=HEADERS)
+    response = requests.post(url, json=req_body, headers=HEADERS, timeout=10)
     return response.status_code == 200
 
 
 def add_disco_domain(domain: str) -> bool:
     url = f"{BASE_URL}/config/apps/http/servers/disco"
-    req_body = dict(
+    req_body: dict[str, Any] = dict(
         listen=[":443"],
         routes=[
             dict(
@@ -49,7 +49,7 @@ def add_disco_domain(domain: str) -> bool:
         ],
     )
     req_body["routes"][0]["@id"] = "disco-route"
-    response = requests.post(url, json=req_body, headers=HEADERS)
+    response = requests.post(url, json=req_body, headers=HEADERS, timeout=10)
     return response.status_code == 200
 
 
@@ -75,11 +75,13 @@ def add_project_route(project_id: str, domain: str) -> bool:
         terminal=True,
     )
     req_body["@id"] = f"disco-{project_id}"
-    response = requests.post(url, json=req_body, headers=HEADERS)
+    response = requests.post(url, json=req_body, headers=HEADERS, timeout=10)
     return response.status_code == 200
 
 
-def serve_service(project_id: str, project_domain: str, container_name: str) -> bool:
+def serve_service(
+    project_id: str, project_domain: str, container_name: str, port: int
+) -> bool:
     url = f"{BASE_URL}/id/disco-{project_id}"
     req_body = dict(
         handle=[
@@ -90,7 +92,7 @@ def serve_service(project_id: str, project_domain: str, container_name: str) -> 
                         handle=[
                             dict(
                                 handler="reverse_proxy",
-                                upstreams=[dict(dial=f"{container_name}:8000")],
+                                upstreams=[dict(dial=f"{container_name}:{port}")],
                             )
                         ]
                     )
@@ -101,5 +103,5 @@ def serve_service(project_id: str, project_domain: str, container_name: str) -> 
         terminal=True,
     )
     req_body["@id"] = f"disco-{project_id}"
-    response = requests.patch(url, json=req_body, headers=HEADERS)
+    response = requests.patch(url, json=req_body, headers=HEADERS, timeout=10)
     return response.status_code == 200

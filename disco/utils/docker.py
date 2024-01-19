@@ -1,19 +1,23 @@
+import hashlib
 import logging
 import subprocess
 
 from disco.models import ApiKey
+from disco.utils.filesystem import project_path
 
 log = logging.getLogger(__name__)
 
 
-def build_project(disco_domain: str, project_id: str, deployment_number: int) -> None:
+def build_image(image: str, project_id: str, dockerfile: str, context: str) -> None:
     args = [
         "docker",
         "build",
         "--no-cache",
         "--tag",
-        image_name(disco_domain, project_id, deployment_number),
-        f"/code/projects/{project_id}/.",
+        image,
+        "--file",
+        dockerfile,
+        context,
     ]
     try:
         subprocess.run(
@@ -21,6 +25,7 @@ def build_project(disco_domain: str, project_id: str, deployment_number: int) ->
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            cwd=project_path(project_id),
         )
     except subprocess.CalledProcessError as ex:
         raise Exception(ex.stdout.decode("utf-8")) from ex
@@ -62,7 +67,7 @@ def start_service(
         "--with-registry-auth",
         *more_args,
         image,
-        *([command] if command is not None else []),
+        *(command.split() if command is not None else []),
     ]
     try:
         subprocess.run(
@@ -75,31 +80,11 @@ def start_service(
         raise Exception(ex.stdout.decode("utf-8")) from ex
 
 
-def tag_previous_image_as_current(
-    disco_domain: str, project_id: str, deployment_number: int
-) -> None:
-    args = [
-        "docker",
-        "tag",
-        image_name(disco_domain, project_id, deployment_number - 1),
-        image_name(disco_domain, project_id, deployment_number),
-    ]
-    try:
-        subprocess.run(
-            args=args,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-    except subprocess.CalledProcessError as ex:
-        raise Exception(ex.stdout.decode("utf-8")) from ex
-
-
-def push_image(disco_domain: str, project_id: str, deployment_number: int) -> None:
+def push_image(image) -> None:
     args = [
         "docker",
         "push",
-        image_name(disco_domain, project_id, deployment_number),
+        image,
     ]
     try:
         subprocess.run(
@@ -112,12 +97,12 @@ def push_image(disco_domain: str, project_id: str, deployment_number: int) -> No
         raise Exception(ex.stdout.decode("utf-8")) from ex
 
 
-def stop_service(project_id: str, deployment_number: int) -> None:
+def stop_service(name) -> None:
     args = [
         "docker",
         "service",
         "rm",
-        service_name(project_id, deployment_number),
+        name,
     ]
     try:
         subprocess.run(
@@ -130,12 +115,23 @@ def stop_service(project_id: str, deployment_number: int) -> None:
         raise Exception(ex.stdout.decode("utf-8")) from ex
 
 
-def image_name(disco_domain: str, project_id: str, deployment_number: int) -> str:
-    return f"{disco_domain}/disco/project-{project_id}:{deployment_number}"
+def image_name(
+    disco_domain: str,
+    project_id: str,
+    deployment_number: int,
+    dockerfile: str,
+    context: str,
+) -> str:
+    h = hashlib.new("sha256")
+    h.update(f"dockerfile={dockerfile}&context={context}".encode("utf-8"))
+    config_hash = h.hexdigest()
+    return (
+        f"{disco_domain}/disco/project-{project_id}-{config_hash}:{deployment_number}"
+    )
 
 
-def service_name(project_id: str, deployment_number: int) -> str:
-    return f"disco-project-{project_id}-{deployment_number}"
+def service_name(project_id: str, service: str, deployment_number: int) -> str:
+    return f"disco-project-{project_id}-{service}-{deployment_number}"
 
 
 def get_all_volumes() -> list[str]:

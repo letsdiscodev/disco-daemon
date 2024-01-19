@@ -55,8 +55,8 @@ def set_env_variables(
     deployment = create_deployment(
         dbsession=dbsession,
         project=project,
-        pull=False,
-        image=None,
+        commit_hash=None,
+        disco_config=None,
         by_api_key=by_api_key,
     )
     return deployment
@@ -71,8 +71,8 @@ def delete_env_variable(
     deployment = create_deployment(
         dbsession=dbsession,
         project=env_variable.project,
-        pull=False,
-        image=None,
+        commit_hash=None,
+        disco_config=None,
         by_api_key=by_api_key,
     )
     return deployment
