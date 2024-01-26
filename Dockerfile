@@ -1,4 +1,4 @@
-FROM python:3.11.6
+FROM python:3.12.1
 ENV PYTHONUNBUFFERED 0
 RUN apt-get update
 RUN apt-get install -y ssh docker.io

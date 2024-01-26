@@ -6,14 +6,13 @@ services:
       context: .
       dockerfile: Dockerfile
     image: disco/disco-daemon-dev
-    command: pserve development.ini --reload
+    command: pserve production.ini --reload
     ports:
       - 6543:6543
     volumes:
       - .:/code:cached
       - ./data:/code/data
       - /code/disco.egg-info
-    restart: on-failure
 
 networks:
   default:
