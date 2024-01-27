@@ -25,6 +25,7 @@ def create_deployment(
     deployment = Deployment(
         id=uuid.uuid4().hex,
         number=number,
+        project_name=project.name,
         project=project,
         status="QUEUED",
         commit_hash=commit_hash,

@@ -66,6 +66,7 @@ def process_deployment(with_dbsession, task_body):
         prev_deployment = get_previous_deployment(dbsession, deployment)
         db_data["project_id"] = deployment.project.id
         db_data["project_domain"] = deployment.project.domain
+        db_data["project_name"] = deployment.project.name
         db_data["github_repo"] = deployment.project.github_repo
         db_data["github_host"] = deployment.project.github_host
         db_data["deployment_number"] = deployment.number
@@ -75,6 +76,9 @@ def process_deployment(with_dbsession, task_body):
             (env_var.name, env_var.value) for env_var in deployment.env_variables
         ]
         db_data["disco_domain"] = keyvalues.get_value(dbsession, "DISCO_DOMAIN")
+        db_data["prev_project_name"] = (
+            prev_deployment.project_name if prev_deployment is not None else None
+        )
         db_data["prev_disco_config_str"] = (
             prev_deployment.disco_config if prev_deployment is not None else None
         )
@@ -189,7 +193,7 @@ def process_deployment(with_dbsession, task_body):
             )
             continue
         internal_service_name = docker.service_name(
-            db_data["project_id"], service_name, db_data["deployment_number"]
+            db_data["project_name"], service_name, db_data["deployment_number"]
         )
         if _pull(service) is not None:
             image = _pull(service)
@@ -205,6 +209,8 @@ def process_deployment(with_dbsession, task_body):
         docker.start_service(
             image=image,
             name=internal_service_name,
+            project_name=db_data["project_name"],
+            project_service_name=service_name,
             env_variables=db_data["env_variables"],
             volumes=[
                 (v["name"], v["destinationPath"]) for v in service.get("volumes", [])
@@ -219,7 +225,7 @@ def process_deployment(with_dbsession, task_body):
             web_is_started = True
     if db_data["project_domain"] is not None and web_is_started:
         internal_service_name = docker.service_name(
-            db_data["project_id"], "web", db_data["deployment_number"]
+            db_data["project_name"], "web", db_data["deployment_number"]
         )
         log.info("Sending HTTP traffic to new service for deployment %s", deployment_id)
         caddy.serve_service(
@@ -235,7 +241,7 @@ def process_deployment(with_dbsession, task_body):
         log.info("Stopping previous services for deployment %s", deployment_id)
         for service_name in prev_config["services"]:
             internal_service_name = docker.service_name(
-                db_data["project_id"], service_name, db_data["deployment_number"] - 1
+                db_data["prev_project_name"], service_name, db_data["deployment_number"] - 1
             )
             log.info(
                 "Stopping previous service %s for deployment %s",
@@ -251,7 +257,7 @@ def process_deployment(with_dbsession, task_body):
             # already started above, skip
             continue
         internal_service_name = docker.service_name(
-            db_data["project_id"], service_name, db_data["deployment_number"]
+            db_data["project_name"], service_name, db_data["deployment_number"]
         )
         if _pull(service) is not None:
             image = _pull(service)
@@ -271,6 +277,8 @@ def process_deployment(with_dbsession, task_body):
         docker.start_service(
             image=image,
             name=internal_service_name,
+            project_name=db_data["project_name"],
+            project_service_name=service_name,
             env_variables=db_data["env_variables"],
             volumes=[
                 (v["name"], v["destinationPath"]) for v in service.get("volumes", [])
@@ -285,7 +293,7 @@ def process_deployment(with_dbsession, task_body):
             web_is_now_started = True
     if db_data["project_domain"] is not None and web_is_now_started:
         internal_service_name = docker.service_name(
-            db_data["project_id"], "web", db_data["deployment_number"]
+            db_data["project_name"], "web", db_data["deployment_number"]
         )
         log.info("Sending HTTP traffic to new service for deployment %s", deployment_id)
         caddy.serve_service(

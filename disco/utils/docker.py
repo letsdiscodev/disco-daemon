@@ -34,6 +34,8 @@ def build_image(image: str, project_id: str, dockerfile: str, context: str) -> N
 def start_service(
     image: str,
     name: str,
+    project_name: str,
+    project_service_name: str,
     env_variables: list[tuple[str, str]],
     volumes: list[tuple[str, str]],
     published_ports: list[tuple[int, int, str]],
@@ -65,6 +67,14 @@ def start_service(
         name,
         "--network=disco-network",
         "--with-registry-auth",
+        "--label",
+        f"disco.project.name={project_name}",
+        "--label",
+        f"disco.service.name={project_service_name}",
+        "--container-label",
+        f"disco.project.name={project_name}",
+        "--container-label",
+        f"disco.service.name={project_service_name}",
         *more_args,
         image,
         *(command.split() if command is not None else []),
@@ -130,8 +140,8 @@ def image_name(
     )
 
 
-def service_name(project_id: str, service: str, deployment_number: int) -> str:
-    return f"disco-project-{project_id}-{service}-{deployment_number}"
+def service_name(project_name: str, service: str, deployment_number: int) -> str:
+    return f"disco-{project_name}-{service}-{deployment_number}"
 
 
 def get_all_volumes() -> list[str]:

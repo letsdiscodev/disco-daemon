@@ -17,6 +17,7 @@ class Deployment(Base):
     status = Column(String(32), nullable=False)
     commit_hash = Column(String(200), nullable=True)
     disco_config = Column(Unicode(5000), nullable=True)
+    project_name = Column(Unicode(255), nullable=False)
     project_id = Column(
         String(32),
         ForeignKey("projects.id"),
