@@ -1,3 +1,4 @@
+import random
 import asyncio
 import json
 
@@ -43,19 +44,18 @@ class ExtendedWsgiToAsgi(WsgiToAsgi):
         return _route
 
 
-LOGSPOUT_CMD = " ".join(
-    [
+LOGSPOUT_CMD = [
         "docker",
         "run",
         "--env",
-        "'BACKLOG=false'",
+        "BACKLOG=false",
         "--env",
-        '\'RAW_FORMAT={ "container" : "{{ .Container.Name }}", '
+        'RAW_FORMAT={ "container" : "{{ .Container.Name }}", '
         '"labels": {{ toJSON .Container.Config.Labels }}, '
         '"timestamp": "{{ .Time.Format "2006-01-02T15:04:05Z07:00" }}", '
-        '"message": {{ toJSON .Data }} }\'',
+        '"message": {{ toJSON .Data }} }',
         "--env",
-        "'EXCLUDE_LABEL=disco'",
+        "EXCLUDE_LABEL=disco",
         "--volume",
         "/var/run/docker.sock:/var/run/docker.sock",
         "--network",
@@ -63,9 +63,8 @@ LOGSPOUT_CMD = " ".join(
         "--env",
         "ALLOW_TTY=true",
         "gliderlabs/logspout",
-        "raw://disco-daemon:9912",
+        "raw://disco-daemon:{port}",
     ]
-)
 
 
 class JsonLogServer:
@@ -76,9 +75,18 @@ class JsonLogServer:
         self.transport = transport
 
     def datagram_received(self, data, addr):
-        json_str = data.decode("utf-8")
-        log_obj = json.loads(json_str)
+        try:
+            json_str = data.decode("utf-8")
+        except UnicodeDecodeError:
+            log.error("Failed to UTF-8 decode log str: %s", data)
+            return
+        try:
+            log_obj = json.loads(json_str)
+        except json.decoder.JSONDecodeError:
+            log.error("Failed to JSON decode log str: %s", json_str)
+            return
         self.log_queue.put_nowait(log_obj)
+
 
     def connection_lost(self, exception):
         try:
@@ -100,13 +108,16 @@ def main(global_config, **settings):
 
     @asgi_app.route("/logs", protocol="websocket")
     async def logs_websocket(scope, receive, send):
+        port = random.randint(10000, 65535)
+        logspout_cmd = LOGSPOUT_CMD.copy()
+        logspout_cmd[-1] = logspout_cmd[-1].format(port=port)
         logspout_process = None
         transport = None
         log_queue = asyncio.Queue()
-        logspout_process = await asyncio.create_subprocess_shell(LOGSPOUT_CMD)
+        logspout_process = await asyncio.create_subprocess_exec(*logspout_cmd)
         loop = asyncio.get_running_loop()
         transport, _ = await loop.create_datagram_endpoint(
-            lambda: JsonLogServer(log_queue), local_addr=("0.0.0.0", 9912)
+            lambda: JsonLogServer(log_queue), local_addr=("0.0.0.0", port)
         )
         receive_websocket_task = asyncio.create_task(receive())
         receive_logs_task = asyncio.create_task(log_queue.get())
