@@ -141,7 +141,7 @@ def image_name(
 
 
 def service_name(project_name: str, service: str, deployment_number: int) -> str:
-    return f"{project_name}-{service}-{deployment_number}"
+    return f"{project_name}-{deployment_number}-{service}"
 
 
 def get_all_volumes() -> list[str]:
