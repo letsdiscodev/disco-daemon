@@ -241,7 +241,9 @@ def process_deployment(with_dbsession, task_body):
         log.info("Stopping previous services for deployment %s", deployment_id)
         for service_name in prev_config["services"]:
             internal_service_name = docker.service_name(
-                db_data["prev_project_name"], service_name, db_data["deployment_number"] - 1
+                db_data["prev_project_name"],
+                service_name,
+                db_data["deployment_number"] - 1,
             )
             log.info(
                 "Stopping previous service %s for deployment %s",
@@ -306,9 +308,23 @@ def process_deployment(with_dbsession, task_body):
     log.info("Deployment %s complete", deployment_id)
 
 
+def set_syslog_service(with_dbsession, task_body):
+    from disco.utils import docker, keyvalues, syslog
+
+    db_data = dict()
+
+    def get_syslog_data(dbsession):
+        db_data["disco_domain"] = keyvalues.get_value(dbsession, "DISCO_DOMAIN")
+        db_data["urls"] = syslog.get_syslog_urls(dbsession)
+
+    with_dbsession(get_syslog_data)
+    docker.set_syslog_service(db_data["disco_domain"], db_data["urls"])
+
+
 HANDLERS = dict(
     PROCESS_GITHUB_WEBHOOK=process_github_webhook,
     PROCESS_DEPLOYMENT=process_deployment,
+    SET_SYSLOG_SERVICE=set_syslog_service,
 )
 
 

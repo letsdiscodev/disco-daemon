@@ -141,7 +141,7 @@ def image_name(
 
 
 def service_name(project_name: str, service: str, deployment_number: int) -> str:
-    return f"disco-{project_name}-{service}-{deployment_number}"
+    return f"{project_name}-{service}-{deployment_number}"
 
 
 def get_all_volumes() -> list[str]:
@@ -205,5 +205,59 @@ def delete_volume(name: str, by_api_key: ApiKey) -> None:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
+    except subprocess.CalledProcessError as ex:
+        raise Exception(ex.stdout.decode("utf-8")) from ex
+
+
+def set_syslog_service(disco_domain: str, syslog_urls: list[str]) -> None:
+    # TODO we may want to just update the existing service instead
+    #      to avoid losing logs while the new service is starting?
+    args = [
+        "docker",
+        "service",
+        "rm",
+        "--name",
+        "disco-syslog",
+    ]
+    try:
+        log.info("Trying to stop existing syslog service")
+        subprocess.run(
+            args=args,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        log.info("Stopped existing syslog service")
+    except subprocess.CalledProcessError:
+        log.info(
+            "Failed to stop existing service. Expected if no syslog service was running"
+        )
+    if len(syslog_urls) == 0:
+        log.info("No syslog URL specified, not starting new syslog service")
+        return
+    log.info("Starting new syslog service")
+    args = [
+        "docker",
+        "service",
+        "create",
+        "--name",
+        "disco-syslog",
+        "--mount",
+        "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+        "--env",
+        f"SYSLOG_HOSTNAME={disco_domain}",
+        "--mode",
+        "global",
+        "gliderlabs/logspout",
+        ",".join(syslog_urls),
+    ]
+    try:
+        subprocess.run(
+            args=args,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        log.info("New syslog service started")
     except subprocess.CalledProcessError as ex:
         raise Exception(ex.stdout.decode("utf-8")) from ex

@@ -1,15 +1,15 @@
-import re
-import random
 import asyncio
 import json
+import logging
+import random
+import re
 
 from asgiref.wsgi import WsgiToAsgi
 from pyramid.config import Configurator
 from pyramid.paster import get_appsettings, setup_logging
 
-import logging
-
 log = logging.getLogger(__name__)
+
 
 class ExtendedWsgiToAsgi(WsgiToAsgi):
     def __init__(self, *args, **kwargs):
@@ -34,6 +34,7 @@ class ExtendedWsgiToAsgi(WsgiToAsgi):
         if re.match(r"^/logs(/([^/]+))?(/([^/]+))?$", scope["path"]):
             return logs_websocket
 
+
 async def logs_websocket(scope, receive, send):
     m = re.match(r"^/logs(/([^/]+))?(/([^/]+))?$", scope["path"])
     assert m is not None
@@ -41,14 +42,19 @@ async def logs_websocket(scope, receive, send):
     service_name = m.group(4)
     port = random.randint(10000, 65535)
     logspout_cmd = LOGSPOUT_CMD.copy()
+    assert logspout_cmd[4] == "{name}"
+    syslog_service = f"disco-syslog-{port}"
+    logspout_cmd[4] = syslog_service
     logspout_cmd[-1] = logspout_cmd[-1].format(port=port)
-    logspout_process = None
     transport = None
     log_queue = asyncio.Queue()
-    logspout_process = await asyncio.create_subprocess_exec(*logspout_cmd)
+    start_logspout_process = await asyncio.create_subprocess_exec(*logspout_cmd)
     loop = asyncio.get_running_loop()
     transport, _ = await loop.create_datagram_endpoint(
-        lambda: JsonLogServer(log_queue=log_queue, project_name=project_name, service_name=service_name), local_addr=("0.0.0.0", port)
+        lambda: JsonLogServer(
+            log_queue=log_queue, project_name=project_name, service_name=service_name
+        ),
+        local_addr=("0.0.0.0", port),
     )
     receive_websocket_task = asyncio.create_task(receive())
     receive_logs_task = asyncio.create_task(log_queue.get())
@@ -76,12 +82,14 @@ async def logs_websocket(scope, receive, send):
                 pass  # no op, shouldn't happen
             elif message["type"] == "websocket.disconnect":
                 websocket_connected = False
-                if logspout_process is not None:
-                    try:
-                        logspout_process.terminate()
-                        await logspout_process.wait()
-                    except Exception:
-                        log.exception("Exception terminating logspout")
+                try:
+                    await start_logspout_process.wait()
+                    rm_logspout_process = await asyncio.create_subprocess_exec(
+                        "docker", "service", "rm", syslog_service
+                    )
+                    await rm_logspout_process.wait()
+                except Exception:
+                    log.exception("Exception terminating logspout")
                 if transport is not None:
                     try:
                         transport.close()
@@ -92,30 +100,38 @@ async def logs_websocket(scope, receive, send):
 
 
 LOGSPOUT_CMD = [
-        "docker",
-        "run",
-        "--env",
-        "BACKLOG=false",
-        "--env",
-        'RAW_FORMAT={ "container" : "{{ .Container.Name }}", '
-        '"labels": {{ toJSON .Container.Config.Labels }}, '
-        '"timestamp": "{{ .Time.Format "2006-01-02T15:04:05Z07:00" }}", '
-        '"message": {{ toJSON .Data }} }',
-        "--env",
-        "EXCLUDE_LABEL=disco",
-        "--volume",
-        "/var/run/docker.sock:/var/run/docker.sock",
-        "--network",
-        "disco-network",
-        "--env",
-        "ALLOW_TTY=true",
-        "gliderlabs/logspout",
-        "raw://disco-daemon:{port}",
-    ]
+    "docker",
+    "service",
+    "create",
+    "--name",
+    "{name}",
+    "--mode",
+    "global",
+    "--env",
+    "BACKLOG=false",
+    "--env",
+    'RAW_FORMAT={ "container" : "{{`{{ .Container.Name }}`}}", '
+    '"labels": {{`{{ toJSON .Container.Config.Labels }}`}}, '
+    '"timestamp": "{{`{{ .Time.Format "2006-01-02T15:04:05Z07:00" }}`}}", '
+    '"message": {{`{{ toJSON .Data }}`}} }',
+    "--mount",
+    "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+    "--network",
+    "disco-network",
+    "--env",
+    "ALLOW_TTY=true",
+    "gliderlabs/logspout",
+    "raw://disco-daemon:{port}",
+]
 
 
 class JsonLogServer:
-    def __init__(self, log_queue, project_name: str | None=None, service_name: str | None =None):
+    def __init__(
+        self,
+        log_queue,
+        project_name: str | None = None,
+        service_name: str | None = None,
+    ):
         self.log_queue = log_queue
         self.project_name = project_name
         self.service_name = service_name
@@ -141,7 +157,6 @@ class JsonLogServer:
             if log_obj["labels"].get("disco.service.name") != self.service_name:
                 return
         self.log_queue.put_nowait(log_obj)
-
 
     def connection_lost(self, exception):
         try:
