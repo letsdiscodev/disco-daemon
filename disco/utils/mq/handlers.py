@@ -2,10 +2,12 @@ import json
 import logging
 from typing import Any
 
+from disco.models.db import Session
+
 log = logging.getLogger(__name__)
 
 
-def process_github_webhook(with_dbsession, task_body):
+def process_github_webhook(task_body):
     from disco.utils.deployments import create_deployment
     from disco.utils.github import get_commit_info_from_webhook_push
     from disco.utils.projects import get_project_by_id
@@ -19,22 +21,21 @@ def process_github_webhook(with_dbsession, task_body):
         log.info("Branch was not master or main, skipping")
         return
 
-    def start_github_build(dbsession):
-        project = get_project_by_id(dbsession, project_id)
-        if project is None:
-            raise Exception(f"Project {project_id} not found")
-        create_deployment(
-            dbsession=dbsession,
-            project=project,
-            commit_hash=commit_hash,
-            disco_config=None,
-            by_api_key=None,
-        )
+    with Session() as dbsession:
+        with dbsession.begin():
+            project = get_project_by_id(dbsession, project_id)
+            if project is None:
+                raise Exception(f"Project {project_id} not found")
+            create_deployment(
+                dbsession=dbsession,
+                project=project,
+                commit_hash=commit_hash,
+                disco_config=None,
+                by_api_key=None,
+            )
 
-    with_dbsession(start_github_build)
 
-
-def process_deployment(with_dbsession, task_body):
+def process_deployment(task_body):
     from disco.utils import caddy, docker, github, keyvalues
     from disco.utils.deployments import (
         BUILD_STATUS,
@@ -48,42 +49,40 @@ def process_deployment(with_dbsession, task_body):
     deployment_id = task_body["deployment_id"]
 
     def _set_deployment_status(status: BUILD_STATUS) -> None:
-        def inner(dbsession):
-            deployment = get_deployment_by_id(dbsession, deployment_id)
-            if deployment is None:
-                raise Exception(f"Deployment {deployment_id} not found")
-            set_deployment_status(deployment, status)
-
-        with_dbsession(inner)
+        with Session() as dbsession:
+            with dbsession.begin():
+                deployment = get_deployment_by_id(dbsession, deployment_id)
+                if deployment is None:
+                    raise Exception(f"Deployment {deployment_id} not found")
+                set_deployment_status(deployment, status)
 
     _set_deployment_status("STARTED")
 
-    def get_db_data(dbsession):
-        log.info("Getting data from database for deployment %s", deployment_id)
-        deployment = get_deployment_by_id(dbsession, deployment_id)
-        if deployment is None:
-            raise Exception(f"Deployment {deployment_id} not found")
-        prev_deployment = get_previous_deployment(dbsession, deployment)
-        db_data["project_id"] = deployment.project.id
-        db_data["project_domain"] = deployment.project.domain
-        db_data["project_name"] = deployment.project.name
-        db_data["github_repo"] = deployment.project.github_repo
-        db_data["github_host"] = deployment.project.github_host
-        db_data["deployment_number"] = deployment.number
-        db_data["commit_hash"] = deployment.commit_hash
-        db_data["disco_config_str"] = deployment.disco_config
-        db_data["env_variables"] = [
-            (env_var.name, env_var.value) for env_var in deployment.env_variables
-        ]
-        db_data["disco_domain"] = keyvalues.get_value(dbsession, "DISCO_DOMAIN")
-        db_data["prev_project_name"] = (
-            prev_deployment.project_name if prev_deployment is not None else None
-        )
-        db_data["prev_disco_config_str"] = (
-            prev_deployment.disco_config if prev_deployment is not None else None
-        )
-
-    with_dbsession(get_db_data)
+    with Session() as dbsession:
+        with dbsession.begin():
+            log.info("Getting data from database for deployment %s", deployment_id)
+            deployment = get_deployment_by_id(dbsession, deployment_id)
+            if deployment is None:
+                raise Exception(f"Deployment {deployment_id} not found")
+            prev_deployment = get_previous_deployment(dbsession, deployment)
+            db_data["project_id"] = deployment.project.id
+            db_data["project_domain"] = deployment.project.domain
+            db_data["project_name"] = deployment.project.name
+            db_data["github_repo"] = deployment.project.github_repo
+            db_data["github_host"] = deployment.project.github_host
+            db_data["deployment_number"] = deployment.number
+            db_data["commit_hash"] = deployment.commit_hash
+            db_data["disco_config_str"] = deployment.disco_config
+            db_data["env_variables"] = [
+                (env_var.name, env_var.value) for env_var in deployment.env_variables
+            ]
+            db_data["disco_domain"] = keyvalues.get_value(dbsession, "DISCO_DOMAIN")
+            db_data["prev_project_name"] = (
+                prev_deployment.project_name if prev_deployment is not None else None
+            )
+            db_data["prev_disco_config_str"] = (
+                prev_deployment.disco_config if prev_deployment is not None else None
+            )
 
     if db_data["commit_hash"] is not None:
         _set_deployment_status("PULLING")
@@ -113,11 +112,10 @@ def process_deployment(with_dbsession, task_body):
 
             db_data["disco_config_str"] = disco_config_str
 
-            def save_disco_config(dbsession):
-                deployment = get_deployment_by_id(dbsession, deployment_id)
-                deployment.disco_config = disco_config_str
-
-            with_dbsession(save_disco_config)
+            with Session() as dbsession:
+                with dbsession.begin():
+                    deployment = get_deployment_by_id(dbsession, deployment_id)
+                    deployment.disco_config = disco_config_str
 
     if db_data["disco_config_str"] is None:
         log.info("Falling back to default config for deployment %s", deployment_id)
@@ -308,16 +306,16 @@ def process_deployment(with_dbsession, task_body):
     log.info("Deployment %s complete", deployment_id)
 
 
-def set_syslog_service(with_dbsession, task_body):
+def set_syslog_service(task_body):
     from disco.utils import docker, keyvalues, syslog
 
     db_data = dict()
 
-    def get_syslog_data(dbsession):
-        db_data["disco_domain"] = keyvalues.get_value(dbsession, "DISCO_DOMAIN")
-        db_data["urls"] = syslog.get_syslog_urls(dbsession)
+    with Session() as dbsession:
+        with dbsession.begin():
+            db_data["disco_domain"] = keyvalues.get_value(dbsession, "DISCO_DOMAIN")
+            db_data["urls"] = syslog.get_syslog_urls(dbsession)
 
-    with_dbsession(get_syslog_data)
     docker.set_syslog_service(db_data["disco_domain"], db_data["urls"])
 
 

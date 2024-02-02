@@ -1,18 +1,12 @@
 alembic==1.12.1
-asgiref==3.7.2
 bcrypt==4.0.1
-colander==2.0
-cornice==6.0.1
-Hypercorn==0.16.0
+fastapi==0.109.0
 mypy==1.6.1
-pyramid==2.0.2
-pyramid-retry==2.1.1
-pyramid-tm==2.5
+pydantic==2.6.0
 pytest==7.4.3
 requests==2.31.0
 ruff==0.1.6
 SQLAlchemy==1.4.49
-transaction==3.1.0
+uvicorn==0.27.0
 websockets==12.0
-zope.sqlalchemy==3.1
 -e .

@@ -1,0 +1,138 @@
+import asyncio
+import json
+import logging
+import random
+
+from fastapi import APIRouter, WebSocket
+
+log = logging.getLogger(__name__)
+
+
+router = APIRouter()
+
+# TODO secure
+
+
+@router.websocket("/logs")
+async def logs_all(websocket: WebSocket) -> None:
+    await serve_logs(websocket=websocket, project_name=None, service_name=None)
+
+
+@router.websocket("/logs/{project_name}")
+async def logs_project(websocket: WebSocket, project_name: str) -> None:
+    await serve_logs(websocket=websocket, project_name=project_name, service_name=None)
+
+
+@router.websocket("/logs/{project_name}/{service_name}")
+async def logs_project_service(
+    websocket: WebSocket, project_name: str, service_name: str
+) -> None:
+    await serve_logs(
+        websocket=websocket, project_name=project_name, service_name=service_name
+    )
+
+
+async def serve_logs(
+    websocket: WebSocket, project_name: str | None, service_name: str | None
+) -> None:
+    port = random.randint(10000, 65535)
+    logspout_cmd = LOGSPOUT_CMD.copy()
+    assert logspout_cmd[4] == "{name}"
+    syslog_service = f"disco-syslog-{port}"
+    logspout_cmd[4] = syslog_service
+    logspout_cmd[-1] = logspout_cmd[-1].format(port=port)
+    transport = None
+    log_queue: asyncio.Queue[dict[str, str | dict[str, str]]] = asyncio.Queue()
+    start_logspout_process = await asyncio.create_subprocess_exec(*logspout_cmd)
+    loop = asyncio.get_running_loop()
+    transport, _ = await loop.create_datagram_endpoint(
+        lambda: JsonLogServer(
+            log_queue=log_queue, project_name=project_name, service_name=service_name
+        ),
+        local_addr=("0.0.0.0", port),
+    )
+    await websocket.accept()
+    try:
+        while True:
+            log_obj = await log_queue.get()
+            await websocket.send_text(json.dumps(log_obj))
+    finally:
+        try:
+            await start_logspout_process.wait()
+            rm_logspout_process = await asyncio.create_subprocess_exec(
+                "docker", "service", "rm", syslog_service
+            )
+            await rm_logspout_process.wait()
+        except Exception:
+            log.exception("Exception terminating logspout")
+        if transport is not None:
+            try:
+                transport.close()
+            except Exception:
+                log.exception("Exception closing transport")
+
+
+LOGSPOUT_CMD = [
+    "docker",
+    "service",
+    "create",
+    "--name",
+    "{name}",
+    "--mode",
+    "global",
+    "--env",
+    "BACKLOG=false",
+    "--env",
+    'RAW_FORMAT={ "container" : "{{`{{ .Container.Name }}`}}", '
+    '"labels": {{`{{ toJSON .Container.Config.Labels }}`}}, '
+    '"timestamp": "{{`{{ .Time.Format "2006-01-02T15:04:05Z07:00" }}`}}", '
+    '"message": {{`{{ toJSON .Data }}`}} }',
+    "--mount",
+    "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+    "--network",
+    "disco-network",
+    "--env",
+    "ALLOW_TTY=true",
+    "gliderlabs/logspout",
+    "raw://disco-daemon:{port}",
+]
+
+
+class JsonLogServer(asyncio.DatagramProtocol):
+    def __init__(
+        self,
+        log_queue,
+        project_name: str | None = None,
+        service_name: str | None = None,
+    ):
+        self.log_queue = log_queue
+        self.project_name = project_name
+        self.service_name = service_name
+
+    def connection_made(self, transport):
+        self.transport = transport
+
+    def datagram_received(self, data, addr):
+        try:
+            json_str = data.decode("utf-8")
+        except UnicodeDecodeError:
+            log.error("Failed to UTF-8 decode log str: %s", data)
+            return
+        try:
+            log_obj = json.loads(json_str)
+        except json.decoder.JSONDecodeError:
+            log.error("Failed to JSON decode log str: %s", json_str)
+            return
+        if self.project_name is not None:
+            if log_obj["labels"].get("disco.project.name") != self.project_name:
+                return
+        if self.service_name is not None:
+            if log_obj["labels"].get("disco.service.name") != self.service_name:
+                return
+        self.log_queue.put_nowait(log_obj)
+
+    def connection_lost(self, exception):
+        try:
+            self.transport.close()
+        except Exception:
+            pass
