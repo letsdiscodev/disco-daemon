@@ -15,7 +15,7 @@ def save(dbsession: DBSession, source: str, text: str) -> None:
 
 def get_next(
     dbsession: DBSession, source: str, after: datetime | None = None
-) -> list[CommandOutput]:
+) -> CommandOutput | None:
     query = dbsession.query(CommandOutput).filter(CommandOutput.source == source)
     if after is not None:
         query = query.filter(CommandOutput.created > after)

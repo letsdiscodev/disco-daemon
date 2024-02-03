@@ -3,36 +3,38 @@ import json
 import logging
 import random
 
-from fastapi import APIRouter, WebSocket
+from fastapi import APIRouter, Depends
+from sse_starlette.sse import EventSourceResponse
+
+from disco.auth import get_api_key_wo_tx
 
 log = logging.getLogger(__name__)
 
 
-router = APIRouter()
+log = logging.getLogger(__name__)
 
 
-@router.websocket("/logs")
-async def logs_all(websocket: WebSocket) -> None:
-    await serve_logs(websocket=websocket, project_name=None, service_name=None)
+router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 
 
-@router.websocket("/logs/{project_name}")
-async def logs_project(websocket: WebSocket, project_name: str) -> None:
-    await serve_logs(websocket=websocket, project_name=project_name, service_name=None)
+@router.get("/logs")
+async def logs_all():
+    return EventSourceResponse(read_logs(project_name=None, service_name=None))
 
 
-@router.websocket("/logs/{project_name}/{service_name}")
-async def logs_project_service(
-    websocket: WebSocket, project_name: str, service_name: str
-) -> None:
-    await serve_logs(
-        websocket=websocket, project_name=project_name, service_name=service_name
+@router.get("/logs/{project_name}")
+async def logs_project(project_name: str):
+    return EventSourceResponse(read_logs(project_name=project_name, service_name=None))
+
+
+@router.get("/logs/{project_name}/{service_name}")
+async def logs_project_service(project_name: str, service_name: str):
+    return EventSourceResponse(
+        read_logs(project_name=project_name, service_name=service_name)
     )
 
 
-async def serve_logs(
-    websocket: WebSocket, project_name: str | None, service_name: str | None
-) -> None:
+async def read_logs(project_name: str | None, service_name: str | None):
     port = random.randint(10000, 65535)
     logspout_cmd = LOGSPOUT_CMD.copy()
     assert logspout_cmd[4] == "{name}"
@@ -49,11 +51,10 @@ async def serve_logs(
         ),
         local_addr=("0.0.0.0", port),
     )
-    await websocket.accept()
     try:
         while True:
             log_obj = await log_queue.get()
-            await websocket.send_text(json.dumps(log_obj))
+            yield json.dumps(log_obj)
     finally:
         try:
             await start_logspout_process.wait()
