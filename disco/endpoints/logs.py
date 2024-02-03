@@ -10,8 +10,6 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# TODO secure
-
 
 @router.websocket("/logs")
 async def logs_all(websocket: WebSocket) -> None:

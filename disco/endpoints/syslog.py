@@ -7,8 +7,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.auth import get_api_key
+from disco.endpoints.dependencies import get_db
 from disco.models import ApiKey
-from disco.models.db import get_db
 from disco.utils.syslog import add_syslog_url, get_syslog_urls, remove_syslog_url
 
 log = logging.getLogger(__name__)

@@ -1,6 +1,7 @@
 from sqlalchemy.orm import configure_mappers
 
 from disco.models.apikey import ApiKey  # noqa: F401
+from disco.models.commandoutput import CommandOutput  # noqa: F401
 from disco.models.deployment import Deployment  # noqa: F401
 from disco.models.deploymentenvironmentvariable import (
     DeploymentEnvironmentVariable,  # noqa: F401

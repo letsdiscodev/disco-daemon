@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import subprocess
+from typing import Callable
 
 from disco.models import ApiKey
 from disco.utils.filesystem import project_path
@@ -8,7 +9,13 @@ from disco.utils.filesystem import project_path
 log = logging.getLogger(__name__)
 
 
-def build_image(image: str, project_id: str, dockerfile: str, context: str) -> None:
+def build_image(
+    image: str,
+    project_id: str,
+    dockerfile: str,
+    context: str,
+    log_output: Callable[[str], None],
+) -> None:
     args = [
         "docker",
         "build",
@@ -19,16 +26,17 @@ def build_image(image: str, project_id: str, dockerfile: str, context: str) -> N
         dockerfile,
         context,
     ]
-    try:
-        subprocess.run(
-            args=args,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            cwd=project_path(project_id),
-        )
-    except subprocess.CalledProcessError as ex:
-        raise Exception(ex.stdout.decode("utf-8")) from ex
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        cwd=project_path(project_id),
+    )
+    for line in process.stdout:
+        log_output(line.decode("utf-8"))
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
 
 
 def start_service(
@@ -40,6 +48,7 @@ def start_service(
     volumes: list[tuple[str, str]],
     published_ports: list[tuple[int, int, str]],
     command: str | None,
+    log_output: Callable[[str], None],
 ) -> None:
     more_args = []
     for var_name, var_value in env_variables:
@@ -79,50 +88,53 @@ def start_service(
         image,
         *(command.split() if command is not None else []),
     ]
-    try:
-        subprocess.run(
-            args=args,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-    except subprocess.CalledProcessError as ex:
-        raise Exception(ex.stdout.decode("utf-8")) from ex
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    for line in process.stdout:
+        log_output(line.decode("utf-8"))
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
 
 
-def push_image(image) -> None:
+def push_image(image: str, log_output: Callable[[str], None]) -> None:
     args = [
         "docker",
         "push",
         image,
     ]
-    try:
-        subprocess.run(
-            args=args,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-    except subprocess.CalledProcessError as ex:
-        raise Exception(ex.stdout.decode("utf-8")) from ex
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    for line in process.stdout:
+        log_output(line.decode("utf-8"))
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
 
 
-def stop_service(name) -> None:
+def stop_service(name: str, log_output: Callable[[str], None]) -> None:
     args = [
         "docker",
         "service",
         "rm",
         name,
     ]
-    try:
-        subprocess.run(
-            args=args,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-    except subprocess.CalledProcessError as ex:
-        raise Exception(ex.stdout.decode("utf-8")) from ex
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    for line in process.stdout:
+        log_output(line.decode("utf-8"))
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
 
 
 def image_name(

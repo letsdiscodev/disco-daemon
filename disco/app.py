@@ -1,9 +1,9 @@
+import logging
+
 from fastapi import FastAPI
 
 from disco.endpoints import deployments, envvariables, logs, projects, syslog
 from disco.endpoints.webhooks import github
-
-import logging
 
 logging.basicConfig(level=logging.INFO)
 
@@ -23,5 +23,6 @@ app.include_router(github.router)
 @app.get("/")
 def read_main():
     return {"disco": True}
+
 
 log.info("Ready to disco")

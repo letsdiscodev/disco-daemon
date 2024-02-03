@@ -69,6 +69,17 @@ def get_deployment_by_id(dbsession: DBSession, deployment_id: str) -> Deployment
     return dbsession.query(Deployment).get(deployment_id)
 
 
+def get_deployment_by_number(
+    dbsession: DBSession, project: Project, deployment_number: int
+) -> Deployment | None:
+    return (
+        dbsession.query(Deployment)
+        .filter(Deployment.project == project)
+        .filter(Deployment.number == deployment_number)
+        .first()
+    )
+
+
 BUILD_STATUS = Literal[
     "QUEUED",
     "STARTED",

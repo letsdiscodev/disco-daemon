@@ -6,9 +6,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.auth import get_api_key
-from disco.endpoints.loaders import get_project_from_url
+from disco.endpoints.dependencies import get_db, get_project_from_url
 from disco.models import ApiKey, Project, ProjectEnvironmentVariable
-from disco.models.db import get_db
 from disco.utils.envvariables import (
     delete_env_variable,
     get_env_variable_by_name,
