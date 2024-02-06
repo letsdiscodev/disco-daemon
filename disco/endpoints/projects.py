@@ -40,6 +40,7 @@ def projects_post(
             "id": project.id,
             "name": project.name,
             "githubRepo": project.github_repo,
+            "domain": project.domain,
         },
         "sshKeyPub": ssh_key_pub,
     }
@@ -54,6 +55,7 @@ def projects_get(dbsession: Annotated[DBSession, Depends(get_db)]):
                 "id": project.id,
                 "name": project.name,
                 "githubRepo": project.github_repo,
+                "domain": project.domain,
             }
             for project in projects
         ],

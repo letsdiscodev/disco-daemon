@@ -24,8 +24,11 @@ def create_project(
         domain=domain,
         ssh_key_name=name,
     )
-    github_host, ssh_key_pub = create_deploy_key(name)
-    project.github_host = github_host
+    if github_repo is not None:
+        github_host, ssh_key_pub = create_deploy_key(name)
+        project.github_host = github_host
+    else:
+        ssh_key_pub = None
     dbsession.add(project)
     if domain is not None:
         add_project_route(project_id=project.id, domain=project.domain)

@@ -138,7 +138,7 @@ def stop_service(name: str, log_output: Callable[[str], None]) -> None:
 
 
 def image_name(
-    disco_domain: str,
+    registry_host: str,
     project_id: str,
     deployment_number: int,
     dockerfile: str,
@@ -148,7 +148,7 @@ def image_name(
     h.update(f"dockerfile={dockerfile}&context={context}".encode("utf-8"))
     config_hash = h.hexdigest()
     return (
-        f"{disco_domain}/disco/project-{project_id}-{config_hash}:{deployment_number}"
+        f"{registry_host}/disco/project-{project_id}-{config_hash}:{deployment_number}"
     )
 
 
@@ -221,7 +221,7 @@ def delete_volume(name: str, by_api_key: ApiKey) -> None:
         raise Exception(ex.stdout.decode("utf-8")) from ex
 
 
-def set_syslog_service(disco_domain: str, syslog_urls: list[str]) -> None:
+def set_syslog_service(disco_host: str, syslog_urls: list[str]) -> None:
     # TODO we may want to just update the existing service instead
     #      to avoid losing logs while the new service is starting?
     args = [
@@ -257,7 +257,7 @@ def set_syslog_service(disco_domain: str, syslog_urls: list[str]) -> None:
         "--mount",
         "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
         "--env",
-        f"SYSLOG_HOSTNAME={disco_domain}",
+        f"SYSLOG_HOSTNAME={disco_host}",
         "--mode",
         "global",
         "gliderlabs/logspout",

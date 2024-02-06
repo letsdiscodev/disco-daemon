@@ -22,7 +22,12 @@ app.include_router(github.router)
 
 @app.get("/")
 def read_main():
-    return {"disco": True}
+    return {"disco": "/"}
 
 
-log.info("Ready to disco")
+@app.get("/.disco")
+def read_main_disco():
+    return {"disco": "/.disco"}
+
+
+log.info("Ready to disco 2")

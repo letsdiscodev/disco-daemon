@@ -5,6 +5,7 @@ from fastapi import Depends, HTTPException
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.utils.projects import get_project_by_name
+from disco.models.db import Session
 
 
 def get_db():

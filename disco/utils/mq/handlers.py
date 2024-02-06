@@ -86,7 +86,9 @@ def process_deployment(task_body):
                     (env_var.name, env_var.value)
                     for env_var in deployment.env_variables
                 ]
-                db_data["disco_domain"] = keyvalues.get_value(dbsession, "DISCO_DOMAIN")
+                db_data["disco_host"] = keyvalues.get_value(dbsession, "DISCO_HOST")
+                db_data["registry_host"] = keyvalues.get_value(dbsession, "REGISTRY_HOST")
+
                 db_data["prev_project_name"] = (
                     prev_deployment.project_name
                     if prev_deployment is not None
@@ -171,7 +173,7 @@ def process_deployment(task_body):
                 # Docker will take care of pulling when service is created
                 continue
             image = docker.image_name(
-                disco_domain=db_data["disco_domain"],
+                registry_host=db_data["registry_host"],
                 project_id=db_data["project_id"],
                 deployment_number=db_data["deployment_number"],
                 dockerfile=_dockerfile(service),
@@ -217,7 +219,7 @@ def process_deployment(task_body):
                 image = _pull(service)
             else:
                 image = docker.image_name(
-                    disco_domain=db_data["disco_domain"],
+                    registry_host=db_data["registry_host"],
                     project_id=db_data["project_id"],
                     deployment_number=db_data["deployment_number"],
                     dockerfile=_dockerfile(service),
@@ -251,7 +253,6 @@ def process_deployment(task_body):
             log_output("Sending traffic to new web service\n")
             caddy.serve_service(
                 db_data["project_id"],
-                db_data["project_domain"],
                 internal_service_name,
                 port=_port(config["services"]["web"]),
             )
@@ -280,7 +281,7 @@ def process_deployment(task_body):
                 image = _pull(service)
             else:
                 image = docker.image_name(
-                    disco_domain=db_data["disco_domain"],
+                    registry_host=db_data["registry_host"],
                     project_id=db_data["project_id"],
                     deployment_number=db_data["deployment_number"],
                     dockerfile=_dockerfile(service),
@@ -314,7 +315,6 @@ def process_deployment(task_body):
             log_output("Sending traffic to new web service\n")
             caddy.serve_service(
                 db_data["project_id"],
-                db_data["project_domain"],
                 internal_service_name,
                 port=_port(config["services"]["web"]),
             )
@@ -331,10 +331,10 @@ def set_syslog_service(task_body):
 
     with Session() as dbsession:
         with dbsession.begin():
-            db_data["disco_domain"] = keyvalues.get_value(dbsession, "DISCO_DOMAIN")
+            db_data["disco_host"] = keyvalues.get_value(dbsession, "DISCO_HOST")
             db_data["urls"] = syslog.get_syslog_urls(dbsession)
 
-    docker.set_syslog_service(db_data["disco_domain"], db_data["urls"])
+    docker.set_syslog_service(db_data["disco_host"], db_data["urls"])
 
 
 HANDLERS = dict(
