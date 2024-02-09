@@ -4,11 +4,11 @@ from anyio import Path
 from fastapi import Depends, HTTPException
 from sqlalchemy.orm.session import Session as DBSession
 
+from disco.models.db import Session
 from disco.utils.projects import get_project_by_name
 
 
 def get_db():
-    global Session
     with Session() as dbsession:
         with dbsession.begin():
             yield dbsession
