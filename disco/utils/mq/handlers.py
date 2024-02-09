@@ -87,7 +87,9 @@ def process_deployment(task_body):
                     for env_var in deployment.env_variables
                 ]
                 db_data["disco_host"] = keyvalues.get_value(dbsession, "DISCO_HOST")
-                db_data["registry_host"] = keyvalues.get_value(dbsession, "REGISTRY_HOST")
+                db_data["registry_host"] = keyvalues.get_value(
+                    dbsession, "REGISTRY_HOST"
+                )
 
                 db_data["prev_project_name"] = (
                     prev_deployment.project_name

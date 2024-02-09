@@ -90,14 +90,8 @@ def add_project_route(project_id: str, domain: str) -> bool:
                         "handle": [
                             {
                                 "handler": "reverse_proxy",
-                                "rewrite": {
-                                    "strip_path_prefix": "/.disco"
-                                },
-                                "upstreams": [
-                                    {
-                                        "dial": "disco-daemon:6543"
-                                    }
-                                ],
+                                "rewrite": {"strip_path_prefix": "/.disco"},
+                                "upstreams": [{"dial": "disco-daemon:6543"}],
                             }
                         ],
                     },
@@ -109,7 +103,7 @@ def add_project_route(project_id: str, domain: str) -> bool:
                                 "upstreams": [{"dial": "disco-daemon:6543"}],
                             }
                         ]
-                    }
+                    },
                 ],
             }
         ],
