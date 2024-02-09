@@ -16,7 +16,7 @@ def create_project(
     github_repo: str | None,
     domain: str | None,
     by_api_key: ApiKey,
-) -> tuple[Project, str]:
+) -> tuple[Project, str | None]:
     project = Project(
         id=uuid.uuid4().hex,
         name=name,

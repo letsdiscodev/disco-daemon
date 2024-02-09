@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import subprocess
+from multiprocessing import cpu_count
 from typing import Callable
 
 from disco.models import ApiKey
@@ -19,6 +20,11 @@ def build_image(
     args = [
         "docker",
         "build",
+        "--cpu-period",
+        "100000",  # default
+        "--cpu-quota",
+        # use half of the CPU time
+        str(int(100000 * cpu_count() / 2)),
         "--no-cache",
         "--tag",
         image,
