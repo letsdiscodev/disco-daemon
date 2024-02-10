@@ -1,5 +1,6 @@
 import logging
 import uuid
+from secrets import token_hex
 
 from sqlalchemy.orm.session import Session as DBSession
 
@@ -27,6 +28,7 @@ def create_project(
     if github_repo is not None:
         github_host, ssh_key_pub = create_deploy_key(name)
         project.github_host = github_host
+        project.github_webhook_token = token_hex(16)
     else:
         ssh_key_pub = None
     dbsession.add(project)

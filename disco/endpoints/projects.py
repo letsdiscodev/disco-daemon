@@ -41,6 +41,7 @@ def projects_post(
             "name": project.name,
             "githubRepo": project.github_repo,
             "domain": project.domain,
+            "githubWebhookToken": project.github_webhook_token,
         },
         "sshKeyPub": ssh_key_pub,
     }
@@ -56,6 +57,7 @@ def projects_get(dbsession: Annotated[DBSession, Depends(get_db)]):
                 "name": project.name,
                 "githubRepo": project.github_repo,
                 "domain": project.domain,
+                "githubWebhookToken": project.github_webhook_token,
             }
             for project in projects
         ],
