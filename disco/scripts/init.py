@@ -2,6 +2,7 @@
 import logging
 import sys
 
+import disco
 from disco.models.db import Session, engine
 from disco.models.meta import metadata
 from disco.utils import caddy, keyvalues
@@ -13,6 +14,9 @@ def main(argv=sys.argv):
     metadata.create_all(engine)
     with Session() as dbsession:
         with dbsession.begin():
+            keyvalues.set_value(
+                dbsession=dbsession, key="DISCO_VERSION", value=disco.__version__
+            )
             keyvalues.set_value(dbsession=dbsession, key="DISCO_IP", value=disco_ip)
             keyvalues.set_value(dbsession=dbsession, key="DISCO_HOST", value=disco_ip)
             keyvalues.set_value(

@@ -1,8 +1,10 @@
 from setuptools import find_packages, setup
 
+import disco
+
 setup(
     name="disco",
-    version="0.0",
+    version=disco.__version__,
     description="disco",
     classifiers=[],
     author="",
