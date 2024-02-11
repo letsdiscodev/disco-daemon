@@ -34,7 +34,7 @@ def create_project(
         ssh_key_pub = None
     dbsession.add(project)
     if domain is not None:
-        add_project_route(project_id=project.id, domain=project.domain)
+        add_project_route(project_name=project.name, domain=project.domain)
     log.info("%s created project %s", by_api_key.log(), project.log())
     return project, ssh_key_pub
 
@@ -69,11 +69,11 @@ def delete_project(dbsession: DBSession, project: Project, by_api_key: ApiKey) -
         except Exception:
             log.info("Failed to remove SSH deploy key for project %s", project.name)
         try:
-            github.remove_repo(project.id)
+            github.remove_repo(project.name)
         except Exception:
             log.info("Failed to remove Github repo for project %s", project.name)
     try:
-        caddy.remove_project_route(project.id)
+        caddy.remove_project_route(project.name)
     except Exception:
         log.info("Failed to remove reverse proxy route for project %s", project.name)
     services = docker.list_services_for_project(project.name)

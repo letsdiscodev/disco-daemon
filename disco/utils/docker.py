@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 def build_image(
     image: str,
-    project_id: str,
+    project_name: str,
     dockerfile: str,
     context: str,
     log_output: Callable[[str], None],
@@ -35,7 +35,7 @@ def build_image(
         args=args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        cwd=project_path(project_id),
+        cwd=project_path(project_name),
     )
     assert process.stdout is not None
     for line in process.stdout:
@@ -178,7 +178,7 @@ def list_services_for_project(project_name: str) -> list[str]:
 
 def image_name(
     registry_host: str,
-    project_id: str,
+    project_name: str,
     deployment_number: int,
     dockerfile: str,
     context: str,
@@ -186,9 +186,7 @@ def image_name(
     h = hashlib.new("sha256")
     h.update(f"dockerfile={dockerfile}&context={context}".encode("utf-8"))
     config_hash = h.hexdigest()
-    return (
-        f"{registry_host}/disco/project-{project_id}-{config_hash}:{deployment_number}"
-    )
+    return f"{registry_host}/disco/project-{project_name}-{config_hash}:{deployment_number}"
 
 
 def service_name(project_name: str, service: str, deployment_number: int) -> str:

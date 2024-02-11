@@ -10,14 +10,14 @@ from disco.utils.filesystem import project_path, projects_root
 log = logging.getLogger(__name__)
 
 
-def fetch(project_id: str, log_output: Callable[[str], None]) -> None:
-    log.info("Pulling from Github project %s", project_id)
+def fetch(project_name: str, log_output: Callable[[str], None]) -> None:
+    log.info("Pulling from Github project %s", project_name)
     args = ["git", "fetch", "origin"]
     process = subprocess.Popen(
         args=args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        cwd=project_path(project_id),
+        cwd=project_path(project_name),
     )
     assert process.stdout is not None
     for line in process.stdout:
@@ -29,14 +29,14 @@ def fetch(project_id: str, log_output: Callable[[str], None]) -> None:
 
 
 def clone_project(
-    project_id: str,
+    project_name: str,
     github_repo: str,
     github_host: str,
     log_output: Callable[[str], None],
 ) -> None:
-    log.info("Cloning from Github project %s (%s)", project_id, github_repo)
+    log.info("Cloning from Github project %s (%s)", project_name, github_repo)
     url = github_repo.replace("github.com", github_host)
-    args = ["git", "clone", url, project_path(project_id)]
+    args = ["git", "clone", url, project_path(project_name)]
     process = subprocess.Popen(
         args=args,
         stdout=subprocess.PIPE,
@@ -53,15 +53,17 @@ def clone_project(
 
 
 def checkout_commit(
-    project_id: str, commit_hash: str, log_output: Callable[[str], None]
+    project_name: str, commit_hash: str, log_output: Callable[[str], None]
 ) -> None:
-    log.info("Checking out commit from Github project %s: %s", project_id, commit_hash)
+    log.info(
+        "Checking out commit from Github project %s: %s", project_name, commit_hash
+    )
     args = ["git", "checkout", commit_hash]
     process = subprocess.Popen(
         args=args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        cwd=project_path(project_id),
+        cwd=project_path(project_name),
     )
     assert process.stdout is not None
     for line in process.stdout:
@@ -88,5 +90,5 @@ def _branch_from_refs(refs: str) -> str:
     return match.group("branch")
 
 
-def remove_repo(project_id: str) -> None:
-    shutil.rmtree(project_path(project_id))
+def remove_repo(project_name: str) -> None:
+    shutil.rmtree(project_path(project_name))

@@ -37,7 +37,6 @@ def projects_post(
     )
     return {
         "project": {
-            "id": project.id,
             "name": project.name,
             "githubRepo": project.github_repo,
             "domain": project.domain,
@@ -53,7 +52,6 @@ def projects_get(dbsession: Annotated[DBSession, Depends(get_db)]):
     return {
         "projects": [
             {
-                "id": project.id,
                 "name": project.name,
                 "githubRepo": project.github_repo,
                 "domain": project.domain,

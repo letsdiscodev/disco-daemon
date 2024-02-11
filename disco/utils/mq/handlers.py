@@ -78,7 +78,6 @@ def process_deployment(task_body):
                 if deployment is None:
                     raise Exception(f"Deployment {deployment_id} not found")
                 prev_deployment = get_previous_deployment(dbsession, deployment)
-                db_data["project_id"] = deployment.project.id
                 db_data["project_domain"] = deployment.project.domain
                 db_data["project_name"] = deployment.project.name
                 db_data["github_repo"] = deployment.project.github_repo
@@ -112,24 +111,26 @@ def process_deployment(task_body):
 
         if db_data["commit_hash"] is not None:
             log_output(f"Deployment of git {db_data['commit_hash']}\n")
-            if not project_folder_exists(db_data["project_id"]):
+            if not project_folder_exists(db_data["project_name"]):
                 log_output(f"Cloning project from {db_data['github_repo']}\n")
                 github.clone_project(
-                    project_id=db_data["project_id"],
+                    project_name=db_data["project_name"],
                     github_repo=db_data["github_repo"],
                     github_host=db_data["github_host"],
                     log_output=log_output,
                 )
             else:
                 log_output("Fetching latest commits from git repo\n")
-                github.fetch(project_id=db_data["project_id"], log_output=log_output)
+                github.fetch(
+                    project_name=db_data["project_name"], log_output=log_output
+                )
             github.checkout_commit(
-                db_data["project_id"], db_data["commit_hash"], log_output=log_output
+                db_data["project_name"], db_data["commit_hash"], log_output=log_output
             )
 
         if db_data["disco_config_str"] is None:
             log_output("Reading Disco config from project folder\n")
-            disco_config_str = read_disco_file(db_data["project_id"])
+            disco_config_str = read_disco_file(db_data["project_name"])
             if disco_config_str is not None:
                 log_output("Found disco.json\n")
 
@@ -178,7 +179,7 @@ def process_deployment(task_body):
                 continue
             image = docker.image_name(
                 registry_host=db_data["registry_host"],
-                project_id=db_data["project_id"],
+                project_name=db_data["project_name"],
                 deployment_number=db_data["deployment_number"],
                 dockerfile=_dockerfile(service),
                 context=_context(service),
@@ -188,7 +189,7 @@ def process_deployment(task_body):
                 log_output(f"Building image of {service_name}\n")
                 docker.build_image(
                     image=image,
-                    project_id=db_data["project_id"],
+                    project_name=db_data["project_name"],
                     dockerfile=_dockerfile(service),
                     context=_context(service),
                     log_output=log_output,
@@ -246,7 +247,7 @@ def process_deployment(task_body):
             else:
                 image = docker.image_name(
                     registry_host=db_data["registry_host"],
-                    project_id=db_data["project_id"],
+                    project_name=db_data["project_name"],
                     deployment_number=db_data["deployment_number"],
                     dockerfile=_dockerfile(service),
                     context=_context(service),
@@ -279,7 +280,7 @@ def process_deployment(task_body):
             # TODO wait that it's listening on the port specified?
             log_output("Sending traffic to new web service\n")
             caddy.serve_service(
-                db_data["project_id"],
+                db_data["project_name"],
                 internal_service_name,
                 port=_port(config["services"]["web"]),
             )
@@ -335,7 +336,7 @@ def process_deployment(task_body):
             else:
                 image = docker.image_name(
                     registry_host=db_data["registry_host"],
-                    project_id=db_data["project_id"],
+                    project_name=db_data["project_name"],
                     deployment_number=db_data["deployment_number"],
                     dockerfile=_dockerfile(service),
                     context=_context(service),
@@ -367,7 +368,7 @@ def process_deployment(task_body):
             )
             log_output("Sending traffic to new web service\n")
             caddy.serve_service(
-                db_data["project_id"],
+                db_data["project_name"],
                 internal_service_name,
                 port=_port(config["services"]["web"]),
             )
