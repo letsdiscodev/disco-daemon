@@ -1,79 +1,107 @@
+import socket
 from typing import Any
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.connection import HTTPConnection
+from urllib3.connectionpool import HTTPConnectionPool
 
 HEADERS = {"Accept": "application/json"}
-BASE_URL = "http://disco-caddy:1900"
+BASE_URL = "http://disco-caddy"
+
+
+class CaddyConnection(HTTPConnection):
+    def __init__(self):
+        super().__init__("disco-caddy")
+
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.connect("/var/run/caddy/caddy.sock")
+
+
+class CaddyConnectionPool(HTTPConnectionPool):
+    def __init__(self):
+        super().__init__("disco-caddy")
+
+    def _new_conn(self):
+        return CaddyConnection()
+
+
+class CaddyAdapter(HTTPAdapter):
+    def get_connection(self, url, proxies=None):
+        return CaddyConnectionPool()
+
+
+def _get_session():
+    session = requests.Session()
+    session.mount("http://disco-caddy", CaddyAdapter())
+    return session
 
 
 def init_config(disco_ip: str) -> None:
-    url = f"{BASE_URL}/config/"
+    url = f"{BASE_URL}/config/apps"
     req_body: dict[str, Any] = {
-        "apps": {
-            "http": {
-                "servers": {
-                    "disco": {
-                        "listen": [":443"],
-                        "routes": [
-                            {
-                                "@id": "ip-handle",
-                                "handle": [
-                                    {
-                                        "handler": "subroute",
-                                        "routes": [
-                                            {
-                                                "match": [{"path": ["/.disco*"]}],
-                                                "handle": [
-                                                    {
-                                                        "handler": "reverse_proxy",
-                                                        "rewrite": {
-                                                            "strip_path_prefix": "/.disco"
-                                                        },
-                                                        "upstreams": [
-                                                            {
-                                                                "dial": "disco-daemon:6543"
-                                                            }
-                                                        ],
-                                                    }
-                                                ],
-                                            },
-                                            {
-                                                "handle": [
-                                                    {
-                                                        "handler": "reverse_proxy",
-                                                        "upstreams": [
-                                                            {
-                                                                "dial": "disco-registry:5000"
-                                                            }
-                                                        ],
-                                                    }
-                                                ],
-                                            },
-                                        ],
-                                    }
-                                ],
-                                "match": [{"host": [disco_ip]}],
-                                "terminal": True,
-                            }
-                        ],
-                        "tls_connection_policies": [{"fallback_sni": disco_ip}],
-                    }
-                }
-            },
-            "tls": {
-                "certificates": {
-                    "load_files": [
+        "http": {
+            "servers": {
+                "disco": {
+                    "listen": [":443"],
+                    "routes": [
                         {
-                            "certificate": f"/certs/{disco_ip}.crt",
-                            "key": f"/certs/{disco_ip}.key",
-                            "tags": ["cert0"],
+                            "@id": "ip-handle",
+                            "handle": [
+                                {
+                                    "handler": "subroute",
+                                    "routes": [
+                                        {
+                                            "match": [{"path": ["/.disco*"]}],
+                                            "handle": [
+                                                {
+                                                    "handler": "reverse_proxy",
+                                                    "rewrite": {
+                                                        "strip_path_prefix": "/.disco"
+                                                    },
+                                                    "upstreams": [
+                                                        {"dial": "disco-daemon:6543"}
+                                                    ],
+                                                }
+                                            ],
+                                        },
+                                        {
+                                            "handle": [
+                                                {
+                                                    "handler": "reverse_proxy",
+                                                    "upstreams": [
+                                                        {"dial": "disco-registry:5000"}
+                                                    ],
+                                                }
+                                            ],
+                                        },
+                                    ],
+                                }
+                            ],
+                            "match": [{"host": [disco_ip]}],
+                            "terminal": True,
                         }
-                    ]
+                    ],
+                    "tls_connection_policies": [{"fallback_sni": disco_ip}],
                 }
-            },
-        }
+            }
+        },
+        "tls": {
+            "certificates": {
+                "load_files": [
+                    {
+                        "certificate": f"/certs/{disco_ip}.crt",
+                        "key": f"/certs/{disco_ip}.key",
+                        "tags": ["cert0"],
+                    }
+                ]
+            }
+        },
     }
-    response = requests.post(url, json=req_body, headers=HEADERS, timeout=10)
+
+    session = _get_session()
+    response = session.post(url, json=req_body, headers=HEADERS, timeout=10)
     if response.status_code != 200:
         raise Exception("Caddy returned {response.status_code}: {response.text}")
 
@@ -111,14 +139,16 @@ def add_project_route(project_name: str, domain: str) -> None:
         "match": [{"@id": f"disco-project-hosts-{project_name}", "host": [domain]}],
         "terminal": True,
     }
-    response = requests.put(url, json=req_body, headers=HEADERS, timeout=10)
+    session = _get_session()
+    response = session.put(url, json=req_body, headers=HEADERS, timeout=10)
     if response.status_code != 200:
         raise Exception("Caddy returned {response.status_code}: {response.text}")
 
 
 def remove_project_route(project_name: str) -> None:
     url = f"{BASE_URL}/id/disco-project-{project_name}"
-    response = requests.delete(url, headers=HEADERS, timeout=10)
+    session = _get_session()
+    response = session.delete(url, headers=HEADERS, timeout=10)
     if response.status_code != 200:
         raise Exception("Caddy returned {response.status_code}: {response.text}")
 
@@ -130,6 +160,7 @@ def serve_service(project_name: str, container_name: str, port: int) -> None:
         "handler": "reverse_proxy",
         "upstreams": [{"dial": f"{container_name}:{port}"}],
     }
-    response = requests.patch(url, json=req_body, headers=HEADERS, timeout=10)
+    session = _get_session()
+    response = session.patch(url, json=req_body, headers=HEADERS, timeout=10)
     if response.status_code != 200:
         raise Exception("Caddy returned {response.status_code}: {response.text}")
