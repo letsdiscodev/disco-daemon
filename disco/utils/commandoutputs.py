@@ -20,3 +20,7 @@ def get_next(
     if after is not None:
         query = query.filter(CommandOutput.created > after)
     return query.order_by(CommandOutput.created).first()
+
+
+def delete_output_for_source(dbsession: DBSession, source: str) -> None:
+    dbsession.query(CommandOutput).filter(CommandOutput.source == source).delete()

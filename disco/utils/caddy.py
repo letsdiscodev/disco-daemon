@@ -6,7 +6,7 @@ HEADERS = {"Accept": "application/json"}
 BASE_URL = "http://caddy:1900"
 
 
-def init_config(disco_ip: str) -> bool:
+def init_config(disco_ip: str) -> None:
     url = f"{BASE_URL}/config/"
     req_body: dict[str, Any] = {
         "apps": {
@@ -74,10 +74,11 @@ def init_config(disco_ip: str) -> bool:
         }
     }
     response = requests.post(url, json=req_body, headers=HEADERS, timeout=10)
-    return response.status_code == 200
+    if response.status_code != 200:
+        raise Exception("Caddy returned {response.status_code}: {response.text}")
 
 
-def add_project_route(project_id: str, domain: str) -> bool:
+def add_project_route(project_id: str, domain: str) -> None:
     url = f"{BASE_URL}/config/apps/http/servers/disco/routes/0"
     req_body = {
         "@id": f"disco-project-{project_id}",
@@ -111,10 +112,18 @@ def add_project_route(project_id: str, domain: str) -> bool:
         "terminal": True,
     }
     response = requests.put(url, json=req_body, headers=HEADERS, timeout=10)
-    return response.status_code == 200
+    if response.status_code != 200:
+        raise Exception("Caddy returned {response.status_code}: {response.text}")
 
 
-def serve_service(project_id: str, container_name: str, port: int) -> bool:
+def remove_project_route(project_id: str) -> None:
+    url = f"{BASE_URL}/id/disco-project-{project_id}"
+    response = requests.delete(url, headers=HEADERS, timeout=10)
+    if response.status_code != 200:
+        raise Exception("Caddy returned {response.status_code}: {response.text}")
+
+
+def serve_service(project_id: str, container_name: str, port: int) -> None:
     url = f"{BASE_URL}/id/disco-project-handler-{project_id}"
     req_body = {
         "@id": f"disco-project-handler-{project_id}",
@@ -122,4 +131,5 @@ def serve_service(project_id: str, container_name: str, port: int) -> bool:
         "upstreams": [{"dial": f"{container_name}:{port}"}],
     }
     response = requests.patch(url, json=req_body, headers=HEADERS, timeout=10)
-    return response.status_code == 200
+    if response.status_code != 200:
+        raise Exception("Caddy returned {response.status_code}: {response.text}")

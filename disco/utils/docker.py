@@ -40,6 +40,7 @@ def build_image(
     )
     for line in process.stdout:
         log_output(line.decode("utf-8"))
+
     process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
@@ -101,6 +102,7 @@ def start_service(
     )
     for line in process.stdout:
         log_output(line.decode("utf-8"))
+
     process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
@@ -119,6 +121,7 @@ def push_image(image: str, log_output: Callable[[str], None]) -> None:
     )
     for line in process.stdout:
         log_output(line.decode("utf-8"))
+
     process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
@@ -138,9 +141,33 @@ def stop_service(name: str, log_output: Callable[[str], None]) -> None:
     )
     for line in process.stdout:
         log_output(line.decode("utf-8"))
+
     process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
+
+
+def list_services_for_project(project_name: str) -> list[str]:
+    args = [
+        "docker",
+        "service",
+        "ls",
+        "--filter",
+        f"label=disco.project.name={project_name}",
+        "--format",
+        "{{ .Name }}",
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+
+    services = [line.decode("utf-8")[:-1] for line in process.stdout.readlines()]
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+    return services
 
 
 def image_name(

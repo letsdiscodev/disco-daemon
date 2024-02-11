@@ -5,7 +5,9 @@ from secrets import token_hex
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import ApiKey, Project
+from disco.utils import caddy, docker, github, sshkeys
 from disco.utils.caddy import add_project_route
+from disco.utils.commandoutputs import delete_output_for_source
 from disco.utils.sshkeys import create_deploy_key
 
 log = logging.getLogger(__name__)
@@ -23,7 +25,6 @@ def create_project(
         name=name,
         github_repo=github_repo,
         domain=domain,
-        ssh_key_name=name,
     )
     if github_repo is not None:
         github_host, ssh_key_pub = create_deploy_key(name)
@@ -46,5 +47,46 @@ def get_project_by_name(dbsession: DBSession, name: str) -> Project | None:
     return dbsession.query(Project).filter(Project.name == name).first()
 
 
+def get_project_by_github_webhook_token(
+    dbsession: DBSession, webhook_token: str
+) -> Project | None:
+    return (
+        dbsession.query(Project)
+        .filter(Project.github_webhook_token == webhook_token)
+        .first()
+    )
+
+
 def get_all_projects(dbsession: DBSession) -> list[Project]:
     return dbsession.query(Project).all()
+
+
+def delete_project(dbsession: DBSession, project: Project, by_api_key: ApiKey) -> None:
+    log.info("%s is deleting project %s", by_api_key.log(), project.log())
+    if project.github_repo is not None:
+        try:
+            sshkeys.remove_deploy_key(project.name)
+        except Exception:
+            log.info("Failed to remove SSH deploy key for project %s", project.name)
+        try:
+            github.remove_repo(project.id)
+        except Exception:
+            log.info("Failed to remove Github repo for project %s", project.name)
+    try:
+        caddy.remove_project_route(project.id)
+    except Exception:
+        log.info("Failed to remove reverse proxy route for project %s", project.name)
+    services = docker.list_services_for_project(project.name)
+    for service_name in services:
+        try:
+            docker.stop_service(service_name, log_output=lambda x: None)
+        except Exception:
+            log.info("Failed to stop service %s", service_name)
+    for env_var in project.env_variables:
+        dbsession.delete(env_var)
+    for deployment in project.deployments:
+        delete_output_for_source(dbsession, f"DEPLOYMENT_{deployment.id}")
+        for env_var in deployment.env_variables:
+            dbsession.delete(env_var)
+        dbsession.delete(deployment)
+    dbsession.delete(project)

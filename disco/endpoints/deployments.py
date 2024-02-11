@@ -78,7 +78,6 @@ async def deployment_output_get(
             with Session() as dbsession:
                 with dbsession.begin():
                     output = commandoutputs.get_next(dbsession, source, after=after)
-                    log.info("One row: %s", str(output))
                     if output is not None:
                         if output.text is None:
                             return

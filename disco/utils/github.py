@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import shutil
 import subprocess
 from typing import Callable
 
@@ -20,6 +21,7 @@ def fetch(project_id: str, log_output: Callable[[str], None]) -> None:
     )
     for line in process.stdout:
         log_output(line.decode("utf-8"))
+
     process.wait()
     if process.returncode != 0:
         raise Exception(f"Git returned status {process.returncode}")
@@ -42,6 +44,7 @@ def clone_project(
     )
     for line in process.stdout:
         log_output(line.decode("utf-8"))
+
     process.wait()
     if process.returncode != 0:
         raise Exception(f"Git returned status {process.returncode}")
@@ -60,6 +63,7 @@ def checkout_commit(
     )
     for line in process.stdout:
         log_output(line.decode("utf-8"))
+
     process.wait()
     if process.returncode != 0:
         raise Exception(f"Git returned status {process.returncode}")
@@ -79,3 +83,7 @@ def _branch_from_refs(refs: str) -> str:
     if match is None:
         raise Exception(f"Couldn't find branch name in refs {refs}")
     return match.group("branch")
+
+
+def remove_repo(project_id: str) -> None:
+    shutil.rmtree(project_path(project_id))

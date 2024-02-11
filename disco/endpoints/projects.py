@@ -6,9 +6,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.auth import get_api_key
-from disco.endpoints.dependencies import get_db
-from disco.models import ApiKey
-from disco.utils.projects import create_project, get_all_projects
+from disco.endpoints.dependencies import get_db, get_project_from_url
+from disco.models import ApiKey, Project
+from disco.utils.projects import create_project, delete_project, get_all_projects
 
 log = logging.getLogger(__name__)
 
@@ -62,3 +62,13 @@ def projects_get(dbsession: Annotated[DBSession, Depends(get_db)]):
             for project in projects
         ],
     }
+
+
+@router.delete("/projects/{project_name}", status_code=200)
+def projects_delete(
+    dbsession: Annotated[DBSession, Depends(get_db)],
+    project: Annotated[Project, Depends(get_project_from_url)],
+    api_key: Annotated[ApiKey, Depends(get_api_key)],
+):
+    delete_project(dbsession, project, api_key)
+    return {"deleted": True}

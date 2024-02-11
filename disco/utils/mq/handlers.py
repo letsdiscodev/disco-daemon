@@ -11,11 +11,11 @@ log = logging.getLogger(__name__)
 def process_github_webhook(task_body):
     from disco.utils.deployments import create_deployment
     from disco.utils.github import get_commit_info_from_webhook_push
-    from disco.utils.projects import get_project_by_id
+    from disco.utils.projects import get_project_by_github_webhook_token
 
-    project_id = task_body["project_id"]
+    webhook_token = task_body["webhook_token"]
     request_body = task_body["request_body"]
-    log.info("Processing Github Webhook for project %s", project_id)
+    log.info("Processing Github Webhook for project %s", webhook_token)
     log.info("Processing Github Webhook %s", request_body)
     branch, commit_hash = get_commit_info_from_webhook_push(request_body)
     if branch not in ["master", "main"]:
@@ -24,9 +24,13 @@ def process_github_webhook(task_body):
 
     with Session() as dbsession:
         with dbsession.begin():
-            project = get_project_by_id(dbsession, project_id)
+            project = get_project_by_github_webhook_token(dbsession, webhook_token)
             if project is None:
-                raise Exception(f"Project {project_id} not found")
+                log.warning(
+                    "Project with Github Webhook Token not found, skipping %s",
+                    webhook_token,
+                )
+                return
             create_deployment(
                 dbsession=dbsession,
                 project=project,
@@ -268,7 +272,10 @@ def process_deployment(task_body):
                     db_data["deployment_number"] - 1,
                 )
                 log_output(f"Stopping previous service {service_name}\n")
-                docker.stop_service(internal_service_name, log_output=log_output)
+                try:
+                    docker.stop_service(internal_service_name, log_output=log_output)
+                except Exception:
+                    log_output(f"Failed stopping previous service {service_name}\n")
         web_is_now_started = False
         log_output("Starting services with published ports\n")
         _set_deployment_status("STARTING_PUBLISHED_PORTS")
