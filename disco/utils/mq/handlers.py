@@ -1,5 +1,6 @@
 import json
 import logging
+import traceback
 from typing import Any
 
 from disco.models.db import Session
@@ -58,18 +59,17 @@ def process_deployment(task_body):
             with dbsession.begin():
                 commandoutputs.save(dbsession, f"DEPLOYMENT_{deployment_id}", output)
 
+    def _set_deployment_status(status: BUILD_STATUS) -> None:
+        with Session() as dbsession:
+            with dbsession.begin():
+                deployment = get_deployment_by_id(dbsession, deployment_id)
+                if deployment is None:
+                    raise Exception(f"Deployment {deployment_id} not found")
+                set_deployment_status(deployment, status)
+
     try:
+        _set_deployment_status("IN_PROGRESS")
         log_output(f"Starting deployment ID {deployment_id}\n")
-
-        def _set_deployment_status(status: BUILD_STATUS) -> None:
-            with Session() as dbsession:
-                with dbsession.begin():
-                    deployment = get_deployment_by_id(dbsession, deployment_id)
-                    if deployment is None:
-                        raise Exception(f"Deployment {deployment_id} not found")
-                    set_deployment_status(deployment, status)
-
-        _set_deployment_status("STARTED")
 
         with Session() as dbsession:
             with dbsession.begin():
@@ -111,7 +111,6 @@ def process_deployment(task_body):
         )
 
         if db_data["commit_hash"] is not None:
-            _set_deployment_status("PULLING")
             log_output(f"Deployment of git {db_data['commit_hash']}\n")
             if not project_folder_exists(db_data["project_id"]):
                 log_output(f"Cloning project from {db_data['github_repo']}\n")
@@ -173,7 +172,6 @@ def process_deployment(task_body):
         # build images
         images = set()
         log_output("Building images\n")
-        _set_deployment_status("BUILDING_IMAGES")
         for service_name, service in config["services"].items():
             if _pull(service) is not None:
                 # Docker will take care of pulling when service is created
@@ -195,17 +193,39 @@ def process_deployment(task_body):
                     context=_context(service),
                     log_output=log_output,
                 )
-        _set_deployment_status("PUSHING_IMAGES")
         log_output("Pushing images to Disco registry\n")
         for image in images:
             log.info("Pushing image %s deployment %s", image, deployment_id)
             docker.push_image(image, log_output=log_output)
 
+        # create new networks
+        docker.create_network(
+            docker.deployment_network_name(
+                db_data["project_name"], db_data["deployment_number"]
+            ),
+            log_output,
+        )
+        if "web" in config["services"]:
+            web_network = docker.deployment_web_network_name(
+                db_data["project_name"], db_data["deployment_number"]
+            )
+            docker.create_network(web_network, log_output)
+            docker.add_network_to_container("disco-caddy", web_network, log_output)
         # start new services
         web_is_started = False
         log_output("Starting/stopping services\n")
-        _set_deployment_status("STARTING")
         for service_name, service in config["services"].items():
+            networks = [
+                docker.deployment_network_name(
+                    db_data["project_name"], db_data["deployment_number"]
+                )
+            ]
+            if service_name == "web":
+                networks.append(
+                    docker.deployment_web_network_name(
+                        db_data["project_name"], db_data["deployment_number"]
+                    )
+                )
             if len(service.get("publishedPorts", [])) > 0:
                 # do not start new service yet
                 # to avoid conflicts with previous service
@@ -246,6 +266,7 @@ def process_deployment(task_body):
                     (p["publishedAs"], p["fromContainerPort"], p["protocol"])
                     for p in service.get("publishedPorts", [])
                 ],
+                networks=networks,
                 command=service.get("command"),
                 log_output=log_output,
             )
@@ -262,9 +283,7 @@ def process_deployment(task_body):
                 internal_service_name,
                 port=_port(config["services"]["web"]),
             )
-        _set_deployment_status("STOPPING_OLD")
         if db_data["deployment_number"] > 1:
-            _set_deployment_status("CLEAN_UP")
             for service_name in prev_config["services"]:
                 internal_service_name = docker.service_name(
                     db_data["prev_project_name"],
@@ -276,10 +295,35 @@ def process_deployment(task_body):
                     docker.stop_service(internal_service_name, log_output=log_output)
                 except Exception:
                     log_output(f"Failed stopping previous service {service_name}\n")
+            # remove networks
+            docker.remove_network(
+                docker.deployment_network_name(
+                    db_data["project_name"], db_data["deployment_number"] - 1
+                ),
+                log_output,
+            )
+            if "web" in prev_config["services"]:
+                web_network = docker.deployment_web_network_name(
+                    db_data["project_name"], db_data["deployment_number"] - 1
+                )
+                docker.remove_network_from_container(
+                    "disco-caddy", web_network, log_output
+                )
+                docker.remove_network(web_network, log_output)
         web_is_now_started = False
         log_output("Starting services with published ports\n")
-        _set_deployment_status("STARTING_PUBLISHED_PORTS")
         for service_name, service in config["services"].items():
+            networks = [
+                docker.deployment_network_name(
+                    db_data["project_name"], db_data["deployment_number"]
+                )
+            ]
+            if service_name == "web":
+                networks.append(
+                    docker.deployment_web_network_name(
+                        db_data["project_name"], db_data["deployment_number"]
+                    )
+                )
             if len(service.get("publishedPorts", [])) == 0:
                 # already started above, skip
                 continue
@@ -311,6 +355,7 @@ def process_deployment(task_body):
                     (p["publishedAs"], p["fromContainerPort"], p["protocol"])
                     for p in service.get("publishedPorts", [])
                 ],
+                networks=networks,
                 command=service.get("command"),
                 log_output=log_output,
             )
@@ -320,15 +365,19 @@ def process_deployment(task_body):
             internal_service_name = docker.service_name(
                 db_data["project_name"], "web", db_data["deployment_number"]
             )
-            # TODO wait that it's listening on the port specified?
             log_output("Sending traffic to new web service\n")
             caddy.serve_service(
                 db_data["project_id"],
                 internal_service_name,
                 port=_port(config["services"]["web"]),
             )
-        _set_deployment_status("DONE")
         log_output("Deployment complete\n")
+        _set_deployment_status("COMPLETE")
+    except Exception:
+        _set_deployment_status("FAILED")
+        log_output(traceback.format_exc())
+        log_output("Deployment failed.\n")
+        raise
     finally:
         log_output(None)  # end
 

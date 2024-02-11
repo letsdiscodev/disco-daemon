@@ -89,7 +89,7 @@ LOGSPOUT_CMD = [
     "--mount",
     "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
     "--network",
-    "disco-network",
+    "disco-logging",
     "--env",
     "ALLOW_TTY=true",
     "gliderlabs/logspout",

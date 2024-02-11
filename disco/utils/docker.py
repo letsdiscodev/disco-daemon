@@ -4,7 +4,6 @@ import subprocess
 from multiprocessing import cpu_count
 from typing import Callable
 
-from disco.models import ApiKey
 from disco.utils.filesystem import project_path
 
 log = logging.getLogger(__name__)
@@ -38,6 +37,7 @@ def build_image(
         stderr=subprocess.STDOUT,
         cwd=project_path(project_id),
     )
+    assert process.stdout is not None
     for line in process.stdout:
         log_output(line.decode("utf-8"))
 
@@ -54,6 +54,7 @@ def start_service(
     env_variables: list[tuple[str, str]],
     volumes: list[tuple[str, str]],
     published_ports: list[tuple[int, int, str]],
+    networks: list[str],
     command: str | None,
     log_output: Callable[[str], None],
 ) -> None:
@@ -75,13 +76,15 @@ def start_service(
         more_args.append(
             f"published={host_port},target={container_port},protocol={protocol}"
         )
+    for network in networks:
+        more_args.append("--network")
+        more_args.append(f"name={network},alias={project_service_name}")
     args = [
         "docker",
         "service",
         "create",
         "--name",
         name,
-        "--network=disco-network",
         "--with-registry-auth",
         "--label",
         f"disco.project.name={project_name}",
@@ -100,6 +103,7 @@ def start_service(
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
+    assert process.stdout is not None
     for line in process.stdout:
         log_output(line.decode("utf-8"))
 
@@ -119,6 +123,7 @@ def push_image(image: str, log_output: Callable[[str], None]) -> None:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
+    assert process.stdout is not None
     for line in process.stdout:
         log_output(line.decode("utf-8"))
 
@@ -139,6 +144,7 @@ def stop_service(name: str, log_output: Callable[[str], None]) -> None:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
+    assert process.stdout is not None
     for line in process.stdout:
         log_output(line.decode("utf-8"))
 
@@ -162,7 +168,7 @@ def list_services_for_project(project_name: str) -> list[str]:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
-
+    assert process.stdout is not None
     services = [line.decode("utf-8")[:-1] for line in process.stdout.readlines()]
     process.wait()
     if process.returncode != 0:
@@ -187,71 +193,6 @@ def image_name(
 
 def service_name(project_name: str, service: str, deployment_number: int) -> str:
     return f"{project_name}-{deployment_number}-{service}"
-
-
-def get_all_volumes() -> list[str]:
-    args = [
-        "docker",
-        "volume",
-        "ls",
-    ]
-    try:
-        result = subprocess.run(
-            args=args,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        lines = result.stdout.decode("utf-8").split("\n")
-        lines.pop(0)  # headers
-        volumes = []
-        for line in lines:
-            if len(line) == 0:
-                continue
-            name = line.split(" ")[-1]
-            if name.startswith("disco-volume-"):
-                volumes.append(name[13:])
-        return volumes
-    except subprocess.CalledProcessError as ex:
-        raise Exception(ex.stdout.decode("utf-8")) from ex
-
-
-def create_volume(name: str, by_api_key: ApiKey) -> None:
-    log.info("Creating volume %s by %s", name, by_api_key.log())
-    args = [
-        "docker",
-        "volume",
-        "create",
-        f"disco-volume-{name}",
-    ]
-    try:
-        subprocess.run(
-            args=args,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-    except subprocess.CalledProcessError as ex:
-        raise Exception(ex.stdout.decode("utf-8")) from ex
-
-
-def delete_volume(name: str, by_api_key: ApiKey) -> None:
-    log.info("Deleting volume %s by %s", name, by_api_key.log())
-    args = [
-        "docker",
-        "volume",
-        "rm",
-        f"disco-volume-{name}",
-    ]
-    try:
-        subprocess.run(
-            args=args,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-    except subprocess.CalledProcessError as ex:
-        raise Exception(ex.stdout.decode("utf-8")) from ex
 
 
 def set_syslog_service(disco_host: str, syslog_urls: list[str]) -> None:
@@ -306,3 +247,162 @@ def set_syslog_service(disco_host: str, syslog_urls: list[str]) -> None:
         log.info("New syslog service started")
     except subprocess.CalledProcessError as ex:
         raise Exception(ex.stdout.decode("utf-8")) from ex
+
+
+def create_network(name: str, log_output: Callable[[str], None]) -> None:
+    log_output(f"Creating network {name}\n")
+    args = [
+        "docker",
+        "network",
+        "create",
+        "--driver",
+        "overlay",
+        "--attachable",
+        "--opt",
+        "encrypted",
+        name,
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        log_output(line.decode("utf-8"))
+
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+
+
+def remove_network(name: str, log_output: Callable[[str], None]) -> None:
+    log_output(f"Removing network {name}\n")
+    args = [
+        "docker",
+        "network",
+        "rm",
+        name,
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        log_output(line.decode("utf-8"))
+
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+
+
+def add_network_to_service(
+    service: str, network: str, log_output: Callable[[str], None]
+) -> None:
+    log_output(f"Adding network {network} to service {service}\n")
+    args = [
+        "docker",
+        "service",
+        "update",
+        "--network-add",
+        network,
+        service,
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        log_output(line.decode("utf-8"))
+
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+
+
+def remove_network_from_service(
+    service: str, network: str, log_output: Callable[[str], None]
+) -> None:
+    log_output(f"Removing network {network} from service {service}\n")
+    args = [
+        "docker",
+        "service",
+        "update",
+        "--network-rm",
+        network,
+        service,
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        log_output(line.decode("utf-8"))
+
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+
+
+def add_network_to_container(
+    container: str, network: str, log_output: Callable[[str], None]
+) -> None:
+    log_output(f"Adding network {network} to container {container}\n")
+    args = [
+        "docker",
+        "network",
+        "connect",
+        network,
+        container,
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        log_output(line.decode("utf-8"))
+
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+
+
+def remove_network_from_container(
+    container: str, network: str, log_output: Callable[[str], None]
+) -> None:
+    log_output(f"Removing network {network} from container {container}\n")
+    args = [
+        "docker",
+        "network",
+        "disconnect",
+        network,
+        container,
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        log_output(line.decode("utf-8"))
+
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+
+
+def deployment_network_name(project_name: str, deployment_number: int) -> str:
+    return f"disco-project-{project_name}-{deployment_number}"
+
+
+def deployment_web_network_name(project_name: str, deployment_number: int) -> str:
+    return f"disco-project-{project_name}-{deployment_number}-caddy"

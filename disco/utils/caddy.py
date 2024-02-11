@@ -3,7 +3,7 @@ from typing import Any
 import requests
 
 HEADERS = {"Accept": "application/json"}
-BASE_URL = "http://caddy:1900"
+BASE_URL = "http://disco-caddy:1900"
 
 
 def init_config(disco_ip: str) -> None:

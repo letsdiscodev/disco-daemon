@@ -19,6 +19,7 @@ def fetch(project_id: str, log_output: Callable[[str], None]) -> None:
         stderr=subprocess.STDOUT,
         cwd=project_path(project_id),
     )
+    assert process.stdout is not None
     for line in process.stdout:
         log_output(line.decode("utf-8"))
 
@@ -42,6 +43,7 @@ def clone_project(
         stderr=subprocess.STDOUT,
         cwd=projects_root(),
     )
+    assert process.stdout is not None
     for line in process.stdout:
         log_output(line.decode("utf-8"))
 
@@ -61,6 +63,7 @@ def checkout_commit(
         stderr=subprocess.STDOUT,
         cwd=project_path(project_id),
     )
+    assert process.stdout is not None
     for line in process.stdout:
         log_output(line.decode("utf-8"))
 

@@ -82,13 +82,9 @@ def get_deployment_by_number(
 
 BUILD_STATUS = Literal[
     "QUEUED",
-    "STARTED",
-    "PULLING",
-    "BUILDING",
-    "PUSHING_IMAGE",
-    "STARTING_SERVICE",
-    "STOPPING_SERVICE",
-    "DONE",
+    "IN_PROGRESS",
+    "SUCCESS",
+    "FAILED",
 ]
 
 
