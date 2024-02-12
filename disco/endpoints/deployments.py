@@ -25,7 +25,8 @@ router = APIRouter()
 # TODO proper validation
 class NewProject(BaseModel):
     commit: str | None
-    disco_config: str | None = Field(..., alias="discoConfig")
+    # TODO accept the object instead of a string
+    disco_file: str | None = Field(..., alias="discoFile")
 
 
 @router.post(
@@ -43,7 +44,7 @@ def deployments_post(
         dbsession=dbsession,
         project=project,
         commit_hash=new_deployment.commit,
-        disco_config=new_deployment.disco_config,
+        disco_file=new_deployment.disco_file,
         by_api_key=api_key,
     )
     # TODO change code so that we always receive a deployment?

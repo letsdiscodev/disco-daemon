@@ -91,4 +91,5 @@ def _branch_from_refs(refs: str) -> str:
 
 
 def remove_repo(project_name: str) -> None:
+    log.info("Removing Github repo %s", project_name)
     shutil.rmtree(project_path(project_name))

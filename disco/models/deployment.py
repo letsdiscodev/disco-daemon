@@ -16,12 +16,21 @@ class Deployment(Base):
     number = Column(Integer, nullable=False, index=True)
     status = Column(String(32), nullable=False)
     commit_hash = Column(String(200), nullable=True)
-    disco_config = Column(Unicode(5000), nullable=True)
+    disco_file = Column(Unicode(5000), nullable=True)
     project_name = Column(Unicode(255), nullable=False)
+    github_repo = Column(Unicode(2048), nullable=True)
+    github_host = Column(Unicode(2048), nullable=True)
+    domain = Column(Unicode(255), nullable=True)
     project_id = Column(
         String(32),
         ForeignKey("projects.id"),
         nullable=False,
+        index=True,
+    )
+    prev_deployment_id = Column(
+        String(32),
+        ForeignKey("deployments.id"),
+        nullable=True,
         index=True,
     )
     by_api_key_id = Column(
@@ -41,6 +50,10 @@ class Deployment(Base):
         foreign_keys=by_api_key_id,
         backref=backref("deployments"),
     )
+    prev_deployment = relationship(
+        "Deployment",
+        foreign_keys=prev_deployment_id,
+    )
 
     def log(self):
-        return f"DEPLOYMENT_{self.id} ({self.name})"
+        return f"DEPLOYMENT_{self.id} ({self.project_name} {self.number})"

@@ -1,4 +1,7 @@
+import logging
 import os
+
+log = logging.getLogger(__name__)
 
 
 def projects_root() -> str:
@@ -15,7 +18,9 @@ def project_folder_exists(project_name: str):
 
 def read_disco_file(project_name: str) -> str | None:
     path = f"{project_path(project_name)}/disco.json"
+    log.info("Reading disco file %s", path)
     if not os.path.isfile(path):
+        log.info("Disco file does not exist, not reading %s", path)
         return None
     with open(path, "r", encoding="utf-8") as f:
         return f.read()

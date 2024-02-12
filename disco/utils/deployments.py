@@ -1,3 +1,4 @@
+import logging
 import uuid
 from typing import Literal
 
@@ -11,25 +12,32 @@ from disco.models import (
 )
 from disco.utils.mq.tasks import enqueue_task
 
+log = logging.getLogger(__name__)
+
 
 def create_deployment(
     dbsession: DBSession,
     project: Project,
     commit_hash: str | None,
-    disco_config: str | None,
-    by_api_key: ApiKey,
+    disco_file: str | None,
+    by_api_key: ApiKey | None,
 ) -> Deployment | None:
     number = get_next_deployment_number(dbsession, project)
-    if number == 1 and commit_hash is None and disco_config is None:
+    if number == 1 and commit_hash is None and disco_file is None:
         return None
+    prev_deployment = get_live_deployment(dbsession, project)
     deployment = Deployment(
         id=uuid.uuid4().hex,
         number=number,
+        prev_deployment_id=prev_deployment.id if prev_deployment is not None else None,
         project_name=project.name,
+        domain=project.domain,
+        github_repo=project.github_repo,
+        github_host=project.github_host,
         project=project,
         status="QUEUED",
         commit_hash=commit_hash,
-        disco_config=disco_config,
+        disco_file=disco_file,
         by_api_key=by_api_key,
     )
     dbsession.add(deployment)
@@ -41,6 +49,7 @@ def create_deployment(
             deployment=deployment,
         )
         dbsession.add(deploy_env_var)
+    log.info("Created deployment %s", deployment.log())
     enqueue_task(
         dbsession=dbsession,
         task_name="PROCESS_DEPLOYMENT",
@@ -83,21 +92,28 @@ def get_deployment_by_number(
 BUILD_STATUS = Literal[
     "QUEUED",
     "IN_PROGRESS",
-    "SUCCESS",
+    "COMPLETE",
     "FAILED",
 ]
 
 
 def set_deployment_status(deployment: Deployment, status: BUILD_STATUS) -> None:
+    log.info(
+        "Setting deployment status of deployment %s to %s", deployment.log(), status
+    )
     deployment.status = status
 
 
-def get_previous_deployment(
-    dbsession: DBSession, deployment: Deployment
-) -> Deployment | None:
+def set_deployment_disco_file(deployment: Deployment, disco_file: str) -> None:
+    log.info("Setting deployment disco file of %s", deployment.log())
+    deployment.disco_file = disco_file
+
+
+def get_live_deployment(dbsession: DBSession, project: Project) -> Deployment | None:
     return (
         dbsession.query(Deployment)
-        .filter(Deployment.project == deployment.project)
-        .filter(Deployment.number == deployment.number - 1)
+        .filter(Deployment.project == project)
+        .filter(Deployment.status == "COMPLETE")
+        .order_by(Deployment.number.desc())
         .first()
     )

@@ -5,7 +5,7 @@ from sqlalchemy.orm.session import Session as DBSession
 from disco.models import CommandOutput
 
 
-def save(dbsession: DBSession, source: str, text: str) -> None:
+def save(dbsession: DBSession, source: str, text: str | None) -> None:
     cmd_output = CommandOutput(
         source=source,
         text=text,

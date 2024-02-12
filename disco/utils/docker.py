@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import subprocess
+from datetime import datetime, timedelta
 from multiprocessing import cpu_count
 from typing import Callable
 
@@ -51,6 +52,7 @@ def start_service(
     name: str,
     project_name: str,
     project_service_name: str,
+    deployment_number: int,
     env_variables: list[tuple[str, str]],
     volumes: list[tuple[str, str]],
     published_ports: list[tuple[int, int, str]],
@@ -89,11 +91,15 @@ def start_service(
         "--label",
         f"disco.project.name={project_name}",
         "--label",
-        f"disco.service.name={project_service_name}",
+        f"disco.deployment.number={deployment_number}",
+        "--label",
+        f"disco.project.name={project_name}",
         "--container-label",
         f"disco.project.name={project_name}",
         "--container-label",
         f"disco.service.name={project_service_name}",
+        "--container-label",
+        f"disco.deployment.number={deployment_number}",
         *more_args,
         image,
         *(command.split() if command is not None else []),
@@ -104,8 +110,15 @@ def start_service(
         stderr=subprocess.STDOUT,
     )
     assert process.stdout is not None
+    timeout_seconds = 30
+    timeout = datetime.utcnow() + timedelta(seconds=timeout_seconds)
     for line in process.stdout:
         log_output(line.decode("utf-8"))
+        if datetime.utcnow() > timeout:
+            process.terminate()
+            raise Exception(
+                f"Starting task failed, " f"timeout after {timeout_seconds} seconds"
+            )
 
     process.wait()
     if process.returncode != 0:
@@ -113,6 +126,7 @@ def start_service(
 
 
 def push_image(image: str, log_output: Callable[[str], None]) -> None:
+    log_output(f"Pushing image {image}\n")
     args = [
         "docker",
         "push",
@@ -160,6 +174,33 @@ def list_services_for_project(project_name: str) -> list[str]:
         "ls",
         "--filter",
         f"label=disco.project.name={project_name}",
+        "--format",
+        "{{ .Name }}",
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    services = [line.decode("utf-8")[:-1] for line in process.stdout.readlines()]
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+    return services
+
+
+def list_services_for_deployment(
+    project_name: str, deployment_number: int
+) -> list[str]:
+    args = [
+        "docker",
+        "service",
+        "ls",
+        "--filter",
+        f"label=disco.project.name={project_name}",
+        "--filter",
+        f"label=disco.deployment.number={deployment_number}",
         "--format",
         "{{ .Name }}",
     ]
