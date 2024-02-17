@@ -91,9 +91,9 @@ def start_service(
         "--label",
         f"disco.project.name={project_name}",
         "--label",
-        f"disco.deployment.number={deployment_number}",
+        f"disco.service.name={project_service_name}",
         "--label",
-        f"disco.project.name={project_name}",
+        f"disco.deployment.number={deployment_number}",
         "--container-label",
         f"disco.project.name={project_name}",
         "--container-label",
@@ -433,6 +433,59 @@ def remove_network_from_container(
     assert process.stdout is not None
     for line in process.stdout:
         log_output(line.decode("utf-8"))
+
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+
+
+def run(
+    image: str,
+    project_name: str,
+    project_service_name: str,
+    env_variables: list[tuple[str, str]],
+    volumes: list[tuple[str, str]],
+    networks: list[str],
+    command: str | None,
+    log_output: Callable[[str], None],
+    timeout: int = 600,
+) -> None:
+    more_args = []
+    for var_name, var_value in env_variables:
+        more_args.append("--env")
+        more_args.append(f"{var_name}={var_value}")
+    for volume, destination in volumes:
+        more_args.append("--mount")
+        more_args.append(
+            f"type=volume,source=disco-volume-{volume},destination={destination}"
+        )
+    for network in networks:
+        more_args.append("--network")
+        more_args.append(f"name={network},alias={project_service_name}")
+    args = [
+        "docker",
+        "run",
+        "--rm",
+        "--label",
+        f"disco.project.name={project_name}",
+        "--label",
+        f"disco.service.name={project_service_name}",
+        *more_args,
+        image,
+        *(command.split() if command is not None else []),
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    timeout_dt = datetime.utcnow() + timedelta(seconds=timeout)
+    for line in process.stdout:
+        log_output(line.decode("utf-8"))
+        if datetime.utcnow() > timeout_dt:
+            process.terminate()
+            raise Exception(f"Running command failed, timeout after {timeout} seconds")
 
     process.wait()
     if process.returncode != 0:

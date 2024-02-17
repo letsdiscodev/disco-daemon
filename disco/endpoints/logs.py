@@ -10,10 +10,6 @@ from disco.auth import get_api_key_wo_tx
 
 log = logging.getLogger(__name__)
 
-
-log = logging.getLogger(__name__)
-
-
 router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 
 
