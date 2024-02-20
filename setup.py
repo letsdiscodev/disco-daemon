@@ -20,7 +20,6 @@ setup(
         "console_scripts": [
             "disco_worker=disco.worker:main",
             "disco_init=disco.scripts.init:main",
-            "disco_create_api_key=disco.scripts.create_api_key:main",
         ],
     },
 )

@@ -1,5 +1,4 @@
 import socket
-from typing import Any
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -36,74 +35,6 @@ def _get_session():
     session = requests.Session()
     session.mount("http://disco-caddy", CaddyAdapter())
     return session
-
-
-def init_config(disco_ip: str) -> None:
-    url = f"{BASE_URL}/config/apps"
-    req_body: dict[str, Any] = {
-        "http": {
-            "servers": {
-                "disco": {
-                    "listen": [":443"],
-                    "routes": [
-                        {
-                            "@id": "ip-handle",
-                            "handle": [
-                                {
-                                    "handler": "subroute",
-                                    "routes": [
-                                        {
-                                            "match": [{"path": ["/.disco*"]}],
-                                            "handle": [
-                                                {
-                                                    "handler": "reverse_proxy",
-                                                    "rewrite": {
-                                                        "strip_path_prefix": "/.disco"
-                                                    },
-                                                    "upstreams": [
-                                                        {"dial": "disco-daemon:6543"}
-                                                    ],
-                                                }
-                                            ],
-                                        },
-                                        {
-                                            "handle": [
-                                                {
-                                                    "handler": "reverse_proxy",
-                                                    "upstreams": [
-                                                        {"dial": "disco-registry:5000"}
-                                                    ],
-                                                }
-                                            ],
-                                        },
-                                    ],
-                                }
-                            ],
-                            "match": [{"host": [disco_ip]}],
-                            "terminal": True,
-                        }
-                    ],
-                    "tls_connection_policies": [{"fallback_sni": disco_ip}],
-                }
-            }
-        },
-        "tls": {
-            "certificates": {
-                "load_files": [
-                    {
-                        "certificate": f"/certs/{disco_ip}.crt",
-                        "key": f"/certs/{disco_ip}.key",
-                        "tags": ["cert0"],
-                    }
-                ]
-            }
-        },
-    }
-
-    session = _get_session()
-    response = session.post(url, json=req_body, headers=HEADERS, timeout=10)
-    if response.status_code != 200:
-        raise Exception("Caddy returned {response.status_code}: {response.text}")
 
 
 def add_project_route(project_name: str, domain: str) -> None:
