@@ -6,6 +6,9 @@ import subprocess
 from datetime import datetime, timedelta
 from secrets import token_hex
 
+from alembic import command
+from alembic.config import Config
+
 import disco
 from disco import config
 from disco.models.db import Session, engine
@@ -22,8 +25,7 @@ def main():
     host_home = os.environ.get("HOST_HOME")
     registry_username = token_hex(16)
     registry_password = token_hex(16)
-    print("Creating Disco internal database")
-    metadata.create_all(engine)
+    create_database()
     print("Setting initial state in internal database")
     with Session() as dbsession:
         with dbsession.begin():
@@ -103,6 +105,13 @@ def _run_cmd(args: list[str], timeout=600) -> str:
     if not verbose:
         print("", flush=True)
     return output
+
+
+def create_database():
+    print("Creating Disco internal database")
+    metadata.create_all(engine)
+    config = Config("/code/alembic.ini")
+    command.stamp(config, "head")
 
 
 def docker_swarm_init(disco_ip: str) -> None:

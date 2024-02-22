@@ -2,19 +2,11 @@ import logging
 
 from alembic import context
 
-from disco.config import SQLALCHEMY_DATABASE_URL
 from disco.models.meta import Base
 
 config = context.config
 
 target_metadata = Base.metadata
-
-
-def run_migrations_offline():
-    logging.basicConfig(level=logging.INFO)
-    context.configure(url=SQLALCHEMY_DATABASE_URL)
-    with context.begin_transaction():
-        context.run_migrations()
 
 
 def run_migrations_online():
@@ -32,6 +24,6 @@ def run_migrations_online():
 
 
 if context.is_offline_mode():
-    run_migrations_offline()
+    raise NotImplementedError()
 else:
     run_migrations_online()
