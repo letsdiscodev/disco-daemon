@@ -15,8 +15,12 @@ from disco.utils.deployments import (
     set_deployment_disco_file,
     set_deployment_status,
 )
-from disco.utils.discofile import DiscoFile
-from disco.utils.filesystem import project_folder_exists, read_disco_file
+from disco.utils.discofile import DiscoFile, ServiceType
+from disco.utils.filesystem import (
+    copy_static_site_src_to_deployment_folder,
+    project_folder_exists,
+    read_disco_file,
+)
 
 log = logging.getLogger(__name__)
 
@@ -140,8 +144,15 @@ def replace_deployment(
             new_deployment_info.disco_file = read_disco_file_for_deployment(
                 new_deployment_info, log_output
             )
+        assert new_deployment_info.disco_file is not None
         images = build_images(new_deployment_info, log_output)
         push_images(images, log_output)
+        if (
+            "web" in new_deployment_info.disco_file.services
+            and new_deployment_info.disco_file.services["web"].type
+            == ServiceType.static
+        ):
+            prepare_static_site(new_deployment_info, log_output)
     if new_deployment_info is not None:
         assert new_deployment_info.disco_file is not None
         create_networks(new_deployment_info, recovery, log_output)
@@ -259,6 +270,8 @@ def build_images(
         if service.image.pull is not None:
             # Docker will take care of pulling when service is created
             continue
+        if service.type == ServiceType.static and service.image.dockerfile is None:
+            continue
         image = docker.image_name(
             registry_host=new_deployment_info.registry_host,
             project_name=new_deployment_info.project_name,
@@ -342,12 +355,14 @@ def start_services(
     log_output("Starting services\n")
     assert new_deployment_info.disco_file is not None
     for service_name, service in new_deployment_info.disco_file.services.items():
+        if service.type == ServiceType.static:
+            continue
         networks = [
             docker.deployment_network_name(
                 new_deployment_info.project_name, new_deployment_info.number
             )
         ]
-        if service_name == "web":
+        if service_name == "web" and service.type == ServiceType.container:
             networks.append(
                 docker.deployment_web_network_name(
                     new_deployment_info.project_name, new_deployment_info.number
@@ -404,9 +419,13 @@ def stop_conflicting_port_services(
     assert prev_deployment_info.disco_file is not None
     new_ports = set()
     for service in new_deployment_info.disco_file.services.values():
+        if service.type == ServiceType.static:
+            continue
         for port in service.published_ports:
             new_ports.add(port.published_as)
     for service_name, service in prev_deployment_info.disco_file.services.items():
+        if service.type == ServiceType.static:
+            continue
         conflicts = any(
             [port.published_as in new_ports for port in service.published_ports]
         )
@@ -436,26 +455,41 @@ def serve_new_deployment(
     recovery: bool,
     log_output: Callable[[str], None],
 ) -> None:
-    internal_service_name = docker.service_name(
-        new_deployment_info.project_name, "web", new_deployment_info.number
-    )
-    # TODO wait that it's listening on the port specified? + health check?
-    log_output("Sending traffic to new web service\n")
     assert new_deployment_info.disco_file is not None
-    try:
-        caddy.serve_service(
-            new_deployment_info.project_name,
-            internal_service_name,
-            port=new_deployment_info.disco_file.services["web"].port or 8000,
+    if new_deployment_info.disco_file.services["web"].type == ServiceType.container:
+        internal_service_name = docker.service_name(
+            new_deployment_info.project_name, "web", new_deployment_info.number
         )
-    except Exception:
-        if recovery:
-            log_output(
-                f"Failed to update Caddy to serve "
-                f"deployment {new_deployment_info.number}\n"
+        # TODO wait that it's listening on the port specified? + health check?
+        log_output("Sending traffic to new web service\n")
+        assert new_deployment_info.disco_file is not None
+        try:
+            caddy.serve_service(
+                new_deployment_info.project_name,
+                internal_service_name,
+                port=new_deployment_info.disco_file.services["web"].port or 8000,
             )
-        else:
-            raise
+        except Exception:
+            if recovery:
+                log_output(
+                    f"Failed to update Caddy to serve "
+                    f"deployment {new_deployment_info.number}\n"
+                )
+            else:
+                raise
+    else:  # static
+        try:
+            caddy.serve_static_site(
+                new_deployment_info.project_name, new_deployment_info.number
+            )
+        except Exception:
+            if recovery:
+                log_output(
+                    f"Failed to update Caddy to serve "
+                    f"deployment {new_deployment_info.number}\n"
+                )
+            else:
+                raise
 
 
 def stop_prev_services(
@@ -526,7 +560,11 @@ def remove_prev_networks(
         else:
             raise
     assert prev_deployment_info.disco_file is not None
-    if "web" in prev_deployment_info.disco_file.services:
+    if (
+        "web" in prev_deployment_info.disco_file.services
+        and prev_deployment_info.disco_file.services["web"].type
+        == ServiceType.container
+    ):
         web_network = docker.deployment_web_network_name(
             prev_deployment_info.project_name, prev_deployment_info.number
         )
@@ -544,3 +582,21 @@ def remove_prev_networks(
                 log_output(f"Failed to remove network {web_network}\n")
             else:
                 raise
+
+
+def prepare_static_site(
+    new_deployment_info: DeploymentInfo,
+    log_output: Callable[[str], None],
+) -> None:
+    assert new_deployment_info.disco_file is not None
+    assert (
+        "web" in new_deployment_info.disco_file.services
+        and new_deployment_info.disco_file.services["web"].type == ServiceType.static
+    )
+    assert new_deployment_info.disco_file.services["web"].public_path is not None
+    log_output("Copying static files\n")
+    copy_static_site_src_to_deployment_folder(
+        project_name=new_deployment_info.project_name,
+        public_path=new_deployment_info.disco_file.services["web"].public_path,
+        deployment_number=new_deployment_info.number,
+    )

@@ -1,4 +1,5 @@
 from decimal import Decimal
+from enum import Enum
 
 from pydantic import BaseModel, Field
 
@@ -20,8 +21,19 @@ class Image(BaseModel):
     pull: str | None = None
 
 
+class ServiceType(str, Enum):
+    container = "container"
+    static = "static"
+
+
 class Service(BaseModel):
-    image: Image = Image(dockerfile="Dockerfile", context=".", pull=None)
+    type: ServiceType = ServiceType.container
+    # TODO validate that public_path starts with /
+    public_path: str | None = Field(
+        "/",
+        alias="publicPath",
+    )
+    image: Image = Image()
     port: int = 8000
     command: str | None = None
     published_ports: list[PublishedPort] = Field(

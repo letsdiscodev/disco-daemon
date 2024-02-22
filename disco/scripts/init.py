@@ -46,6 +46,9 @@ def main():
             )
             api_key = create_api_key(dbsession=dbsession, name="First API key")
             print("Created API key:", api_key.id)
+    create_caddy_socket_dir()
+    create_projects_dir(host_home)
+    create_static_site_dir(host_home)
     print("Initializing Docker Swarm")
     docker_swarm_init(disco_ip)
     node_id = get_this_swarm_node_id()
@@ -64,11 +67,9 @@ def main():
             )
     print(public_ca_cert)
     print("Setting up Caddy web server")
-    create_caddy_socket_dir()
     write_caddy_init_config(disco_ip)
-    start_caddy()
+    start_caddy(host_home)
     print("Setting up Disco")
-    create_projects_dir(host_home)
     login_to_registry(
         host_home=host_home,
         host=disco_ip,
@@ -401,7 +402,7 @@ def write_caddy_init_config(disco_ip) -> None:
         json.dump(init_config, f)
 
 
-def start_caddy() -> None:
+def start_caddy(host_home: str) -> None:
     _run_cmd(
         [
             "docker",
@@ -429,6 +430,8 @@ def start_caddy() -> None:
             "type=bind,source=/var/run/caddy,target=/var/run/caddy",
             "--mount",
             "source=disco-caddy-init-config,target=/initconfig",
+            "--mount",
+            f"type=bind,source={host_home}/disco/srv,target=/disco/srv",
             f"caddy:{config.CADDY_VERSION}",
             "caddy",
             "run",
@@ -445,7 +448,11 @@ def start_caddy() -> None:
 
 
 def create_projects_dir(host_home) -> None:
-    os.makedirs(f"/host{host_home}/projects")
+    os.makedirs(f"/host{host_home}/disco/projects")
+
+
+def create_static_site_dir(host_home) -> None:
+    os.makedirs(f"/host{host_home}/disco/srv")
 
 
 def login_to_registry(host_home, host, username, password) -> None:
@@ -484,13 +491,15 @@ def start_disco_daemon(host_home: str) -> None:
             "--network",
             "disco-logging",
             "--mount",
-            "source=disco-daemon-data,target=/code/data",
+            "source=disco-daemon-data,target=/disco/data",
             "--mount",
             f"type=bind,source={host_home}/.ssh,target=/root/.ssh",
             "--mount",
             f"type=bind,source={host_home}/.docker/config.json,target=/root/.docker/config.json",
             "--mount",
-            f"type=bind,source={host_home}/projects,target=/code/projects",
+            f"type=bind,source={host_home}/disco/projects,target=/disco/projects",
+            "--mount",
+            f"type=bind,source={host_home}/disco/srv,target=/disco/srv",
             "--mount",
             "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
             "--mount",
@@ -526,17 +535,21 @@ def start_disco_worker(host_home: str) -> None:
             "--network",
             "disco-logging",
             "--mount",
-            "source=disco-daemon-data,target=/code/data",
+            "source=disco-daemon-data,target=/disco/data",
             "--mount",
             f"type=bind,source={host_home}/.ssh,target=/root/.ssh",
             "--mount",
             f"type=bind,source={host_home}/.docker/config.json,target=/root/.docker/config.json",
             "--mount",
-            f"type=bind,source={host_home}/projects,target=/code/projects",
+            f"type=bind,source={host_home}/disco/projects,target=/disco/projects",
+            "--mount",
+            f"type=bind,source={host_home}/disco/srv,target=/disco/srv",
             "--mount",
             "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
             "--mount",
             "type=bind,source=/var/run/caddy,target=/var/run/caddy",
+            "--mount",
+            "source=disco-certs,target=/certs",
             "--constraint",
             "node.labels.disco-role==main",
             "--with-registry-auth",

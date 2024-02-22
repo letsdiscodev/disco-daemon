@@ -5,6 +5,8 @@ from requests.adapters import HTTPAdapter
 from urllib3.connection import HTTPConnection
 from urllib3.connectionpool import HTTPConnectionPool
 
+from disco.utils.filesystem import static_site_deployment_path
+
 HEADERS = {"Accept": "application/json"}
 BASE_URL = "http://disco-caddy"
 
@@ -90,6 +92,19 @@ def serve_service(project_name: str, container_name: str, port: int) -> None:
         "@id": f"disco-project-handler-{project_name}",
         "handler": "reverse_proxy",
         "upstreams": [{"dial": f"{container_name}:{port}"}],
+    }
+    session = _get_session()
+    response = session.patch(url, json=req_body, headers=HEADERS, timeout=10)
+    if response.status_code != 200:
+        raise Exception("Caddy returned {response.status_code}: {response.text}")
+
+
+def serve_static_site(project_name: str, deployment_number: int) -> None:
+    url = f"{BASE_URL}/id/disco-project-handler-{project_name}"
+    req_body = {
+        "@id": f"disco-project-handler-{project_name}",
+        "handler": "file_server",
+        "root": static_site_deployment_path(project_name, deployment_number),
     }
     session = _get_session()
     response = session.patch(url, json=req_body, headers=HEADERS, timeout=10)
