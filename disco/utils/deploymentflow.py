@@ -12,6 +12,7 @@ from disco.utils.deployments import (
     BUILD_STATUS,
     get_deployment_by_id,
     get_live_deployment,
+    set_deployment_commit_hash,
     set_deployment_disco_file,
     set_deployment_status,
 )
@@ -215,17 +216,34 @@ def checkout_commit(
             github_host=new_deployment_info.github_host,
             log_output=log_output,
         )
+        # TODO if project doesn't have branch configured,
+        #      save if origin/main exists, otherwise, origin/master
     else:
         log_output("Fetching latest commits from git repo\n")
         github.fetch(
             project_name=new_deployment_info.project_name, log_output=log_output
         )
-    log_output(f"Checking out commit {new_deployment_info.commit_hash}\n")
-    github.checkout_commit(
-        new_deployment_info.project_name,
-        new_deployment_info.commit_hash,
-        log_output=log_output,
-    )
+    if new_deployment_info.commit_hash == "_DEPLOY_LATEST_":
+        # TODO use project branch
+        log_output("Checking out latest commit\n")
+        github.checkout_latest(
+            new_deployment_info.project_name,
+            log_output=log_output,
+        )
+    else:
+        log_output(f"Checking out commit {new_deployment_info.commit_hash}\n")
+        github.checkout_commit(
+            new_deployment_info.project_name,
+            new_deployment_info.commit_hash,
+            log_output=log_output,
+        )
+    commit_hash = github.get_head_commit_hash(new_deployment_info.project_name)
+    if new_deployment_info.commit_hash != commit_hash:
+        with Session() as dbsession:
+            with dbsession.begin():
+                deployment = get_deployment_by_id(dbsession, new_deployment_info.id)
+                assert deployment is not None
+                set_deployment_commit_hash(deployment, commit_hash)
 
 
 def read_disco_file_for_deployment(
@@ -355,14 +373,14 @@ def start_services(
     log_output("Starting services\n")
     assert new_deployment_info.disco_file is not None
     for service_name, service in new_deployment_info.disco_file.services.items():
-        if service.type == ServiceType.static:
+        if service.type != ServiceType.container:
             continue
         networks = [
             docker.deployment_network_name(
                 new_deployment_info.project_name, new_deployment_info.number
             )
         ]
-        if service_name == "web" and service.type == ServiceType.container:
+        if service_name == "web":
             networks.append(
                 docker.deployment_web_network_name(
                     new_deployment_info.project_name, new_deployment_info.number
@@ -419,12 +437,12 @@ def stop_conflicting_port_services(
     assert prev_deployment_info.disco_file is not None
     new_ports = set()
     for service in new_deployment_info.disco_file.services.values():
-        if service.type == ServiceType.static:
+        if service.type != ServiceType.container:
             continue
         for port in service.published_ports:
             new_ports.add(port.published_as)
     for service_name, service in prev_deployment_info.disco_file.services.items():
-        if service.type == ServiceType.static:
+        if service.type != ServiceType.container:
             continue
         conflicts = any(
             [port.published_as in new_ports for port in service.published_ports]

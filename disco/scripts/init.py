@@ -111,7 +111,7 @@ def _run_cmd(args: list[str], timeout=600) -> str:
 def create_database():
     print("Creating Disco internal database")
     metadata.create_all(engine)
-    config = Config("/code/alembic.ini")
+    config = Config("/disco/app/alembic.ini")
     command.stamp(config, "head")
 
 
@@ -355,9 +355,7 @@ def write_caddy_init_config(disco_ip) -> None:
                                                             "strip_path_prefix": "/.disco"
                                                         },
                                                         "upstreams": [
-                                                            {
-                                                                "dial": "disco-daemon:6543"
-                                                            }
+                                                            {"dial": "disco:80"}
                                                         ],
                                                     }
                                                 ],
@@ -485,13 +483,13 @@ def start_disco_daemon(host_home: str) -> None:
             "service",
             "create",
             "--name",
-            "disco-daemon",
+            "disco",
             "--network",
             "disco-caddy-daemon",
             "--network",
             "disco-logging",
             "--mount",
-            "source=disco-daemon-data,target=/disco/data",
+            "source=disco-data,target=/disco/data",
             "--mount",
             f"type=bind,source={host_home}/.ssh,target=/root/.ssh",
             "--mount",
@@ -513,7 +511,7 @@ def start_disco_daemon(host_home: str) -> None:
             "uvicorn",
             "disco.app:app",
             "--port",
-            "6543",
+            "80",
             "--host",
             "0.0.0.0",
             "--root-path",
@@ -535,7 +533,7 @@ def start_disco_worker(host_home: str) -> None:
             "--network",
             "disco-logging",
             "--mount",
-            "source=disco-daemon-data,target=/disco/data",
+            "source=disco-data,target=/disco/data",
             "--mount",
             f"type=bind,source={host_home}/.ssh,target=/root/.ssh",
             "--mount",

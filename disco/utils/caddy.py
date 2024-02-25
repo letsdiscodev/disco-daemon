@@ -53,7 +53,7 @@ def add_project_route(project_name: str, domain: str) -> None:
                             {
                                 "handler": "reverse_proxy",
                                 "rewrite": {"strip_path_prefix": "/.disco"},
-                                "upstreams": [{"dial": "disco-daemon:6543"}],
+                                "upstreams": [{"dial": "disco:80"}],
                             }
                         ],
                     },
@@ -62,7 +62,7 @@ def add_project_route(project_name: str, domain: str) -> None:
                             {
                                 "@id": f"disco-project-handler-{project_name}",
                                 "handler": "reverse_proxy",
-                                "upstreams": [{"dial": "disco-daemon:6543"}],
+                                "upstreams": [{"dial": "disco:80"}],
                             }
                         ]
                     },

@@ -10,6 +10,7 @@ from disco.models import (
     DeploymentEnvironmentVariable,
     Project,
 )
+from disco.utils.discofile import DiscoFile
 from disco.utils.mq.tasks import enqueue_task
 
 log = logging.getLogger(__name__)
@@ -19,7 +20,7 @@ def create_deployment(
     dbsession: DBSession,
     project: Project,
     commit_hash: str | None,
-    disco_file: str | None,
+    disco_file: DiscoFile | None,
     by_api_key: ApiKey | None,
 ) -> Deployment | None:
     number = get_next_deployment_number(dbsession, project)
@@ -37,7 +38,9 @@ def create_deployment(
         project=project,
         status="QUEUED",
         commit_hash=commit_hash,
-        disco_file=disco_file,
+        disco_file=disco_file.model_dump_json(indent=2, by_alias=True)
+        if disco_file is not None
+        else None,
         by_api_key=by_api_key,
     )
     dbsession.add(deployment)
@@ -107,6 +110,11 @@ def set_deployment_status(deployment: Deployment, status: BUILD_STATUS) -> None:
 def set_deployment_disco_file(deployment: Deployment, disco_file: str) -> None:
     log.info("Setting deployment disco file of %s", deployment.log())
     deployment.disco_file = disco_file
+
+
+def set_deployment_commit_hash(deployment: Deployment, commit_hash: str) -> None:
+    log.info("Setting deployment commit_hash of %s: %s", deployment.log(), commit_hash)
+    deployment.commit_hash = commit_hash
 
 
 def get_live_deployment(dbsession: DBSession, project: Project) -> Deployment | None:

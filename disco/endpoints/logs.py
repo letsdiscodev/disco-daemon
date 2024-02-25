@@ -89,7 +89,7 @@ LOGSPOUT_CMD = [
     "--env",
     "ALLOW_TTY=true",
     "gliderlabs/logspout",
-    "raw://disco-daemon:{port}",
+    "raw://disco:{port}",
 ]
 
 

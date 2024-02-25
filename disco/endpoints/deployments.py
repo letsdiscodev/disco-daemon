@@ -15,6 +15,7 @@ from disco.models import ApiKey, Project
 from disco.models.db import Session
 from disco.utils import commandoutputs
 from disco.utils.deployments import create_deployment, get_deployment_by_number
+from disco.utils.discofile import DiscoFile
 from disco.utils.projects import get_project_by_name
 
 log = logging.getLogger(__name__)
@@ -23,10 +24,9 @@ router = APIRouter()
 
 
 # TODO proper validation
-class NewProject(BaseModel):
-    commit: str | None
-    # TODO accept the object instead of a string
-    disco_file: str | None = Field(..., alias="discoFile")
+class DeploymentRequestBody(BaseModel):
+    commit: str = "_DEPLOY_LATEST_"
+    disco_file: DiscoFile | None = Field(None, alias="discoFile")
 
 
 @router.post(
@@ -38,13 +38,13 @@ def deployments_post(
     dbsession: Annotated[DBSession, Depends(get_db)],
     project: Annotated[Project, Depends(get_project_from_url)],
     api_key: Annotated[ApiKey, Depends(get_api_key)],
-    new_deployment: NewProject,
+    req_body: DeploymentRequestBody,
 ):
     deployment = create_deployment(
         dbsession=dbsession,
         project=project,
-        commit_hash=new_deployment.commit,
-        disco_file=new_deployment.disco_file,
+        commit_hash=req_body.commit if req_body.disco_file is None else None,
+        disco_file=req_body.disco_file,
         by_api_key=api_key,
     )
     # TODO change code so that we always receive a deployment?

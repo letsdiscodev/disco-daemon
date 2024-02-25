@@ -100,7 +100,7 @@ def env_variable_get(
     }
 
 
-@router.get("/projects/{project_name}/env/{env_var_name}")
+@router.delete("/projects/{project_name}/env/{env_var_name}")
 def env_variable_delete(
     dbsession: Annotated[DBSession, Depends(get_db)],
     env_variable: Annotated[

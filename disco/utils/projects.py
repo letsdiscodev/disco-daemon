@@ -27,9 +27,13 @@ def create_project(
         domain=domain,
     )
     if github_repo is not None:
-        github_host, ssh_key_pub = create_deploy_key(name)
-        project.github_host = github_host
-        project.github_webhook_token = token_hex(16)
+        if github.repo_is_public(github_repo):
+            project.github_host = "github.com"
+            ssh_key_pub = None
+        else:
+            github_host, ssh_key_pub = create_deploy_key(name)
+            project.github_host = github_host
+            project.github_webhook_token = token_hex(16)
     else:
         ssh_key_pub = None
     dbsession.add(project)
@@ -89,4 +93,8 @@ def delete_project(dbsession: DBSession, project: Project, by_api_key: ApiKey) -
         for env_var in deployment.env_variables:
             dbsession.delete(env_var)
         dbsession.delete(deployment)
+    for keyvalue in project.key_values:
+        dbsession.delete(keyvalue)
+    for run in project.command_runs:
+        dbsession.delete(run)
     dbsession.delete(project)

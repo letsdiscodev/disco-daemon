@@ -24,6 +24,7 @@ class Image(BaseModel):
 class ServiceType(str, Enum):
     container = "container"
     static = "static"
+    command = "command"
 
 
 class Service(BaseModel):

@@ -7,7 +7,7 @@ from sqlalchemy.orm.session import Session as DBSession
 from disco.models import ApiKey, CommandRun, Deployment, Project
 from disco.models.db import Session
 from disco.utils import commandoutputs, docker, keyvalues
-from disco.utils.discofile import DiscoFile
+from disco.utils.discofile import DiscoFile, ServiceType
 
 log = logging.getLogger(__name__)
 
@@ -52,8 +52,15 @@ def create_command_run(
     project_name = project.name
     run_number = command_run.number
     run_id = command_run.id
+    if disco_file.services[service].type == ServiceType.command:
+        command = f"{disco_file.services[service].command} {command}"
     env_variables = [
         (env_var.name, env_var.value) for env_var in deployment.env_variables
+    ]
+    env_variables += [
+        ("DISCO_PROJECT_NAME", project_name),
+        ("DISCO_IP", keyvalues.get_value(dbsession, "DISCO_IP")),
+        ("DISCO_API_KEY", by_api_key.id),
     ]
     network = docker.deployment_network_name(project.name, deployment.number)
     volumes = [
@@ -72,10 +79,10 @@ def create_command_run(
             docker.run(
                 image=image,
                 project_name=project_name,
-                project_service_name=service,
+                name=f"{project_name}-run.{run_number}",
                 env_variables=env_variables,
                 volumes=volumes,
-                networks=[network],
+                networks=[network, "disco-caddy-daemon"],
                 command=command,
                 timeout=timeout,
                 log_output=log_output,

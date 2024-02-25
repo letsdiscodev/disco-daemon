@@ -16,7 +16,7 @@ from disco.models.db import Session
 from disco.utils import commandoutputs
 from disco.utils.commandruns import create_command_run, get_command_run_by_number
 from disco.utils.deployments import get_live_deployment
-from disco.utils.discofile import DiscoFile
+from disco.utils.discofile import DiscoFile, ServiceType
 from disco.utils.projects import get_project_by_name
 
 log = logging.getLogger(__name__)
@@ -50,14 +50,32 @@ def run_post(
     if req_body.service is None:
         if len(list(disco_file.services.keys())) == 0:
             raise HTTPException(422)
-        if "web" in disco_file.services:
+        if (
+            "web" in disco_file.services
+            and disco_file.services["web"].type == ServiceType.container
+        ):
             service = "web"
         else:
-            service = list(disco_file.services.keys())[0]
+            services = list(
+                [
+                    name
+                    for name, service in disco_file.services.items()
+                    if service.type in [ServiceType.container, ServiceType.command]
+                ]
+            )
+            if len(services) == 0:
+                raise HTTPException(422, "No service can run commands in project")
+            service = services[0]
     else:
         if req_body.service not in disco_file.services:
             # TODO do in validation instead?
             raise HTTPException(422)
+        if disco_file.services[req_body.service].type not in [
+            ServiceType.container,
+            ServiceType.command,
+        ]:
+            # TODO do in validation instead?
+            raise HTTPException(422, f"Service {req_body.service} can't run commands")
         service = req_body.service
     command_run, func = create_command_run(
         dbsession=dbsession,

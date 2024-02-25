@@ -10,9 +10,9 @@ services:
     ports:
       - 6543:6543
     volumes:
-      - .:/code:cached
-      - ./data:/code/data
-      - /code/disco.egg-info
+      - .:/disco/app:cached
+      - ./data:/disco/data
+      - /disco/app/disco.egg-info
 
 networks:
   default:

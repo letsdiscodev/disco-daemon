@@ -74,6 +74,82 @@ def checkout_commit(
         raise Exception(f"Git returned status {process.returncode}")
 
 
+def checkout_latest(project_name: str, log_output: Callable[[str], None]) -> None:
+    log.info("Checking out latest commit from Github project %s", project_name)
+    branch = main_or_master(project_name)  # TODO receive branch as arg
+    args = ["git", "checkout", f"origin/{branch}"]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        cwd=project_path(project_name),
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        log_output(line.decode("utf-8"))
+
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Git returned status {process.returncode}")
+
+
+def get_head_commit_hash(project_name: str) -> str:
+    log.info("Getting head commit hash for %s", project_name)
+    args = ["git", "rev-parse", "HEAD"]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        cwd=project_path(project_name),
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        decoded_line = line.decode("utf-8")
+        hash = decoded_line.replace("\n", "")
+
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Git returned status {process.returncode}")
+
+    if not re.match(r"^[a-f0-9]{40}$", hash):
+        raise Exception(f"Invalid commit hash returned by 'git rev-parse HEAD': {hash}")
+    return hash
+
+
+def main_or_master(project_name: str) -> str:
+    log.info("Finding if origin/master or origin/main exists in %s", project_name)
+    args = [
+        "git",
+        "branch",
+        "--remote",
+        "-l",
+        "origin/master",
+        "origin/main",
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        cwd=project_path(project_name),
+    )
+    assert process.stdout is not None
+    main_exists = False
+    master_exists = False
+    for line in process.stdout:
+        if "origin/main" in line.decode("utf-8"):
+            main_exists = True
+        if "origin/master" in line.decode("utf-8"):
+            master_exists = True
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Git returned status {process.returncode}")
+    if master_exists:
+        return "master"
+    if main_exists:
+        return "main"
+    raise Exception(f"No 'main' or 'master' branch found for {project_name}")
+
+
 def get_commit_info_from_webhook_push(request_body: str) -> tuple[str, str]:
     body = json.loads(request_body)
     refs = body["ref"]
@@ -93,3 +169,18 @@ def _branch_from_refs(refs: str) -> str:
 def remove_repo(project_name: str) -> None:
     log.info("Removing Github repo %s", project_name)
     shutil.rmtree(project_path(project_name))
+
+
+def repo_is_public(github_repo: str) -> bool:
+    log.info("Checking if Github repo is accessible %s", github_repo)
+    args = ["git", "ls-remote", github_repo]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    for _ in process.stdout:
+        pass  # no op, just swallow output
+    process.wait()
+    return process.returncode == 0
