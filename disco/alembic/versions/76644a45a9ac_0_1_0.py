@@ -1,8 +1,8 @@
-"""First revision
+"""0.1.0
 
 Revision ID: 76644a45a9ac
 Revises:
-Create Date: 2024-02-21 00:19:57.894491
+Create Date: 2024-03-03 13:05:58.426045
 
 """
 import sqlalchemy as sa
@@ -227,9 +227,26 @@ def upgrade():
         ["deployment_id"],
         unique=False,
     )
+    op.create_table(
+        "project_key_values",
+        sa.Column("key", sa.String(length=255), nullable=False),
+        sa.Column("project_id", sa.String(length=32), nullable=False),
+        sa.Column("created", sa.DateTime(), nullable=True),
+        sa.Column("updated", sa.DateTime(), nullable=True),
+        sa.Column("value", sa.UnicodeText(), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["project_id"],
+            ["projects.id"],
+            name=op.f("fk_project_key_values_project_id_projects"),
+        ),
+        sa.PrimaryKeyConstraint(
+            "key", "project_id", name=op.f("pk_project_key_values")
+        ),
+    )
 
 
 def downgrade():
+    op.drop_table("project_key_values")
     op.drop_index(
         op.f("ix_deployment_env_variables_deployment_id"),
         table_name="deployment_env_variables",
