@@ -36,14 +36,14 @@ class DeploymentInfo:
     project_name: str
     github_repo: str | None
     github_host: str | None
-    registry_host: str
+    registry_host: str | None
     disco_host: str
     domain_name: str | None
     env_variables: list[tuple[str, str]]
 
     @staticmethod
     def from_deployment(
-        deployment: Deployment, registry_host: str, disco_host: str
+        deployment: Deployment, registry_host: str | None, disco_host: str
     ) -> DeploymentInfo:
         return DeploymentInfo(
             id=deployment.id,
@@ -147,7 +147,8 @@ def replace_deployment(
             )
         assert new_deployment_info.disco_file is not None
         images = build_images(new_deployment_info, log_output)
-        push_images(images, log_output)
+        if new_deployment_info.registry_host is not None:
+            push_images(images, log_output)
         if (
             "web" in new_deployment_info.disco_file.services
             and new_deployment_info.disco_file.services["web"].type
@@ -178,7 +179,6 @@ def get_deployment_info(
             disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
             registry_host = keyvalues.get_value(dbsession, "REGISTRY_HOST")
             assert disco_host is not None
-            assert registry_host is not None
             if new_deployment_id is not None:
                 new_deployment = get_deployment_by_id(dbsession, new_deployment_id)
                 if new_deployment is not None:

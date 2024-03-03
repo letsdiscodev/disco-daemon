@@ -218,7 +218,7 @@ def list_services_for_deployment(
 
 
 def image_name(
-    registry_host: str,
+    registry_host: str | None,
     project_name: str,
     deployment_number: int,
     dockerfile: str,
@@ -227,7 +227,10 @@ def image_name(
     h = hashlib.new("sha256")
     h.update(f"dockerfile={dockerfile}&context={context}".encode("utf-8"))
     config_hash = h.hexdigest()
-    return f"{registry_host}/disco/project-{project_name}-{config_hash}:{deployment_number}"
+    base_name = f"disco/project-{project_name}-{config_hash}:{deployment_number}"
+    if registry_host is None:
+        return base_name
+    return f"{registry_host}/{base_name}"
 
 
 def service_name(project_name: str, service: str, deployment_number: int) -> str:

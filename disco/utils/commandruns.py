@@ -41,7 +41,6 @@ def create_command_run(
         assert image is not None
     else:
         registry_host = keyvalues.get_value(dbsession, "REGISTRY_HOST")
-        assert registry_host is not None
         image = docker.image_name(
             registry_host=registry_host,
             project_name=deployment.project_name,
