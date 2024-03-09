@@ -23,6 +23,26 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@router.get(
+    "/projects/{project_name}/deployments",
+    dependencies=[Depends(get_api_key)],
+)
+def deployments_get(
+    project: Annotated[Project, Depends(get_project_from_url)],
+):
+    return {
+        "deployments": [
+            {
+                "number": deployment.number,
+                "created": deployment.created.isoformat(),
+                "status": deployment.status,
+                "commitHash": deployment.commit_hash,
+            }
+            for deployment in project.deployments
+        ]
+    }
+
+
 # TODO proper validation
 class DeploymentRequestBody(BaseModel):
     commit: str = "_DEPLOY_LATEST_"
