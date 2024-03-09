@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from typing import Annotated
 
@@ -13,12 +12,17 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
+async def get_body(request: Request):
+    return await request.body()
+
+
 @router.post("/webhooks/github/{webhook_token}", status_code=202)
 def github_webhook_service_post(
     webhook_token: str,
     request: Request,
     dbsession: Annotated[DBSession, Depends(get_db)],
     x_github_event: Annotated[str | None, Header()],
+    body: bytes = Depends(get_body),
 ):
     if x_github_event != "push":
         log.info(
@@ -33,7 +37,7 @@ def github_webhook_service_post(
         task_name="PROCESS_GITHUB_WEBHOOK",
         body=dict(
             webhook_token=webhook_token,
-            request_body=asyncio.run(request.body()).decode("utf-8"),
+            request_body=body.decode("utf-8"),
         ),
     )
     return {}
