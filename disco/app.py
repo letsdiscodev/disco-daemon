@@ -6,6 +6,7 @@ from disco.endpoints import (
     deployments,
     envvariables,
     logs,
+    meta,
     projectkeyvalues,
     projects,
     run,
@@ -20,6 +21,7 @@ log = logging.getLogger(__name__)
 log.info("Initializing Disco daemon")
 app = FastAPI()
 
+app.include_router(meta.router)
 app.include_router(projects.router)
 app.include_router(deployments.router)
 app.include_router(run.router)
