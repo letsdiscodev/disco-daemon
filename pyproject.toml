@@ -1,3 +1,20 @@
+[project]
+name = "disco"
+dynamic = ["version"]
+
+[tool.setuptools]
+packages = ["disco"]
+
+[tool.setuptools.dynamic]
+version = {attr = "disco.__version__"}
+
+[project.scripts]
+disco_worker = "disco.worker:main"
+disco_init = "disco.scripts.init:main"
+
 [tool.ruff.lint]
 # Enable the isort rules.
 extend-select = ["I"]
+
+[tool.mypy]
+ignore_missing_imports = true

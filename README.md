@@ -9,3 +9,11 @@ docker buildx build \
   --push \
   .
 ```
+
+## Regenerate requirements.txt
+
+We edit `requirements.in` to list the dependencies.
+```bash
+docker compose run --rm --no-deps web \
+  uv pip compile requirements.in -o requirements.txt
+```
