@@ -37,7 +37,7 @@ def create_command_run(
         by_api_key=by_api_key,
     )
     dbsession.add(command_run)
-    registry_host = keyvalues.get_value(dbsession, "REGISTRY_HOST")
+    registry_host = keyvalues.get_value_sync(dbsession, "REGISTRY_HOST")
     image = docker.get_image_name_for_service(
         disco_file=disco_file,
         service_name=service,
@@ -79,7 +79,7 @@ def create_command_run(
             if output is not None:
                 log.info("Command run %s %s: %s", project_name, run_number, output)
             with Session.begin() as dbsession_:
-                commandoutputs.save(dbsession_, f"RUN_{run_id}", output)
+                commandoutputs.save_sync(dbsession_, f"RUN_{run_id}", output)
 
         try:
             docker.run(

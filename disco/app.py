@@ -9,6 +9,7 @@ from disco.endpoints import (
     apikeys,
     deployments,
     envvariables,
+    githubapps,
     logs,
     meta,
     nodes,
@@ -19,7 +20,6 @@ from disco.endpoints import (
     syslog,
     volumes,
 )
-from disco.endpoints.webhooks import github
 from disco.utils.asyncworker import async_worker
 
 logging.basicConfig(level=logging.INFO)
@@ -54,7 +54,7 @@ app.include_router(scale.router)
 app.include_router(apikeys.router)
 app.include_router(apikeyinvites.router)
 app.include_router(syslog.router)
-app.include_router(github.router)
+app.include_router(githubapps.router)
 
 
 @app.get("/")

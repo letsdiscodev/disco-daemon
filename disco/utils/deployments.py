@@ -2,12 +2,15 @@ import logging
 import uuid
 from typing import Literal
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import (
     ApiKey,
     Deployment,
     DeploymentEnvironmentVariable,
+    GithubAppRepo,
     Project,
 )
 from disco.utils import commandoutputs, keyvalues
@@ -23,10 +26,10 @@ def maybe_create_deployment(
     disco_file: DiscoFile | None,
     by_api_key: ApiKey | None,
 ) -> Deployment | None:
-    number = get_next_deployment_number(dbsession, project)
+    number = get_next_deployment_number_sync(dbsession, project)
     if number == 1 and commit_hash is None and disco_file is None:
         return None
-    return create_deployment(
+    return create_deployment_sync(
         dbsession=dbsession,
         project=project,
         commit_hash=commit_hash,
@@ -35,7 +38,69 @@ def maybe_create_deployment(
     )
 
 
-def create_deployment(
+async def create_deployment(
+    dbsession: AsyncDBSession,
+    project: Project,
+    commit_hash: str | None,
+    disco_file: DiscoFile | None,
+    by_api_key: ApiKey | None,
+    number: int | None = None,
+) -> Deployment:
+    if number is not None:
+        if len(await project.awaitable_attrs.deployments) > 0:
+            raise Exception(
+                "Cannot set deployment number if project already has deployments"
+            )
+    else:
+        number = await get_next_deployment_number(dbsession, project)
+    prev_deployment = await get_live_deployment(dbsession, project)
+    github_repo = await _github_repo_for_project(project)
+    deployment = Deployment(
+        id=uuid.uuid4().hex,
+        number=number,
+        prev_deployment_id=prev_deployment.id if prev_deployment is not None else None,
+        project_name=project.name,
+        project=project,
+        domain=project.domain,
+        github_repo_full_name=github_repo.full_name
+        if github_repo is not None
+        else None,
+        github_repo=github_repo,
+        status="QUEUED",
+        commit_hash=commit_hash,
+        disco_file=disco_file.model_dump_json(indent=2, by_alias=True)
+        if disco_file is not None
+        else None,
+        registry_host=await keyvalues.get_value(dbsession, "REGISTRY_HOST"),
+        by_api_key=by_api_key,
+    )
+    dbsession.add(deployment)
+    for env_variable in await project.awaitable_attrs.env_variables:
+        deploy_env_var = DeploymentEnvironmentVariable(
+            id=uuid.uuid4().hex,
+            name=env_variable.name,
+            value=env_variable.value,
+            deployment=deployment,
+        )
+        dbsession.add(deploy_env_var)
+    log.info("Created deployment %s", deployment.log())
+    await commandoutputs.save(
+        dbsession,
+        f"DEPLOYMENT_{deployment.id}",
+        f"Deployment {deployment.number} enqueued\n",
+    )
+    return deployment
+
+
+async def _github_repo_for_project(project: Project) -> GithubAppRepo | None:
+    project_repo = await project.awaitable_attrs.github_repo
+    if project_repo is None:
+        return None
+    github_repo = await project_repo.awaitable_attrs.github_app_repo
+    return github_repo
+
+
+def create_deployment_sync(
     dbsession: DBSession,
     project: Project,
     commit_hash: str | None,
@@ -49,23 +114,28 @@ def create_deployment(
                 "Cannot set deployment number if project already has deployments"
             )
     else:
-        number = get_next_deployment_number(dbsession, project)
-    prev_deployment = get_live_deployment(dbsession, project)
+        number = get_next_deployment_number_sync(dbsession, project)
+    prev_deployment = get_live_deployment_sync(dbsession, project)
+    github_repo = None
+    if project.github_repo is not None:
+        github_repo = project.github_repo.github_app_repo
     deployment = Deployment(
         id=uuid.uuid4().hex,
         number=number,
         prev_deployment_id=prev_deployment.id if prev_deployment is not None else None,
         project_name=project.name,
         domain=project.domain,
-        github_repo=project.github_repo,
-        github_host=project.github_host,
+        github_repo_full_name=github_repo.full_name
+        if github_repo is not None
+        else None,
+        github_repo=github_repo,
         project=project,
         status="QUEUED",
         commit_hash=commit_hash,
         disco_file=disco_file.model_dump_json(indent=2, by_alias=True)
         if disco_file is not None
         else None,
-        registry_host=keyvalues.get_value(dbsession, "REGISTRY_HOST"),
+        registry_host=keyvalues.get_value_sync(dbsession, "REGISTRY_HOST"),
         by_api_key=by_api_key,
     )
     dbsession.add(deployment)
@@ -78,7 +148,7 @@ def create_deployment(
         )
         dbsession.add(deploy_env_var)
     log.info("Created deployment %s", deployment.log())
-    commandoutputs.save(
+    commandoutputs.save_sync(
         dbsession,
         f"DEPLOYMENT_{deployment.id}",
         f"Deployment {deployment.number} enqueued\n",
@@ -86,7 +156,25 @@ def create_deployment(
     return deployment
 
 
-def get_next_deployment_number(dbsession: DBSession, project: Project) -> int:
+async def get_next_deployment_number(
+    dbsession: AsyncDBSession, project: Project
+) -> int:
+    stmt = (
+        select(Deployment)
+        .where(Deployment.project == project)
+        .order_by(Deployment.number.desc())
+        .limit(1)
+    )
+    result = await dbsession.execute(stmt)
+    deployment = result.scalars().first()
+    if deployment is None:
+        number = 0
+    else:
+        number = deployment.number
+    return number + 1
+
+
+def get_next_deployment_number_sync(dbsession: DBSession, project: Project) -> int:
     deployment = (
         dbsession.query(Deployment)
         .filter(Deployment.project == project)
@@ -141,7 +229,23 @@ def set_deployment_commit_hash(deployment: Deployment, commit_hash: str) -> None
     deployment.commit_hash = commit_hash
 
 
-def get_live_deployment(dbsession: DBSession, project: Project) -> Deployment | None:
+async def get_live_deployment(
+    dbsession: AsyncDBSession, project: Project
+) -> Deployment | None:
+    stmt = (
+        select(Deployment)
+        .where(Deployment.project == project)
+        .where(Deployment.status == "COMPLETE")
+        .order_by(Deployment.number.desc())
+        .limit(1)
+    )
+    result = await dbsession.execute(stmt)
+    return result.scalars().first()
+
+
+def get_live_deployment_sync(
+    dbsession: DBSession, project: Project
+) -> Deployment | None:
     return (
         dbsession.query(Deployment)
         .filter(Deployment.project == project)

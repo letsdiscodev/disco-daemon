@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, Path
 from pydantic import BaseModel, Field
 from sqlalchemy.orm.session import Session as DBSession
 
-from disco.auth import get_api_key
-from disco.endpoints.dependencies import get_db
+from disco.auth import get_api_key_sync
+from disco.endpoints.dependencies import get_sync_db
 from disco.models import ApiKey
 from disco.utils.apikeys import (
     delete_api_key,
@@ -17,11 +17,11 @@ from disco.utils.encryption import obfuscate
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(dependencies=[Depends(get_api_key)])
+router = APIRouter(dependencies=[Depends(get_api_key_sync)])
 
 
 def get_api_key_from_url(
-    dbsession: Annotated[DBSession, Depends(get_db)],
+    dbsession: Annotated[DBSession, Depends(get_sync_db)],
     public_key: Annotated[str, Path()],
 ):
     api_key = get_api_key_by_public_key(dbsession, public_key)
@@ -31,7 +31,7 @@ def get_api_key_from_url(
 
 
 @router.get("/api-keys")
-def api_keys_get(dbsession: Annotated[DBSession, Depends(get_db)]):
+def api_keys_get(dbsession: Annotated[DBSession, Depends(get_sync_db)]):
     api_keys = get_all_api_keys(dbsession)
     return {
         "apiKeys": [
@@ -51,9 +51,9 @@ class NewApiKeyRequestBody(BaseModel):
 
 @router.delete("/api-keys/{public_key}", status_code=200)
 def api_key_delete(
-    dbsession: Annotated[DBSession, Depends(get_db)],
+    dbsession: Annotated[DBSession, Depends(get_sync_db)],
     api_key: Annotated[ApiKey, Depends(get_api_key_from_url)],
-    by_api_key: Annotated[ApiKey, Depends(get_api_key)],
+    by_api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
 ):
     api_keys = get_all_api_keys(dbsession)
     if len(api_keys) == 1:

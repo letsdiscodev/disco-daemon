@@ -3,57 +3,20 @@ import logging
 import re
 import shutil
 import subprocess
+import time
+from datetime import datetime, timedelta, timezone
 
+import requests
+from jwt import JWT, jwk_from_pem
+
+from disco.models.db import Session
 from disco.utils.filesystem import project_path, projects_root
+from disco.utils.githubapps import (
+    get_github_app_installation_by_id,
+    get_repo_by_id_sync,
+)
 
 log = logging.getLogger(__name__)
-
-
-def fetch(project_name: str) -> None:
-    log.info("Pulling from Github project %s", project_name)
-    args = ["git", "fetch", "origin"]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        cwd=project_path(project_name),
-    )
-    assert process.stdout is not None
-    for line in process.stdout:
-        line_text = line.decode("utf-8")
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-
-    process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Git returned status {process.returncode}")
-
-
-def clone_project(
-    project_name: str,
-    github_repo: str,
-    github_host: str,
-) -> None:
-    log.info("Cloning from Github project %s (%s)", project_name, github_repo)
-    url = github_repo.replace("github.com", github_host)
-    args = ["git", "clone", url, project_path(project_name)]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        cwd=projects_root(),
-    )
-    assert process.stdout is not None
-    for line in process.stdout:
-        line_text = line.decode("utf-8")
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-
-    process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Git returned status {process.returncode}")
 
 
 def checkout_commit(project_name: str, commit_hash: str) -> None:
@@ -179,16 +142,130 @@ def remove_repo(project_name: str) -> None:
     shutil.rmtree(project_path(project_name))
 
 
-def repo_is_public(github_repo: str) -> bool:
-    log.info("Checking if Github repo is accessible %s", github_repo)
-    args = ["git", "ls-remote", github_repo]
+def fetch(project_name: str, repo_full_name: str, github_repo_id: str | None) -> None:
+    log.info("Fetching from Github project %s", project_name)
+    if github_repo_id is not None:
+        access_token = get_access_token_for_github_app_repo(
+            full_name=repo_full_name, github_repo_id=github_repo_id
+        )
+        url = f"https://x-access-token:{access_token}@github.com/{repo_full_name}"
+    else:
+        url = f"https://github.com/{repo_full_name}"
+    args = ["git", "remote", "set-url", "origin", url]
     process = subprocess.Popen(
         args=args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
+        cwd=project_path(project_name),
     )
     assert process.stdout is not None
-    for _ in process.stdout:
-        pass  # no op, just swallow output
+    for line in process.stdout:
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
     process.wait()
-    return process.returncode == 0
+    if process.returncode != 0:
+        raise Exception(f"Git returned status {process.returncode}")
+    args = ["git", "fetch", "origin"]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        cwd=project_path(project_name),
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Git returned status {process.returncode}")
+
+
+def clone(
+    project_name: str,
+    repo_full_name: str,
+    github_repo_id: str | None,
+) -> None:
+    log.info("Cloning from Github project %s (%s)", project_name, repo_full_name)
+    if github_repo_id is not None:
+        access_token = get_access_token_for_github_app_repo(
+            full_name=repo_full_name, github_repo_id=github_repo_id
+        )
+        url = f"https://x-access-token:{access_token}@github.com/{repo_full_name}"
+    else:
+        url = f"https://github.com/{repo_full_name}"
+    args = ["git", "clone", url, project_path(project_name)]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        cwd=projects_root(),
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
+
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Git returned status {process.returncode}")
+
+
+class GithubException(Exception):
+    pass
+
+
+class GithubRepoPermissionException(Exception):
+    pass
+
+
+def get_access_token_for_github_app_repo(full_name: str, github_repo_id: str) -> str:
+    with Session.begin() as dbsession:
+        repo = get_repo_by_id_sync(dbsession, github_repo_id)
+        if repo is None:
+            raise GithubRepoPermissionException(
+                f"Github Repository {full_name} not accessible"
+            )
+        access_token = repo.installation.access_token
+        access_token_expires = repo.installation.access_token_expires
+        installation_id = repo.installation.id
+        pem = repo.installation.github_app.pem
+        app_id = repo.installation.github_app.id
+    if access_token_expires is None or access_token_expires < datetime.now(
+        timezone.utc
+    ) - timedelta(minutes=10):
+        signing_key = jwk_from_pem(pem.encode("utf-8"))
+        payload = {"iat": int(time.time()), "exp": int(time.time()) + 30, "iss": app_id}
+        jwt_instance = JWT()
+        encoded_jwt = jwt_instance.encode(payload, signing_key, alg="RS256")
+        url = (
+            f"https://api.github.com/app/installations/{installation_id}/access_tokens"
+        )
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {encoded_jwt}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        response = requests.post(url=url, headers=headers, timeout=20)
+        # TODO check status code
+        # TODO if unable to get token,
+        #      see if other installations have the repo, try with them, update DB
+        #      and try again
+        resp_body = response.json()
+        access_token = resp_body["token"]
+        assert isinstance(access_token, str)
+        expires_iso8601 = resp_body["expires_at"]
+        expires = datetime.fromisoformat(expires_iso8601)
+        with Session.begin() as dbsession:
+            installation = get_github_app_installation_by_id(dbsession, installation_id)
+            assert installation is not None
+            installation.access_token = access_token
+            installation.access_token_expires = expires
+    assert access_token is not None
+    return access_token

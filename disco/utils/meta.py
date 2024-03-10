@@ -53,7 +53,7 @@ def _run_cmd(args: list[str], timeout=600) -> str:
 
 
 def is_updating(dbsession: DBSession) -> bool:
-    updating = keyvalues.get_value(dbsession, "DISCO_IS_UPDATING")
+    updating = keyvalues.get_value_sync(dbsession, "DISCO_IS_UPDATING")
     return updating is not None
 
 
@@ -66,7 +66,7 @@ def save_done_updating(dbsession: DBSession) -> None:
 
 
 def set_disco_host(dbsession: DBSession, host: str, by_api_key: ApiKey) -> None:
-    prev_host = keyvalues.get_value(dbsession=dbsession, key="DISCO_HOST")
+    prev_host = keyvalues.get_value_sync(dbsession=dbsession, key="DISCO_HOST")
     log.info(
         "Setting Disco host from %s to %s by %s", prev_host, host, by_api_key.log()
     )

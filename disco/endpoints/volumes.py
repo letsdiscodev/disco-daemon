@@ -7,28 +7,30 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm.session import Session as DBSession
 
-from disco.auth import get_api_key, get_api_key_wo_tx
-from disco.endpoints.dependencies import get_db, get_project_from_url
+from disco.auth import get_api_key_sync, get_api_key_wo_tx
+from disco.endpoints.dependencies import get_project_from_url, get_sync_db
 from disco.models import ApiKey, Project
 from disco.models.db import Session
 from disco.utils import docker, keyvalues
-from disco.utils.apikeys import get_api_key_by_id
-from disco.utils.deployments import get_live_deployment
+from disco.utils.apikeys import get_api_key_by_id_sync
+from disco.utils.deployments import get_live_deployment_sync
 from disco.utils.discofile import get_disco_file_from_str
 from disco.utils.encryption import decrypt
-from disco.utils.projects import get_project_by_name
+from disco.utils.projects import get_project_by_name_sync
 
 log = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-@router.get("/projects/{project_name}/volumes", dependencies=[Depends(get_api_key)])
+@router.get(
+    "/projects/{project_name}/volumes", dependencies=[Depends(get_api_key_sync)]
+)
 def volumes_get(
-    dbsession: Annotated[DBSession, Depends(get_db)],
+    dbsession: Annotated[DBSession, Depends(get_sync_db)],
     project: Annotated[Project, Depends(get_project_from_url)],
 ):
-    deployment = get_live_deployment(dbsession, project)
+    deployment = get_live_deployment_sync(dbsession, project)
     volume_names = []
     if deployment is not None:
         disco_file = get_disco_file_from_str(deployment.disco_file)
@@ -40,12 +42,12 @@ def volumes_get(
 
 @router.get("/projects/{project_name}/volumes/{volume_name}")
 def volume_get(
-    dbsession: Annotated[DBSession, Depends(get_db)],
+    dbsession: Annotated[DBSession, Depends(get_sync_db)],
     project: Annotated[Project, Depends(get_project_from_url)],
     volume_name: str,
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
 ):
-    deployment = get_live_deployment(dbsession, project)
+    deployment = get_live_deployment_sync(dbsession, project)
     volume_names = []
     if deployment is not None:
         disco_file = get_disco_file_from_str(deployment.disco_file)
@@ -98,10 +100,10 @@ async def volume_set(
     request: Request,
 ):
     with Session.begin() as dbsession:
-        project = get_project_by_name(dbsession, project_name)
+        project = get_project_by_name_sync(dbsession, project_name)
         if project is None:
             raise HTTPException(status_code=404)
-        deployment = get_live_deployment(dbsession, project)
+        deployment = get_live_deployment_sync(dbsession, project)
         volume_names = []
         if deployment is not None:
             disco_file = get_disco_file_from_str(deployment.disco_file)
@@ -119,9 +121,9 @@ async def volume_set(
             (env_var.name, decrypt(env_var.value))
             for env_var in deployment.env_variables
         ]
-        disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
+        disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
         assert disco_host is not None
-        api_key = get_api_key_by_id(dbsession, api_key_id)
+        api_key = get_api_key_by_id_sync(dbsession, api_key_id)
         assert api_key is not None
         api_key_log = api_key.log()
 

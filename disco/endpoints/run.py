@@ -12,15 +12,15 @@ from sqlalchemy.orm.session import Session as DBSession
 from sse_starlette import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
-from disco.auth import get_api_key, get_api_key_wo_tx
-from disco.endpoints.dependencies import get_db, get_project_from_url
+from disco.auth import get_api_key_sync, get_api_key_wo_tx
+from disco.endpoints.dependencies import get_project_from_url, get_sync_db
 from disco.models import ApiKey, Project
-from disco.models.db import Session
+from disco.models.db import AsyncSession, Session
 from disco.utils import commandoutputs
 from disco.utils.commandruns import create_command_run, get_command_run_by_number
-from disco.utils.deployments import get_live_deployment
+from disco.utils.deployments import get_live_deployment_sync
 from disco.utils.discofile import DiscoFile, ServiceType, get_disco_file_from_str
-from disco.utils.projects import get_project_by_name
+from disco.utils.projects import get_project_by_name_sync
 
 log = logging.getLogger(__name__)
 
@@ -36,16 +36,16 @@ class RunReqBody(BaseModel):
 @router.post(
     "/projects/{project_name}/runs",
     status_code=202,
-    dependencies=[Depends(get_api_key)],
+    dependencies=[Depends(get_api_key_sync)],
 )
 def run_post(
-    dbsession: Annotated[DBSession, Depends(get_db)],
+    dbsession: Annotated[DBSession, Depends(get_sync_db)],
     project: Annotated[Project, Depends(get_project_from_url)],
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
     req_body: RunReqBody,
     background_tasks: BackgroundTasks,
 ):
-    deployment = get_live_deployment(dbsession, project)
+    deployment = get_live_deployment_sync(dbsession, project)
     if deployment is None:
         raise HTTPException(422, "Must deploy first")
     disco_file: DiscoFile = get_disco_file_from_str(deployment.disco_file)
@@ -136,7 +136,7 @@ async def run_output_get(
     last_event_id: Annotated[str | None, Header()] = None,
 ):
     with Session.begin() as dbsession:
-        project = get_project_by_name(dbsession, project_name)
+        project = get_project_by_name_sync(dbsession, project_name)
         if project is None:
             raise HTTPException(status_code=404)
         run = get_command_run_by_number(dbsession, project, run_number)
@@ -152,8 +152,8 @@ async def run_output_get(
     # TODO refactor, this is copy-pasted from deployment output
     async def get_run_output(source: str, after: datetime | None):
         while True:
-            with Session.begin() as dbsession:
-                output = commandoutputs.get_next(dbsession, source, after=after)
+            async with AsyncSession.begin() as dbsession:
+                output = await commandoutputs.get_next(dbsession, source, after=after)
                 if output is not None:
                     if output.text is None:
                         yield ServerSentEvent(

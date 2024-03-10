@@ -19,6 +19,7 @@ click==8.1.7
     # via uvicorn
 croniter==2.0.3
 cryptography==42.0.5
+    # via jwt
 fastapi==0.110.1
 fire==0.5.0
     # via randomname
@@ -32,6 +33,7 @@ idna==3.6
     #   requests
 iniconfig==2.0.0
     # via pytest
+jwt==1.3.1
 mako==1.3.2
     # via alembic
 markupsafe==2.1.5

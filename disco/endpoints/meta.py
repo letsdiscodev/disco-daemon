@@ -9,25 +9,25 @@ from pydantic_core import InitErrorDetails, PydanticCustomError
 from sqlalchemy.orm.session import Session as DBSession
 
 import disco
-from disco.auth import get_api_key
-from disco.endpoints.dependencies import get_db
+from disco.auth import get_api_key_sync
+from disco.endpoints.dependencies import get_sync_db
 from disco.models import ApiKey
 from disco.utils import docker, keyvalues
-from disco.utils.dns import domain_points_to_here
+from disco.utils.dns import domain_points_to_here_sync
 from disco.utils.meta import set_disco_host, update_disco
-from disco.utils.projects import get_project_by_domain
+from disco.utils.projects import get_project_by_domain_sync
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(dependencies=[Depends(get_api_key)])
+router = APIRouter(dependencies=[Depends(get_api_key_sync)])
 
 
 @router.get("/disco/meta")
-def meta_get(dbsession: Annotated[DBSession, Depends(get_db)]):
+def meta_get(dbsession: Annotated[DBSession, Depends(get_sync_db)]):
     return {
         "version": disco.__version__,
-        "discoHost": keyvalues.get_value(dbsession, "DISCO_HOST"),
-        "registryHost": keyvalues.get_value(dbsession, "REGISTRY_HOST"),
+        "discoHost": keyvalues.get_value_sync(dbsession, "DISCO_HOST"),
+        "registryHost": keyvalues.get_value_sync(dbsession, "REGISTRY_HOST"),
     }
 
 
@@ -38,7 +38,7 @@ class UpdateRequestBody(BaseModel):
 
 @router.post("/disco/upgrade")
 def upgrade_post(
-    dbsession: Annotated[DBSession, Depends(get_db)], req_body: UpdateRequestBody
+    dbsession: Annotated[DBSession, Depends(get_sync_db)], req_body: UpdateRequestBody
 ):
     update_disco(dbsession=dbsession, image=req_body.image, pull=req_body.pull)
     return {"updating": True}
@@ -57,9 +57,10 @@ class SetRegistryRequestBody(BaseModel):
 
 @router.post("/disco/registry")
 def registry_post(
-    dbsession: Annotated[DBSession, Depends(get_db)], req_body: SetRegistryRequestBody
+    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+    req_body: SetRegistryRequestBody,
 ):
-    disco_host_home = keyvalues.get_value(dbsession, "HOST_HOME")
+    disco_host_home = keyvalues.get_value_sync(dbsession, "HOST_HOME")
     assert disco_host_home is not None
     docker.login(
         disco_host_home=disco_host_home,
@@ -70,8 +71,8 @@ def registry_post(
     keyvalues.set_value(dbsession=dbsession, key="REGISTRY_HOST", value=req_body.host)
     return {
         "version": disco.__version__,
-        "discoHost": keyvalues.get_value(dbsession, "DISCO_HOST"),
-        "registryHost": keyvalues.get_value(dbsession, "REGISTRY_HOST"),
+        "discoHost": keyvalues.get_value_sync(dbsession, "DISCO_HOST"),
+        "registryHost": keyvalues.get_value_sync(dbsession, "REGISTRY_HOST"),
     }
 
 
@@ -81,11 +82,11 @@ class SetDiscoHostRequestBody(BaseModel):
 
 @router.post("/disco/host")
 def host_post(
-    dbsession: Annotated[DBSession, Depends(get_db)],
+    dbsession: Annotated[DBSession, Depends(get_sync_db)],
     req_body: SetDiscoHostRequestBody,
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
 ):
-    project = get_project_by_domain(dbsession, req_body.host)
+    project = get_project_by_domain_sync(dbsession, req_body.host)
     if project is not None:
         raise RequestValidationError(
             errors=(
@@ -104,7 +105,7 @@ def host_post(
                 )
             ).errors()
         )
-    if not domain_points_to_here(dbsession, req_body.host):
+    if not domain_points_to_here_sync(dbsession, req_body.host):
         raise RequestValidationError(
             errors=(
                 ValidationError.from_exception_data(
@@ -126,6 +127,6 @@ def host_post(
     set_disco_host(dbsession=dbsession, host=req_body.host, by_api_key=api_key)
     return {
         "version": disco.__version__,
-        "discoHost": keyvalues.get_value(dbsession, "DISCO_HOST"),
-        "registryHost": keyvalues.get_value(dbsession, "REGISTRY_HOST"),
+        "discoHost": keyvalues.get_value_sync(dbsession, "DISCO_HOST"),
+        "registryHost": keyvalues.get_value_sync(dbsession, "REGISTRY_HOST"),
     }

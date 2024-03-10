@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timezone
 from secrets import token_hex
 
+from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import ApiKey
@@ -20,8 +21,21 @@ def create_api_key(dbsession: DBSession, name: str) -> ApiKey:
     return api_key
 
 
-def get_valid_api_key_by_id(dbsession: DBSession, api_key_id: str) -> ApiKey | None:
-    api_key = get_api_key_by_id(dbsession, api_key_id)
+def get_valid_api_key_by_id_sync(
+    dbsession: DBSession, api_key_id: str
+) -> ApiKey | None:
+    api_key = get_api_key_by_id_sync(dbsession, api_key_id)
+    if api_key is None:
+        return None
+    if api_key.deleted is not None:
+        return None
+    return api_key
+
+
+async def get_valid_api_key_by_id(
+    dbsession: AsyncDBSession, api_key_id: str
+) -> ApiKey | None:
+    api_key = await get_api_key_by_id(dbsession, api_key_id)
     if api_key is None:
         return None
     if api_key.deleted is not None:
@@ -38,8 +52,14 @@ def get_all_api_keys(dbsession: DBSession) -> list[ApiKey]:
     )
 
 
-def get_api_key_by_id(dbsession: DBSession, api_key_id: str) -> ApiKey | None:
+def get_api_key_by_id_sync(dbsession: DBSession, api_key_id: str) -> ApiKey | None:
     return dbsession.query(ApiKey).filter(ApiKey.id == api_key_id).first()
+
+
+async def get_api_key_by_id(
+    dbsession: AsyncDBSession, api_key_id: str
+) -> ApiKey | None:
+    return await dbsession.get(ApiKey, api_key_id)
 
 
 def get_api_key_by_public_key(dbsession: DBSession, public_key: str) -> ApiKey | None:

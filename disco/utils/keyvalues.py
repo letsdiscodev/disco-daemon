@@ -1,3 +1,4 @@
+from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import KeyValue
@@ -14,7 +15,14 @@ def get_value_str(dbsession: DBSession, key: str) -> str:
     return key_value.value
 
 
-def get_value(dbsession: DBSession, key: str) -> str | None:
+async def get_value(dbsession: AsyncDBSession, key: str) -> str | None:
+    key_value = await dbsession.get(KeyValue, key)
+    if key_value is None:
+        return None
+    return key_value.value
+
+
+def get_value_sync(dbsession: DBSession, key: str) -> str | None:
     key_value = dbsession.query(KeyValue).get(key)
     if key_value is None:
         return None

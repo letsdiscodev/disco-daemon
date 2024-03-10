@@ -9,8 +9,8 @@ from pydantic_core import InitErrorDetails, PydanticCustomError
 from sqlalchemy.orm.session import Session as DBSession
 
 import disco
-from disco.auth import get_api_key
-from disco.endpoints.dependencies import get_db
+from disco.auth import get_api_key_sync
+from disco.endpoints.dependencies import get_sync_db
 from disco.models import ApiKey, ApiKeyInvite
 from disco.utils import keyvalues
 from disco.utils.apikeyinvites import (
@@ -35,11 +35,11 @@ class NewApiKeyRequestBody(BaseModel):
 
 @router.post("/api-key-invites", status_code=201)
 def api_keys_post(
-    dbsession: Annotated[DBSession, Depends(get_db)],
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
     req_body: NewApiKeyRequestBody,
 ):
-    disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
+    disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
     existing_api_key = get_api_key_by_name(dbsession, req_body.name)
     if existing_api_key is not None:
         raise RequestValidationError(
@@ -93,7 +93,7 @@ def api_keys_post(
 
 def get_api_key_invite_from_url(
     invite_id: Annotated[str, Path()],
-    dbsession: Annotated[DBSession, Depends(get_db)],
+    dbsession: Annotated[DBSession, Depends(get_sync_db)],
 ):
     invite = get_api_key_invite_by_id(dbsession, invite_id)
     if invite is None:
@@ -110,16 +110,16 @@ RESP_TXT = (
 
 @router.get("/api-key-invites/{invite_id}", response_class=PlainTextResponse)
 def api_key_invite_get(
-    dbsession: Annotated[DBSession, Depends(get_db)],
+    dbsession: Annotated[DBSession, Depends(get_sync_db)],
     invite: Annotated[ApiKey, Depends(get_api_key_invite_from_url)],
 ):
-    disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
+    disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
     return RESP_TXT.format(disco_host=disco_host, invite_id=invite.id)
 
 
 @router.post("/api-key-invites/{invite_id}")
 def api_key_invite_post(
-    dbsession: Annotated[DBSession, Depends(get_db)],
+    dbsession: Annotated[DBSession, Depends(get_sync_db)],
     invite: Annotated[ApiKeyInvite, Depends(get_api_key_invite_from_url)],
 ):
     if not invite_is_active(invite):
@@ -133,7 +133,7 @@ def api_key_invite_post(
         },
         "meta": {
             "version": disco.__version__,
-            "discoHost": keyvalues.get_value(dbsession, "DISCO_HOST"),
-            "registryHost": keyvalues.get_value(dbsession, "REGISTRY_HOST"),
+            "discoHost": keyvalues.get_value_sync(dbsession, "DISCO_HOST"),
+            "registryHost": keyvalues.get_value_sync(dbsession, "REGISTRY_HOST"),
         },
     }

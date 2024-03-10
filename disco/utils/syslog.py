@@ -30,7 +30,7 @@ def remove_syslog_url(dbsession: DBSession, url: str, by_api_key: ApiKey) -> lis
 
 
 def get_syslog_urls(dbsession: DBSession) -> list[str]:
-    urls_str = keyvalues.get_value(dbsession, SYSLOG_URLS_KEY)
+    urls_str = keyvalues.get_value_sync(dbsession, SYSLOG_URLS_KEY)
     if urls_str is None:
         urls_str = "[]"
     urls = json.loads(urls_str)

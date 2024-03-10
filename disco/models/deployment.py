@@ -8,7 +8,13 @@ from sqlalchemy import ForeignKey, Integer, String, Unicode
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 if TYPE_CHECKING:
-    from disco.models import ApiKey, CommandRun, DeploymentEnvironmentVariable, Project
+    from disco.models import (
+        ApiKey,
+        CommandRun,
+        DeploymentEnvironmentVariable,
+        GithubAppRepo,
+        Project,
+    )
 from disco.models.meta import Base, DateTimeTzAware
 
 
@@ -34,8 +40,15 @@ class Deployment(Base):
     commit_hash: Mapped[str | None] = mapped_column(String(200), nullable=True)
     disco_file: Mapped[str | None] = mapped_column(Unicode(5000), nullable=True)
     project_name: Mapped[str] = mapped_column(Unicode(255), nullable=False)
-    github_repo: Mapped[str | None] = mapped_column(Unicode(2048), nullable=True)
-    github_host: Mapped[str | None] = mapped_column(Unicode(2048), nullable=True)
+    github_repo_full_name: Mapped[str | None] = mapped_column(
+        Unicode(2048), nullable=True
+    )
+    github_repo_id: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("github_app_repos.id"),
+        nullable=True,
+        index=True,
+    )
     domain: Mapped[str | None] = mapped_column(Unicode(255), nullable=True)
     registry_host: Mapped[str | None] = mapped_column(Unicode(2048), nullable=True)
     project_id: Mapped[str] = mapped_column(
@@ -59,6 +72,10 @@ class Deployment(Base):
 
     project: Mapped[Project] = relationship(
         "Project",
+        back_populates="deployments",
+    )
+    github_repo: Mapped[GithubAppRepo | None] = relationship(
+        "GithubAppRepo",
         back_populates="deployments",
     )
     by_api_key: Mapped[ApiKey | None] = relationship(

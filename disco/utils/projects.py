@@ -1,91 +1,105 @@
 import logging
 import uuid
-from secrets import token_hex
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
-from disco.models import ApiKey, Project
-from disco.utils import caddy, docker, github, sshkeys
-from disco.utils.caddy import add_project_route
+from disco.models import ApiKey, GithubAppRepo, Project, ProjectGithubRepo
+from disco.utils import caddy, docker, github
 from disco.utils.commandoutputs import delete_output_for_source
-from disco.utils.envvariables import set_env_variables
 from disco.utils.filesystem import remove_project_static_deployments_if_any
-from disco.utils.sshkeys import create_deploy_key, set_deploy_key
-from disco.utils.sshkeys import github_host as ssh_github_host
+from disco.utils.githubapps import get_repo_by_full_name
 
 log = logging.getLogger(__name__)
 
 
 def create_project(
-    dbsession: DBSession,
+    dbsession: AsyncDBSession,
     name: str,
-    github_repo: str | None,
-    github_webhook_token: str | None,
-    github_webhook_secret: str | None,
-    domain: str | None,
-    ssh_key_pub: str | None,
-    ssh_key_private: str | None,
-    env_variables: list[tuple[str, str]],
     by_api_key: ApiKey,
-) -> tuple[Project, str | None]:
+) -> Project:
     project = Project(
         id=uuid.uuid4().hex,
         name=name,
-        github_repo=github_repo,
-        domain=domain,
     )
-    if ssh_key_pub is not None and ssh_key_private is not None:
-        set_deploy_key(
-            project_name=name, private_key=ssh_key_private, public_key=ssh_key_pub
-        )
-    if github_repo is not None:
-        if github.repo_is_public(github_repo):
-            project.github_host = "github.com"
-            ssh_key_pub = None
-        else:
-            if github_webhook_token is None:
-                github_webhook_token = token_hex(16)
-            if github_webhook_secret is None:
-                github_webhook_secret = token_hex(16)
-            if ssh_key_pub is None:
-                ssh_key_pub = create_deploy_key(name)
-            github_host = ssh_github_host(name)
-            project.github_host = github_host
-            project.github_webhook_token = github_webhook_token
-            project.github_webhook_secret = github_webhook_secret
-    else:
-        ssh_key_pub = None
     dbsession.add(project)
-    set_env_variables(
-        dbsession=dbsession,
-        project=project,
-        env_variables=env_variables,
-        by_api_key=by_api_key,
-    )
-    if domain is not None:
-        add_project_route(project_name=project.name, domain=domain)
     log.info("%s created project %s", by_api_key.log(), project.log())
-    return project, ssh_key_pub
+    return project
+
+
+def set_project_domain(
+    project: Project,
+    domain: str,
+    by_api_key: ApiKey,
+):
+    log.info(
+        "%s is setting project domain %s %s", by_api_key.log(), project.log(), domain
+    )
+    project.domain = domain
+
+
+async def set_project_github_repo(
+    dbsession: AsyncDBSession,
+    project: Project,
+    github_repo: str,
+    by_api_key: ApiKey,
+):
+    log.info(
+        "%s is setting project Github repo %s %s",
+        by_api_key.log(),
+        project.log(),
+        github_repo,
+    )
+    if project.deployment_type is not None:
+        if project.deployment_type == "GITHUB":
+            await dbsession.delete(project.github_repo)
+        else:
+            raise NotImplementedError(f"{project.deployment_type} not handled")
+
+    project.deployment_type = "GITHUB"
+    app_repo = await get_repo_by_full_name(dbsession, github_repo)
+    assert app_repo is not None
+    project.github_repo = ProjectGithubRepo(
+        id=uuid.uuid4().hex,
+        github_app_repo=app_repo,
+    )
 
 
 def get_project_by_id(dbsession: DBSession, project_id: str) -> Project | None:
     return dbsession.query(Project).get(project_id)
 
 
-def get_project_by_name(dbsession: DBSession, name: str) -> Project | None:
+def get_project_by_name_sync(dbsession: DBSession, name: str) -> Project | None:
     return dbsession.query(Project).filter(Project.name == name).first()
 
 
-def get_project_by_domain(dbsession: DBSession, domain: str) -> Project | None:
+async def get_project_by_name(dbsession: AsyncDBSession, name: str) -> Project | None:
+    stmt = select(Project).where(Project.name == name).limit(1)
+    result = await dbsession.execute(stmt)
+    return result.scalars().first()
+
+
+def get_project_by_domain_sync(dbsession: DBSession, domain: str) -> Project | None:
     return dbsession.query(Project).filter(Project.domain == domain).first()
 
 
-def get_project_by_github_webhook_token(
-    dbsession: DBSession, webhook_token: str
+async def get_project_by_domain(
+    dbsession: AsyncDBSession, domain: str
+) -> Project | None:
+    stmt = select(Project).where(Project.domain == domain).limit(1)
+    result = await dbsession.execute(stmt)
+    return result.scalars().first()
+
+
+def get_project_by_github_app_repo(
+    dbsession: DBSession, full_name: str
 ) -> Project | None:
     return (
         dbsession.query(Project)
-        .filter(Project.github_webhook_token == webhook_token)
+        .join(ProjectGithubRepo)
+        .join(GithubAppRepo)
+        .filter(GithubAppRepo.full_name == full_name)
         .first()
     )
 
@@ -97,10 +111,6 @@ def get_all_projects(dbsession: DBSession) -> list[Project]:
 def delete_project(dbsession: DBSession, project: Project, by_api_key: ApiKey) -> None:
     log.info("%s is deleting project %s", by_api_key.log(), project.log())
     if project.github_repo is not None:
-        try:
-            sshkeys.remove_deploy_key(project.name)
-        except Exception:
-            log.info("Failed to remove SSH deploy key for project %s", project.name)
         try:
             github.remove_repo(project.name)
         except Exception:
@@ -129,6 +139,8 @@ def delete_project(dbsession: DBSession, project: Project, by_api_key: ApiKey) -
             docker.remove_network(network)
         except Exception:
             log.info("Failed to remove network %s", network)
+    if project.github_repo is not None:
+        dbsession.delete(project.github_repo)
     for p_env_var in project.env_variables:
         dbsession.delete(p_env_var)
     for deployment in project.deployments:

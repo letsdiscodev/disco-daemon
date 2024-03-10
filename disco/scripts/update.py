@@ -26,7 +26,7 @@ def main() -> None:
     if image is None:  # backward compat for version <= 0.4.1
         image = "letsdiscodev/daemon:latest"
     with Session.begin() as dbsession:
-        installed_version = keyvalues.get_value(
+        installed_version = keyvalues.get_value_sync(
             dbsession=dbsession, key="DISCO_VERSION"
         )
         assert installed_version is not None
@@ -40,8 +40,8 @@ def main() -> None:
     minor = int(version_parts[1])
     if major == 0 and minor <= 4:
         with Session.begin() as dbsession:
-            disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
-            disco_ip = keyvalues.get_value(dbsession, "DISCO_IP")
+            disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
+            disco_ip = keyvalues.get_value_sync(dbsession, "DISCO_IP")
             if disco_host == disco_ip:
                 print("Must set Disco host first, not updating.")
                 save_done_updating(dbsession)
@@ -65,7 +65,7 @@ def main() -> None:
         task = get_update_function_for_version(installed_version)
         task(image)
         with Session.begin() as dbsession:
-            installed_version = keyvalues.get_value(
+            installed_version = keyvalues.get_value_sync(
                 dbsession=dbsession, key="DISCO_VERSION"
             )
         ttl -= 1
@@ -77,7 +77,7 @@ def main() -> None:
 
     print("Starting new version of Disco")
     with Session.begin() as dbsession:
-        host_home = keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
+        host_home = keyvalues.get_value_sync(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
     start_disco_daemon(host_home, image)
     with Session.begin() as dbsession:
@@ -138,7 +138,7 @@ def task_0_4_x(image: str) -> None:
     print("Upating from 0.4.x to 0.5.x")
     alembic_upgrade("87c62632dfd1")
     with Session.begin() as dbsession:
-        disco_ip = keyvalues.get_value(dbsession=dbsession, key="DISCO_IP")
+        disco_ip = keyvalues.get_value_sync(dbsession=dbsession, key="DISCO_IP")
         get_caddy_config_cmd = (
             "from disco.utils import caddy; "
             "import json; "

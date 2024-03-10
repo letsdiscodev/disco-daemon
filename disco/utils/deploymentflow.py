@@ -14,7 +14,7 @@ from disco.utils.deployments import (
     get_deployment_by_id,
     get_deployment_in_progress,
     get_last_deployment,
-    get_live_deployment,
+    get_live_deployment_sync,
     set_deployment_commit_hash,
     set_deployment_disco_file,
     set_deployment_status,
@@ -40,8 +40,8 @@ class DeploymentInfo:
     commit_hash: str | None
     disco_file: DiscoFile | None
     project_name: str
-    github_repo: str | None
-    github_host: str | None
+    github_repo_full_name: str | None
+    github_repo_id: str | None
     registry_host: str | None
     host_home: str
     disco_host: str
@@ -60,12 +60,12 @@ class DeploymentInfo:
             status=deployment.status,
             commit_hash=deployment.commit_hash,
             project_name=deployment.project_name,
-            github_repo=deployment.github_repo,
+            github_repo_full_name=deployment.github_repo_full_name,
+            github_repo_id=deployment.github_repo_id,
             registry_host=deployment.registry_host,
             host_home=host_home,
             disco_host=disco_host,
             domain_name=deployment.domain,
-            github_host=deployment.github_host,
             disco_file=get_disco_file_from_str(deployment.disco_file)
             if deployment.disco_file is not None
             else None,
@@ -83,7 +83,7 @@ def process_deployment(deployment_id: str) -> None:
         if output is not None:
             log.info("Deployment %s: %s", deployment_id, output)
         with Session.begin() as dbsession:
-            commandoutputs.save(dbsession, f"DEPLOYMENT_{deployment_id}", output)
+            commandoutputs.save_sync(dbsession, f"DEPLOYMENT_{deployment_id}", output)
 
     def set_current_deployment_status(status: DEPLOYMENT_STATUS) -> None:
         with Session.begin() as dbsession:
@@ -127,7 +127,7 @@ def process_deployment(deployment_id: str) -> None:
             log.info("Getting data from database for deployment %s", deployment_id)
             deployment = get_deployment_by_id(dbsession, deployment_id)
             assert deployment is not None
-            prev_deployment = get_live_deployment(dbsession, deployment.project)
+            prev_deployment = get_live_deployment_sync(dbsession, deployment.project)
             prev_deployment_id = (
                 prev_deployment.id if prev_deployment is not None else None
             )
@@ -190,7 +190,7 @@ def replace_deployment(
         assert new_deployment_info is not None
         if new_deployment_info.commit_hash is not None:
             checkout_commit(new_deployment_info, log_output)
-        elif new_deployment_info.github_repo is not None:
+        elif new_deployment_info.github_repo_full_name is not None:
             new_deployment_info.commit_hash = github.get_head_commit_hash(
                 new_deployment_info.project_name
             )
@@ -281,8 +281,8 @@ def get_deployment_info(
     new_deployment_id: str | None, prev_deployment_id: str | None
 ) -> tuple[DeploymentInfo | None, DeploymentInfo | None]:
     with Session.begin() as dbsession:
-        disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
-        host_home = keyvalues.get_value(dbsession, "HOST_HOME")
+        disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
+        host_home = keyvalues.get_value_sync(dbsession, "HOST_HOME")
         assert disco_host is not None
         assert host_home is not None
         if new_deployment_id is not None:
@@ -312,21 +312,26 @@ def checkout_commit(
     new_deployment_info: DeploymentInfo,
     log_output: Callable[[str], None],
 ) -> None:
-    assert new_deployment_info.github_repo is not None
-    assert new_deployment_info.github_host is not None
     assert new_deployment_info.commit_hash is not None
+    assert new_deployment_info.github_repo_full_name is not None
     if not project_folder_exists(new_deployment_info.project_name):
-        log_output(f"Cloning {new_deployment_info.github_repo}\n")
-        github.clone_project(
+        log_output(f"Cloning github.com/{new_deployment_info.github_repo_full_name}\n")
+        github.clone(
             project_name=new_deployment_info.project_name,
-            github_repo=new_deployment_info.github_repo,
-            github_host=new_deployment_info.github_host,
+            repo_full_name=new_deployment_info.github_repo_full_name,
+            github_repo_id=new_deployment_info.github_repo_id,
         )
         # TODO if project doesn't have branch configured,
         #      save if origin/main exists, otherwise, origin/master
     else:
-        log_output(f"Fetching from {new_deployment_info.github_repo}\n")
-        github.fetch(project_name=new_deployment_info.project_name)
+        log_output(
+            f"Fetching from github.com/{new_deployment_info.github_repo_full_name}\n"
+        )
+        github.fetch(
+            project_name=new_deployment_info.project_name,
+            repo_full_name=new_deployment_info.github_repo_full_name,
+            github_repo_id=new_deployment_info.github_repo_id,
+        )
     if new_deployment_info.commit_hash == "_DEPLOY_LATEST_":
         # TODO use project branch
         log_output("Checking out latest commit\n")

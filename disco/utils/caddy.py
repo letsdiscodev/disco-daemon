@@ -1,3 +1,4 @@
+import asyncio
 import json
 import socket
 from typing import Any
@@ -58,7 +59,7 @@ def set_config(config: dict[str, Any]) -> None:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
 
-def add_project_route(project_name: str, domain: str) -> None:
+async def add_project_route(project_name: str, domain: str) -> None:
     url = f"{BASE_URL}/config/apps/http/servers/disco/routes/0"
     req_body = {
         "@id": f"disco-project-{project_name}",
@@ -92,7 +93,11 @@ def add_project_route(project_name: str, domain: str) -> None:
         "terminal": True,
     }
     session = _get_session()
-    response = session.put(url, json=req_body, headers=HEADERS, timeout=10)
+
+    def query() -> requests.Response:
+        return session.put(url, json=req_body, headers=HEADERS, timeout=10)
+
+    response = await asyncio.get_event_loop().run_in_executor(None, query)
     if response.status_code != 200:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 

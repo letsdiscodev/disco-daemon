@@ -219,12 +219,12 @@ class AsyncWorker:
         self, prev_project_name: str | None, project_name: str, deployment_number: int
     ) -> None:
         from disco.utils.deployments import get_deployment_by_number
-        from disco.utils.projects import get_project_by_name
+        from disco.utils.projects import get_project_by_name_sync
 
         with Session.begin() as dbsession:
-            disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
+            disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
             assert disco_host is not None
-            project = get_project_by_name(dbsession, project_name)
+            project = get_project_by_name_sync(dbsession, project_name)
             assert project is not None
             deployment = get_deployment_by_number(dbsession, project, deployment_number)
             assert deployment is not None
@@ -389,16 +389,16 @@ class AsyncWorker:
         ]
 
     def _load_project_crons(self) -> list[ProjectCron]:
-        from disco.utils.deployments import get_live_deployment
+        from disco.utils.deployments import get_live_deployment_sync
         from disco.utils.projects import get_all_projects
 
         crons: list[ProjectCron] = []
         with Session.begin() as dbsession:
-            disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
+            disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
             assert disco_host is not None
             projects = get_all_projects(dbsession)
             for project in projects:
-                deployment = get_live_deployment(dbsession, project)
+                deployment = get_live_deployment_sync(dbsession, project)
                 if deployment is None:
                     continue
                 disco_file = get_disco_file_from_str(deployment.disco_file)

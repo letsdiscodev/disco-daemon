@@ -6,26 +6,31 @@ from fastapi import APIRouter, BackgroundTasks, Depends
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_core import InitErrorDetails, PydanticCustomError
+from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
-from disco.auth import get_api_key
-from disco.endpoints.dependencies import get_db, get_project_from_url
+from disco.auth import get_api_key, get_api_key_sync
+from disco.endpoints.dependencies import get_db, get_project_from_url, get_sync_db
 from disco.endpoints.envvariables import EnvVariable
 from disco.models import ApiKey, Project
-from disco.utils import sshkeys
-from disco.utils.deployments import create_deployment, get_live_deployment
+from disco.utils.caddy import add_project_route
+from disco.utils.deployments import (
+    create_deployment,
+    get_live_deployment_sync,
+)
 from disco.utils.discofile import get_disco_file_from_str
 from disco.utils.dns import domain_points_to_here
 from disco.utils.encryption import decrypt
-from disco.utils.envvariables import get_env_variables_for_project
+from disco.utils.envvariables import (
+    get_env_variables_for_project,
+    set_env_variables,
+)
 from disco.utils.filesystem import (
     get_caddy_key_crt,
     get_caddy_key_key,
     get_caddy_key_meta,
-    set_caddy_key_crt,
-    set_caddy_key_key,
-    set_caddy_key_meta,
 )
+from disco.utils.githubapps import get_all_repos
 from disco.utils.mq.tasks import enqueue_task_deprecated
 from disco.utils.projects import (
     create_project,
@@ -33,11 +38,13 @@ from disco.utils.projects import (
     get_all_projects,
     get_project_by_domain,
     get_project_by_name,
+    set_project_domain,
+    set_project_github_repo,
 )
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(dependencies=[Depends(get_api_key)])
+router = APIRouter(dependencies=[Depends(get_api_key_sync)])
 
 
 class Ssh(BaseModel):
@@ -56,22 +63,12 @@ class NewProjectRequestBody(BaseModel):
     github_repo: str | None = Field(
         None,
         alias="githubRepo",
-        pattern=r"^((git@github\.com:)|(https://github\.com/))\S+/\S+(\.git)?$",
-    )
-    github_webhook_token: str | None = Field(
-        None,
-        alias="githubWebhookToken",
-    )
-    github_webhook_secret: str | None = Field(
-        None,
-        alias="githubWebhookSecret",
+        pattern=r"^\S+/\S+$",
     )
     domain: str | None = None
-    ssh: Ssh | None = None
     env_variables: list[EnvVariable] = Field([], alias="envVariables")
     caddy: CaddyKey | None = None
     generate_suffix: bool = Field(False, alias="generateSuffix")
-    deploy: bool = False
     commit: str = "_DEPLOY_LATEST_"
     deployment_number: int | None = Field(None, alias="deploymentNumber")
 
@@ -85,16 +82,10 @@ def process_deployment(deployment_id: str) -> None:
     )
 
 
-@router.post("/projects", status_code=201)
-def projects_post(
-    dbsession: Annotated[DBSession, Depends(get_db)],
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
-    req_body: NewProjectRequestBody,
-    background_tasks: BackgroundTasks,
-):
-    if req_body.generate_suffix:
-        req_body.name = f"{req_body.name}-{randomname.get_name()}"
-    project = get_project_by_name(dbsession, req_body.name)
+async def validate_create_project(
+    dbsession: AsyncDBSession, req_body: NewProjectRequestBody
+) -> None:
+    project = await get_project_by_name(dbsession, req_body.name)
     if project is not None:
         raise RequestValidationError(
             errors=(
@@ -113,7 +104,7 @@ def projects_post(
             ).errors()
         )
     if req_body.domain is not None:
-        project = get_project_by_domain(dbsession, req_body.domain)
+        project = await get_project_by_domain(dbsession, req_body.domain)
         if project is not None:
             raise RequestValidationError(
                 errors=(
@@ -132,7 +123,7 @@ def projects_post(
                     )
                 ).errors()
             )
-        if req_body.caddy is None and not domain_points_to_here(
+        if req_body.caddy is None and not await domain_points_to_here(
             dbsession, req_body.domain
         ):
             raise RequestValidationError(
@@ -152,30 +143,71 @@ def projects_post(
                     )
                 ).errors()
             )
+    if req_body.github_repo is not None:
+        repos = await get_all_repos(dbsession)
+        if req_body.github_repo not in [repo.full_name for repo in repos]:
+            raise RequestValidationError(
+                errors=(
+                    ValidationError.from_exception_data(
+                        "ValueError",
+                        [
+                            InitErrorDetails(
+                                type=PydanticCustomError(
+                                    "value_error",
+                                    "You need to give permissions to this repo first",
+                                ),
+                                loc=("body", "githubRepo"),
+                                input=req_body.github_repo,
+                            )
+                        ],
+                    )
+                ).errors()
+            )
+
+
+@router.post("/projects", status_code=201)
+async def projects_post(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    req_body: NewProjectRequestBody,
+    background_tasks: BackgroundTasks,
+):
+    if req_body.generate_suffix:
+        req_body.name = f"{req_body.name}-{randomname.get_name()}"
+    await validate_create_project(dbsession=dbsession, req_body=req_body)
     if req_body.caddy is not None and req_body.domain is not None:
-        # TODO validation (raise exception if domain not set and caddy is set)
-        set_caddy_key_crt(req_body.domain, req_body.caddy.crt)
-        set_caddy_key_key(req_body.domain, req_body.caddy.key)
-        set_caddy_key_meta(req_body.domain, req_body.caddy.meta)
-    github_repo = req_body.github_repo
-    if github_repo is not None and not github_repo.endswith(".git"):
-        github_repo += ".git"
-    project, ssh_key_pub = create_project(
+        # TODO rewrite with await
+        pass
+        # # TODO validation (raise exception if domain not set and caddy is set)
+        # set_caddy_key_crt(req_body.domain, req_body.caddy.crt)
+        # set_caddy_key_key(req_body.domain, req_body.caddy.key)
+        # set_caddy_key_meta(req_body.domain, req_body.caddy.meta)
+    project = create_project(
         dbsession=dbsession,
         name=req_body.name,
-        github_repo=github_repo,
-        github_webhook_token=req_body.github_webhook_token,
-        github_webhook_secret=req_body.github_webhook_secret,
-        domain=req_body.domain,
-        ssh_key_pub=req_body.ssh.public_key if req_body.ssh is not None else None,
-        ssh_key_private=req_body.ssh.private_key if req_body.ssh is not None else None,
+        by_api_key=api_key,
+    )
+    if req_body.github_repo is not None:
+        await set_project_github_repo(
+            dbsession=dbsession,
+            project=project,
+            github_repo=req_body.github_repo,
+            by_api_key=api_key,
+        )
+    await set_env_variables(
+        dbsession=dbsession,
+        project=project,
         env_variables=[
             (env_var.name, env_var.value) for env_var in req_body.env_variables
         ],
         by_api_key=api_key,
     )
-    if req_body.deploy:
-        deployment = create_deployment(
+    if req_body.domain is not None:
+        set_project_domain(project=project, domain=req_body.domain, by_api_key=api_key)
+        await add_project_route(project_name=project.name, domain=req_body.domain)
+
+    if req_body.github_repo is not None:
+        deployment = await create_deployment(
             dbsession=dbsession,
             project=project,
             commit_hash=req_body.commit,
@@ -189,12 +221,7 @@ def projects_post(
     return {
         "project": {
             "name": project.name,
-            "githubRepo": project.github_repo,
-            "domain": project.domain,
-            "githubWebhookToken": project.github_webhook_token,
-            "githubWebhookSecret": project.github_webhook_secret,
         },
-        "sshKeyPub": ssh_key_pub,
         "deployment": {
             "number": deployment.number,
         }
@@ -204,16 +231,12 @@ def projects_post(
 
 
 @router.get("/projects")
-def projects_get(dbsession: Annotated[DBSession, Depends(get_db)]):
+def projects_get(dbsession: Annotated[DBSession, Depends(get_sync_db)]):
     projects = get_all_projects(dbsession)
     return {
         "projects": [
             {
                 "name": project.name,
-                "githubRepo": project.github_repo,
-                "domain": project.domain,
-                "githubWebhookToken": project.github_webhook_token,
-                "githubWebhookSecret": project.github_webhook_secret,
             }
             for project in projects
         ],
@@ -222,9 +245,9 @@ def projects_get(dbsession: Annotated[DBSession, Depends(get_db)]):
 
 @router.delete("/projects/{project_name}", status_code=200)
 def projects_delete(
-    dbsession: Annotated[DBSession, Depends(get_db)],
+    dbsession: Annotated[DBSession, Depends(get_sync_db)],
     project: Annotated[Project, Depends(get_project_from_url)],
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
 ):
     delete_project(dbsession, project, api_key)
     return {"deleted": True}
@@ -232,13 +255,13 @@ def projects_delete(
 
 @router.get("/projects/{project_name}/export")
 def export_get(
-    dbsession: Annotated[DBSession, Depends(get_db)],
+    dbsession: Annotated[DBSession, Depends(get_sync_db)],
     project: Annotated[Project, Depends(get_project_from_url)],
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
 ):
     log.info("Exporting project %s by %s", project.log(), api_key.log())
     env_variables = get_env_variables_for_project(dbsession, project)
-    deployment = get_live_deployment(dbsession, project)
+    deployment = get_live_deployment_sync(dbsession, project)
     volume_names = []
     if deployment is not None:
         disco_file = get_disco_file_from_str(deployment.disco_file)
@@ -248,15 +271,6 @@ def export_get(
     return {
         "name": project.name,
         "domain": project.domain,
-        "githubRepo": project.github_repo,
-        "githubWebhookToken": project.github_webhook_token,
-        "githubWebhookSecret": project.github_webhook_secret,
-        "ssh": {
-            "privateKey": sshkeys.get_key_private(project.name),
-            "publicKey": sshkeys.get_key_pub(project.name),
-        }
-        if sshkeys.get_key_pub(project.name) is not None
-        else None,
         "envVariables": [
             {
                 "name": env_variable.name,

@@ -5,21 +5,21 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path
 from pydantic import BaseModel, Field
 from sqlalchemy.orm.session import Session as DBSession
 
-from disco.auth import get_api_key
-from disco.endpoints.dependencies import get_db, get_project_from_url
+from disco.auth import get_api_key_sync
+from disco.endpoints.dependencies import get_project_from_url, get_sync_db
 from disco.models import ApiKey, Project, ProjectEnvironmentVariable
 from disco.utils.encryption import decrypt
 from disco.utils.envvariables import (
     delete_env_variable,
     get_env_variable_by_name,
     get_env_variables_for_project,
-    set_env_variables,
+    set_env_variables_sync,
 )
 from disco.utils.mq.tasks import enqueue_task_deprecated
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(dependencies=[Depends(get_api_key)])
+router = APIRouter(dependencies=[Depends(get_api_key_sync)])
 
 
 def process_deployment(deployment_id: str) -> None:
@@ -33,7 +33,7 @@ def process_deployment(deployment_id: str) -> None:
 
 @router.get("/projects/{project_name}/env")
 def env_variables_get(
-    dbsession: Annotated[DBSession, Depends(get_db)],
+    dbsession: Annotated[DBSession, Depends(get_sync_db)],
     project: Annotated[Project, Depends(get_project_from_url)],
 ):
     env_variables = get_env_variables_for_project(dbsession, project)
@@ -59,13 +59,13 @@ class ReqEnvVariables(BaseModel):
 
 @router.post("/projects/{project_name}/env")
 def env_variables_post(
-    dbsession: Annotated[DBSession, Depends(get_db)],
+    dbsession: Annotated[DBSession, Depends(get_sync_db)],
     project: Annotated[Project, Depends(get_project_from_url)],
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
     req_env_variables: ReqEnvVariables,
     background_tasks: BackgroundTasks,
 ):
-    deployment = set_env_variables(
+    deployment = set_env_variables_sync(
         dbsession=dbsession,
         project=project,
         env_variables=[
@@ -85,7 +85,7 @@ def env_variables_post(
 
 
 def get_env_variable_from_url(
-    dbsession: Annotated[DBSession, Depends(get_db)],
+    dbsession: Annotated[DBSession, Depends(get_sync_db)],
     project: Annotated[Project, Depends(get_project_from_url)],
     env_var_name: Annotated[str, Path()],
 ):
@@ -115,11 +115,11 @@ def env_variable_get(
 
 @router.delete("/projects/{project_name}/env/{env_var_name}")
 def env_variable_delete(
-    dbsession: Annotated[DBSession, Depends(get_db)],
+    dbsession: Annotated[DBSession, Depends(get_sync_db)],
     env_variable: Annotated[
         ProjectEnvironmentVariable, Depends(get_env_variable_from_url)
     ],
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
     background_tasks: BackgroundTasks,
 ):
     deployment = delete_env_variable(

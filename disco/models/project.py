@@ -12,6 +12,7 @@ if TYPE_CHECKING:
         CommandRun,
         Deployment,
         ProjectEnvironmentVariable,
+        ProjectGithubRepo,
         ProjectKeyValue,
     )
 from disco.models.meta import Base, DateTimeTzAware
@@ -36,12 +37,7 @@ class Project(Base):
     )
     name: Mapped[str] = mapped_column(Unicode(255), nullable=False)
     domain: Mapped[str | None] = mapped_column(Unicode(255), nullable=True)
-    github_repo: Mapped[str | None] = mapped_column(Unicode(2048), nullable=True)
-    github_webhook_token: Mapped[str | None] = mapped_column(
-        String(32), nullable=True, index=True
-    )
-    github_webhook_secret: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    github_host: Mapped[str | None] = mapped_column(Unicode(2048), nullable=True)
+    deployment_type: Mapped[str | None] = mapped_column(Unicode(255), nullable=True)
 
     command_runs: Mapped[list[CommandRun]] = relationship(
         "CommandRun", back_populates="project", order_by="CommandRun.number.desc()"
@@ -56,6 +52,11 @@ class Project(Base):
     key_values: Mapped[list[ProjectKeyValue]] = relationship(
         "ProjectKeyValue",
         back_populates="project",
+    )
+    github_repo: Mapped[ProjectGithubRepo] = relationship(
+        "ProjectGithubRepo",
+        back_populates="project",
+        uselist=False,
     )
 
     def log(self):

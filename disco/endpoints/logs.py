@@ -10,7 +10,7 @@ from sse_starlette.sse import EventSourceResponse
 from disco.auth import get_api_key_wo_tx
 from disco.models.db import Session
 from disco.utils import docker
-from disco.utils.projects import get_project_by_name
+from disco.utils.projects import get_project_by_name_sync
 
 log = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ async def logs_project(
     background_tasks: BackgroundTasks,
 ):
     with Session.begin() as dbsession:
-        project = get_project_by_name(dbsession, project_name)
+        project = get_project_by_name_sync(dbsession, project_name)
         if project is None:
             raise HTTPException(status_code=404)
     return EventSourceResponse(
@@ -51,7 +51,7 @@ async def logs_project_service(
     background_tasks: BackgroundTasks,
 ):
     with Session.begin() as dbsession:
-        project = get_project_by_name(dbsession, project_name)
+        project = get_project_by_name_sync(dbsession, project_name)
         if project is None:
             raise HTTPException(status_code=404)
     return EventSourceResponse(

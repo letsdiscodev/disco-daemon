@@ -10,19 +10,19 @@ from sqlalchemy.orm.session import Session as DBSession
 from sse_starlette import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
-from disco.auth import get_api_key, get_api_key_wo_tx
-from disco.endpoints.dependencies import get_db, get_project_from_url
+from disco.auth import get_api_key_sync, get_api_key_wo_tx
+from disco.endpoints.dependencies import get_project_from_url, get_sync_db
 from disco.models import ApiKey, Project
-from disco.models.db import Session
+from disco.models.db import AsyncSession, Session
 from disco.utils import commandoutputs
 from disco.utils.deployments import (
-    create_deployment,
+    create_deployment_sync,
     get_deployment_by_number,
     get_last_deployment,
 )
 from disco.utils.discofile import DiscoFile
 from disco.utils.mq.tasks import enqueue_task_deprecated
-from disco.utils.projects import get_project_by_name
+from disco.utils.projects import get_project_by_name_sync
 
 log = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ router = APIRouter()
 
 @router.get(
     "/projects/{project_name}/deployments",
-    dependencies=[Depends(get_api_key)],
+    dependencies=[Depends(get_api_key_sync)],
 )
 def deployments_get(
     project: Annotated[Project, Depends(get_project_from_url)],
@@ -78,16 +78,16 @@ def process_deployment(deployment_id: str) -> None:
 @router.post(
     "/projects/{project_name}/deployments",
     status_code=201,
-    dependencies=[Depends(get_api_key)],
+    dependencies=[Depends(get_api_key_sync)],
 )
 def deployments_post(
-    dbsession: Annotated[DBSession, Depends(get_db)],
+    dbsession: Annotated[DBSession, Depends(get_sync_db)],
     project: Annotated[Project, Depends(get_project_from_url)],
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
     req_body: DeploymentRequestBody,
     background_tasks: BackgroundTasks,
 ):
-    deployment = create_deployment(
+    deployment = create_deployment_sync(
         dbsession=dbsession,
         project=project,
         commit_hash=req_body.commit if req_body.disco_file is None else None,
@@ -112,7 +112,7 @@ async def deployment_output_get(
     last_event_id: Annotated[str | None, Header()] = None,
 ):
     with Session.begin() as dbsession:
-        project = get_project_by_name(dbsession, project_name)
+        project = get_project_by_name_sync(dbsession, project_name)
         if project is None:
             raise HTTPException(status_code=404)
         if deployment_number == 0:
@@ -130,8 +130,8 @@ async def deployment_output_get(
 
     async def get_build_output(source: str, after: datetime | None):
         while True:
-            with Session.begin() as dbsession:
-                output = commandoutputs.get_next(dbsession, source, after=after)
+            async with AsyncSession.begin() as dbsession:
+                output = await commandoutputs.get_next(dbsession, source, after=after)
                 if output is not None:
                     if output.text is None:
                         yield ServerSentEvent(
