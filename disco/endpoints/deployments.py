@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm.session import Session as DBSession
 from sse_starlette.sse import EventSourceResponse
 
@@ -43,10 +43,21 @@ def deployments_get(
     }
 
 
-# TODO proper validation
 class DeploymentRequestBody(BaseModel):
-    commit: str = "_DEPLOY_LATEST_"
+    commit: str = Field("_DEPLOY_LATEST_", pattern=r"^\S+$")
     disco_file: DiscoFile | None = Field(None, alias="discoFile")
+
+    @model_validator(mode="after")
+    def commit_or_disco_file_required(self) -> "DeploymentRequestBody":
+        if self.commit is None and self.disco_file is None:
+            raise ValueError("Must provide one of commit or discoFile")
+        if (
+            self.commit is not None
+            and self.commit != "_DEPLOY_LATEST_"
+            and self.disco_file is not None
+        ):
+            raise ValueError("Must provide only one of commit or discoFile")
+        return self
 
 
 @router.post(
@@ -67,9 +78,6 @@ def deployments_post(
         disco_file=req_body.disco_file,
         by_api_key=api_key,
     )
-    # TODO change code so that we always receive a deployment?
-    if deployment is None:
-        return {"deployment": None}
     return {
         "deployment": {
             "number": deployment.number,

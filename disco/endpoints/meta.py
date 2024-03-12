@@ -2,7 +2,7 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm.session import Session as DBSession
 
 import disco
@@ -27,7 +27,7 @@ def meta_get(dbsession: Annotated[DBSession, Depends(get_db)]):
 
 
 class UpdateRequestBody(BaseModel):
-    image: str = "letsdiscodev/daemon:latest"
+    image: str = Field("letsdiscodev/daemon:latest", pattern=r"^[^-].*$")
     pull: bool = True
 
 

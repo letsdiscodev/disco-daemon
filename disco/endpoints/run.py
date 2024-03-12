@@ -5,7 +5,9 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, Field, ValidationError
+from pydantic_core import InitErrorDetails, PydanticCustomError
 from sqlalchemy.orm.session import Session as DBSession
 from sse_starlette.sse import EventSourceResponse
 
@@ -24,9 +26,8 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# TODO proper validation
 class RunReqBody(BaseModel):
-    command: str
+    command: str = Field(..., max_length=4000)
     service: str | None
     timeout: int
 
@@ -45,7 +46,7 @@ def run_post(
 ):
     deployment = get_live_deployment(dbsession, project)
     if deployment is None:
-        raise HTTPException(422)
+        raise HTTPException(422, "Must deploy first")
     disco_file: DiscoFile = DiscoFile.model_validate_json(deployment.disco_file)
     if req_body.service is None:
         if len(list(disco_file.services.keys())) == 0:
@@ -68,14 +69,44 @@ def run_post(
             service = services[0]
     else:
         if req_body.service not in disco_file.services:
-            # TODO do in validation instead?
-            raise HTTPException(422)
+            raise RequestValidationError(
+                errors=(
+                    ValidationError.from_exception_data(
+                        "ValueError",
+                        [
+                            InitErrorDetails(
+                                type=PydanticCustomError(
+                                    "value_error",
+                                    f'Service "{req_body.service}" not in Discofile: {list(disco_file.services.keys())}',
+                                ),
+                                loc=("body", "service"),
+                                input=req_body.service,
+                            )
+                        ],
+                    )
+                ).errors()
+            )
         if disco_file.services[req_body.service].type not in [
             ServiceType.container,
             ServiceType.command,
         ]:
-            # TODO do in validation instead?
-            raise HTTPException(422, f"Service {req_body.service} can't run commands")
+            raise RequestValidationError(
+                errors=(
+                    ValidationError.from_exception_data(
+                        "ValueError",
+                        [
+                            InitErrorDetails(
+                                type=PydanticCustomError(
+                                    "value_error",
+                                    f'Service "{req_body.service}" can\'t run commands',
+                                ),
+                                loc=("body", "service"),
+                                input=req_body.service,
+                            )
+                        ],
+                    )
+                ).errors()
+            )
         service = req_body.service
     command_run, func = create_command_run(
         dbsession=dbsession,

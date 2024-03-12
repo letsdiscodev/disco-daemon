@@ -51,6 +51,10 @@ def get_project_by_name(dbsession: DBSession, name: str) -> Project | None:
     return dbsession.query(Project).filter(Project.name == name).first()
 
 
+def get_project_by_domain(dbsession: DBSession, domain: str) -> Project | None:
+    return dbsession.query(Project).filter(Project.domain == domain).first()
+
+
 def get_project_by_github_webhook_token(
     dbsession: DBSession, webhook_token: str
 ) -> Project | None:

@@ -29,10 +29,10 @@ class ServiceType(str, Enum):
 
 class Service(BaseModel):
     type: ServiceType = ServiceType.container
-    # TODO validate that public_path starts with /
     public_path: str | None = Field(
-        "/",
+        "/dist",
         alias="publicPath",
+        pattern=r"/.+",
     )
     image: Image = Image()
     port: int = 8000

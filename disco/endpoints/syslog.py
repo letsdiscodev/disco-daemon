@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.auth import get_api_key
@@ -21,10 +21,9 @@ class SyslogAction(Enum):
     remove = "remove"
 
 
-# TODO proper validation
 class AddRemoveSyslog(BaseModel):
     action: SyslogAction
-    url: str
+    url: str = Field(..., pattern=r"^syslog(\+tls)?://\S+:\d+$")
 
 
 @router.post("/syslog")

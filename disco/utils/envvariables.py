@@ -3,7 +3,7 @@ import uuid
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import ApiKey, Deployment, Project, ProjectEnvironmentVariable
-from disco.utils.deployments import create_deployment
+from disco.utils.deployments import maybe_create_deployment
 
 
 def get_env_variable_by_name(
@@ -52,7 +52,7 @@ def set_env_variables(
                 by_api_key=by_api_key,
             )
             dbsession.add(env_variable)
-    deployment = create_deployment(
+    deployment = maybe_create_deployment(
         dbsession=dbsession,
         project=project,
         commit_hash=None,
@@ -68,7 +68,7 @@ def delete_env_variable(
     by_api_key: ApiKey,
 ) -> Deployment | None:
     dbsession.delete(env_variable)
-    deployment = create_deployment(
+    deployment = maybe_create_deployment(
         dbsession=dbsession,
         project=env_variable.project,
         commit_hash=None,

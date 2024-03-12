@@ -37,14 +37,13 @@ def env_variables_get(
     }
 
 
-# TODO proper validation
 class EnvVariable(BaseModel):
-    name: str
-    value: str
+    name: str = Field(..., pattern=r"^[a-zA-Z_]+[a-zA-Z0-9_]*$", max_length=255)
+    value: str = Field(..., max_length=4000)
 
 
 class ReqEnvVariables(BaseModel):
-    env_variables: list[EnvVariable] = Field(..., alias="envVariables")
+    env_variables: list[EnvVariable] = Field(..., alias="envVariables", min_length=1)
 
 
 @router.post("/projects/{project_name}/env")

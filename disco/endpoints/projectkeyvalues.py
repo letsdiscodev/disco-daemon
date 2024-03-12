@@ -2,7 +2,9 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path
-from pydantic import BaseModel, Field
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, Field, ValidationError
+from pydantic_core import InitErrorDetails, PydanticCustomError
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.auth import get_api_key
@@ -36,7 +38,7 @@ def key_values_get(
 def get_value_from_key_in_url(
     dbsession: Annotated[DBSession, Depends(get_db)],
     project: Annotated[Project, Depends(get_project_from_url)],
-    key: Annotated[str, Path()],
+    key: Annotated[str, Path(max_length=255)],
 ):
     value = get_value(
         dbsession=dbsession,
@@ -58,14 +60,14 @@ def key_value_get(
 
 
 class SetKeyValueRequestBody(BaseModel):
-    value: str
-    previous_value: str | None = Field(None, alias="previousValue")
+    value: str = Field(..., max_length=2097152)
+    previous_value: str | None = Field(None, alias="previousValue", max_length=2097152)
 
 
 @router.put("/projects/{project_name}/keyvalues/{key}")
 def key_value_put(
     dbsession: Annotated[DBSession, Depends(get_db)],
-    key: Annotated[str, Path()],
+    key: Annotated[str, Path(max_length=255)],
     req_body: SetKeyValueRequestBody,
     project: Annotated[Project, Depends(get_project_from_url)],
     api_key: Annotated[ApiKey, Depends(get_api_key)],
@@ -73,8 +75,22 @@ def key_value_put(
     prev_value = get_value(dbsession=dbsession, project=project, key=key)
     if "previous_value" in req_body.model_fields_set:
         if req_body.previous_value != prev_value:
-            # TODO move to Pydantic validation
-            raise HTTPException(422, "Previous value mismatch")
+            raise RequestValidationError(
+                errors=(
+                    ValidationError.from_exception_data(
+                        "ValueError",
+                        [
+                            InitErrorDetails(
+                                type=PydanticCustomError(
+                                    "value_error", "Previous value mismatch"
+                                ),
+                                loc=("body", "previousValue"),
+                                input=req_body.previous_value,
+                            )
+                        ],
+                    )
+                ).errors()
+            )
     set_value(
         dbsession=dbsession,
         project=project,
@@ -89,7 +105,7 @@ def key_value_put(
 def key_value_delete(
     dbsession: Annotated[DBSession, Depends(get_db)],
     project: Annotated[Project, Depends(get_project_from_url)],
-    key: Annotated[str, Path()],
+    key: Annotated[str, Path(max_length=255)],
     api_key: Annotated[ApiKey, Depends(get_api_key)],
 ):
     delete_value(
