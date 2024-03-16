@@ -3,10 +3,12 @@ import json
 import logging
 import random
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
 from disco.auth import get_api_key_wo_tx
+from disco.models.db import Session
+from disco.utils.projects import get_project_by_name
 
 log = logging.getLogger(__name__)
 
@@ -20,11 +22,21 @@ async def logs_all():
 
 @router.get("/logs/{project_name}")
 async def logs_project(project_name: str):
+    with Session() as dbsession:
+        with dbsession.begin():
+            project = get_project_by_name(dbsession, project_name)
+            if project is None:
+                raise HTTPException(status_code=404)
     return EventSourceResponse(read_logs(project_name=project_name, service_name=None))
 
 
 @router.get("/logs/{project_name}/{service_name}")
 async def logs_project_service(project_name: str, service_name: str):
+    with Session() as dbsession:
+        with dbsession.begin():
+            project = get_project_by_name(dbsession, project_name)
+            if project is None:
+                raise HTTPException(status_code=404)
     return EventSourceResponse(
         read_logs(project_name=project_name, service_name=service_name)
     )
