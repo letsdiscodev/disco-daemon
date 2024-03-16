@@ -217,6 +217,29 @@ def list_services_for_deployment(
     return services
 
 
+def list_networks_for_project(project_name: str) -> list[str]:
+    args = [
+        "docker",
+        "network",
+        "ls",
+        "--filter",
+        f"label=disco.project.name={project_name}",
+        "--format",
+        "{{ .Name }}",
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    networks = [line.decode("utf-8")[:-1] for line in process.stdout.readlines()]
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+    return networks
+
+
 def image_name(
     registry_host: str | None,
     project_name: str,
@@ -291,8 +314,16 @@ def set_syslog_service(disco_host: str, syslog_urls: list[str]) -> None:
         raise Exception(ex.stdout.decode("utf-8")) from ex
 
 
-def create_network(name: str, log_output: Callable[[str], None]) -> None:
+def create_network(
+    name: str, log_output: Callable[[str], None], project_name: str | None = None
+) -> None:
     log_output(f"Creating network {name}\n")
+    more_args = []
+    if project_name is not None:
+        more_args += [
+            "--label",
+            f"disco.project.name={project_name}",
+        ]
     args = [
         "docker",
         "network",
@@ -302,6 +333,7 @@ def create_network(name: str, log_output: Callable[[str], None]) -> None:
         "--attachable",
         "--opt",
         "encrypted",
+        *more_args,
         name,
     ]
     process = subprocess.Popen(

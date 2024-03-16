@@ -335,6 +335,7 @@ def create_networks(
         docker.create_network(
             network_name,
             log_output,
+            project_name=new_deployment_info.project_name,
         )
     except Exception:
         if recovery:
@@ -350,7 +351,9 @@ def create_networks(
         try:
             # TODO when in recovery, we should check if the network exists before
             #      trying to create it.
-            docker.create_network(web_network, log_output)
+            docker.create_network(
+                web_network, log_output, project_name=new_deployment_info.project_name
+            )
         except Exception:
             if recovery:
                 log_output(f"Failed to create network {web_network}\n")

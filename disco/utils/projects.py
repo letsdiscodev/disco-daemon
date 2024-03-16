@@ -90,6 +90,18 @@ def delete_project(dbsession: DBSession, project: Project, by_api_key: ApiKey) -
             docker.stop_service(service_name, log_output=lambda x: None)
         except Exception:
             log.info("Failed to stop service %s", service_name)
+    networks = docker.list_networks_for_project(project.name)
+    for network in networks:
+        try:
+            docker.remove_network_from_container(
+                "disco-caddy", network, log_output=lambda x: None
+            )
+        except Exception:
+            pass
+        try:
+            docker.remove_network(network, log_output=lambda x: None)
+        except Exception:
+            log.info("Failed to remove network %s", network)
     for env_var in project.env_variables:
         dbsession.delete(env_var)
     for deployment in project.deployments:
