@@ -4,6 +4,7 @@ from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import ApiKey, Deployment, Project, ProjectEnvironmentVariable
 from disco.utils.deployments import maybe_create_deployment
+from disco.utils.encryption import encrypt
 
 
 def get_env_variable_by_name(
@@ -41,13 +42,13 @@ def set_env_variables(
         for env_variable in project.env_variables:
             if env_variable.name == name:
                 existed = True
-                env_variable.value = value
+                env_variable.value = encrypt(value)
                 env_variable.by_api_key = by_api_key
         if not existed:
             env_variable = ProjectEnvironmentVariable(
                 id=uuid.uuid4().hex,
                 name=name,
-                value=value,
+                value=encrypt(value),
                 project=project,
                 by_api_key=by_api_key,
             )

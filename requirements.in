@@ -1,5 +1,6 @@
 alembic==1.12.1
 bcrypt==4.0.1
+cryptography==42.0.5
 fastapi==0.109.0
 mypy==1.6.1
 pydantic==2.6.0

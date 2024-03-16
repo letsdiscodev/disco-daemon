@@ -3,6 +3,7 @@ import logging
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import ApiKey, Project, ProjectKeyValue
+from disco.utils.encryption import decrypt, encrypt
 
 log = logging.getLogger(__name__)
 
@@ -13,7 +14,7 @@ def get_value(dbsession: DBSession, project: Project, key: str) -> str | None:
     )
     if key_value is None:
         return None
-    return key_value.value
+    return decrypt(key_value.value)
 
 
 def get_all_key_values_for_project(
@@ -40,12 +41,12 @@ def set_value(
         {"key": key, "project_id": project.id}
     )
     if key_value is not None:
-        key_value.value = value
+        key_value.value = encrypt(value)
     else:
         key_value = ProjectKeyValue(
             project=project,
             key=key,
-            value=value,
+            value=encrypt(value),
         )
         dbsession.add(key_value)
 

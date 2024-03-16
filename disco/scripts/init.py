@@ -14,6 +14,7 @@ from disco.models.db import Session, engine
 from disco.models.meta import metadata
 from disco.utils import docker, keyvalues
 from disco.utils.auth import create_api_key
+from disco.utils.encryption import generate_key
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ def main():
                 dbsession=dbsession, key="PUBLIC_CA_CERT", value=public_ca_cert
             )
     print(public_ca_cert)
+    docker_swarm_create_disco_encryption_key()
     print("Setting up Caddy web server")
     write_caddy_init_config(disco_ip)
     start_caddy(host_home)
@@ -105,6 +107,30 @@ def docker_swarm_init(disco_ip: str) -> None:
             disco_ip,
         ]
     )
+
+
+def docker_swarm_create_disco_encryption_key():
+    print("Generating encyrption key for encryption at rest")
+    verbose = os.environ.get("DISCO_VERBOSE") == "true"
+    process = subprocess.Popen(
+        args=[
+            "docker",
+            "secret",
+            "create",
+            "disco_encryption_key",
+            "-",
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    stdout, _ = process.communicate(generate_key())
+    if verbose:
+        print(stdout, flush=True)
+    else:
+        print(".", flush=True)
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
 
 
 def get_this_swarm_node_id() -> str:
@@ -417,6 +443,8 @@ def start_disco_daemon(host_home: str) -> None:
             "type=bind,source=/var/run/caddy,target=/var/run/caddy",
             "--mount",
             "source=disco-certs,target=/certs",
+            "--secret",
+            "disco_encryption_key",
             "--constraint",
             "node.labels.disco-role==main",
             f"letsdiscodev/daemon:{disco.__version__}",
@@ -460,6 +488,8 @@ def start_disco_worker(host_home: str) -> None:
             "type=bind,source=/var/run/caddy,target=/var/run/caddy",
             "--mount",
             "source=disco-certs,target=/certs",
+            "--secret",
+            "disco_encryption_key",
             "--constraint",
             "node.labels.disco-role==main",
             f"letsdiscodev/daemon:{disco.__version__}",

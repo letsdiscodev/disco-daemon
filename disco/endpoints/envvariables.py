@@ -8,6 +8,7 @@ from sqlalchemy.orm.session import Session as DBSession
 from disco.auth import get_api_key
 from disco.endpoints.dependencies import get_db, get_project_from_url
 from disco.models import ApiKey, Project, ProjectEnvironmentVariable
+from disco.utils.encryption import decrypt
 from disco.utils.envvariables import (
     delete_env_variable,
     get_env_variable_by_name,
@@ -30,7 +31,7 @@ def env_variables_get(
         "envVariables": [
             {
                 "name": env_variable.name,
-                "value": env_variable.value,
+                "value": decrypt(env_variable.value),
             }
             for env_variable in env_variables
         ]
@@ -94,7 +95,7 @@ def env_variable_get(
     return {
         "envVariable": {
             "name": env_variable.name,
-            "value": env_variable.value,
+            "value": decrypt(env_variable.value),
         }
     }
 

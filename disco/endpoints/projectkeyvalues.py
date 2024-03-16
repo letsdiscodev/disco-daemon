@@ -10,6 +10,7 @@ from sqlalchemy.orm.session import Session as DBSession
 from disco.auth import get_api_key
 from disco.endpoints.dependencies import get_db, get_project_from_url
 from disco.models import ApiKey, Project
+from disco.utils.encryption import decrypt
 from disco.utils.projectkeyvalues import (
     delete_value,
     get_all_key_values_for_project,
@@ -30,7 +31,7 @@ def key_values_get(
     key_values = get_all_key_values_for_project(dbsession, project)
     return {
         "keyValues": dict(
-            [(key_value.key, key_value.value) for key_value in key_values]
+            [(key_value.key, decrypt(key_value.value)) for key_value in key_values]
         )
     }
 

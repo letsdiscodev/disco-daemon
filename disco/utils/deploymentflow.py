@@ -17,6 +17,7 @@ from disco.utils.deployments import (
     set_deployment_status,
 )
 from disco.utils.discofile import DiscoFile, ServiceType
+from disco.utils.encryption import decrypt
 from disco.utils.filesystem import (
     copy_static_site_src_to_deployment_folder,
     project_folder_exists,
@@ -60,7 +61,8 @@ class DeploymentInfo:
             if deployment.disco_file is not None
             else None,
             env_variables=[
-                (env_var.name, env_var.value) for env_var in deployment.env_variables
+                (env_var.name, decrypt(env_var.value))
+                for env_var in deployment.env_variables
             ],
         )
 

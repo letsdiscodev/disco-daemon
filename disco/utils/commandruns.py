@@ -8,6 +8,7 @@ from disco.models import ApiKey, CommandRun, Deployment, Project
 from disco.models.db import Session
 from disco.utils import commandoutputs, docker, keyvalues
 from disco.utils.discofile import DiscoFile, ServiceType
+from disco.utils.encryption import decrypt
 
 log = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ def create_command_run(
     if disco_file.services[service].type == ServiceType.command:
         command = f"{disco_file.services[service].command} {command}"
     env_variables = [
-        (env_var.name, env_var.value) for env_var in deployment.env_variables
+        (env_var.name, decrypt(env_var.value)) for env_var in deployment.env_variables
     ]
     env_variables += [
         ("DISCO_PROJECT_NAME", project_name),
