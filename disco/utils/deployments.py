@@ -10,6 +10,7 @@ from disco.models import (
     DeploymentEnvironmentVariable,
     Project,
 )
+from disco.utils import commandoutputs
 from disco.utils.discofile import DiscoFile
 from disco.utils.mq.tasks import enqueue_task
 
@@ -76,6 +77,9 @@ def create_deployment(
         body=dict(
             deployment_id=deployment.id,
         ),
+    )
+    commandoutputs.save(
+        dbsession, f"DEPLOYMENT_{deployment.id}", "Deployment enqueued\n"
     )
     return deployment
 
