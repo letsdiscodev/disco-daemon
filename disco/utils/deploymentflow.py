@@ -39,12 +39,16 @@ class DeploymentInfo:
     github_host: str | None
     registry_host: str | None
     disco_host: str
+    disco_ip: str
     domain_name: str | None
     env_variables: list[tuple[str, str]]
 
     @staticmethod
     def from_deployment(
-        deployment: Deployment, registry_host: str | None, disco_host: str
+        deployment: Deployment,
+        registry_host: str | None,
+        disco_host: str,
+        disco_ip: str,
     ) -> DeploymentInfo:
         return DeploymentInfo(
             id=deployment.id,
@@ -55,6 +59,7 @@ class DeploymentInfo:
             github_repo=deployment.github_repo,
             registry_host=registry_host,
             disco_host=disco_host,
+            disco_ip=disco_ip,
             domain_name=deployment.domain,
             github_host=deployment.github_host,
             disco_file=DiscoFile.model_validate_json(deployment.disco_file)
@@ -179,8 +184,10 @@ def get_deployment_info(
     with Session() as dbsession:
         with dbsession.begin():
             disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
+            disco_ip = keyvalues.get_value(dbsession, "DISCO_IP")
             registry_host = keyvalues.get_value(dbsession, "REGISTRY_HOST")
             assert disco_host is not None
+            assert disco_ip is not None
             if new_deployment_id is not None:
                 new_deployment = get_deployment_by_id(dbsession, new_deployment_id)
                 if new_deployment is not None:
@@ -188,6 +195,7 @@ def get_deployment_info(
                         deployment=new_deployment,
                         registry_host=registry_host,
                         disco_host=disco_host,
+                        disco_ip=disco_ip,
                     )
             else:
                 new_deployment_info = None
@@ -195,7 +203,10 @@ def get_deployment_info(
                 prev_deployment = get_deployment_by_id(dbsession, prev_deployment_id)
                 assert prev_deployment is not None
                 prev_deployment_info = DeploymentInfo.from_deployment(
-                    prev_deployment, registry_host=registry_host, disco_host=disco_host
+                    prev_deployment,
+                    registry_host=registry_host,
+                    disco_host=disco_host,
+                    disco_ip=disco_ip,
                 )
             else:
                 prev_deployment_info = None
@@ -394,6 +405,13 @@ def start_services(
         internal_service_name = docker.service_name(
             new_deployment_info.project_name, service_name, new_deployment_info.number
         )
+        env_variables = new_deployment_info.env_variables + [
+            ("DISCO_PROJECT_NAME", new_deployment_info.project_name),
+            ("DISCO_SERVICE_NAME", service_name),
+            ("DISCO_HOST", new_deployment_info.disco_host),
+            ("DISCO_IP", new_deployment_info.disco_ip),
+        ]
+
         if service.image.pull is not None:
             image = service.image.pull
         else:
@@ -413,7 +431,7 @@ def start_services(
                 project_name=new_deployment_info.project_name,
                 project_service_name=service_name,
                 deployment_number=new_deployment_info.number,
-                env_variables=new_deployment_info.env_variables,
+                env_variables=env_variables,
                 volumes=[(v.name, v.destination_path) for v in service.volumes],
                 published_ports=[
                     (p.published_as, p.from_container_port, p.protocol)
