@@ -79,7 +79,9 @@ def create_deployment(
         ),
     )
     commandoutputs.save(
-        dbsession, f"DEPLOYMENT_{deployment.id}", "Deployment enqueued\n"
+        dbsession,
+        f"DEPLOYMENT_{deployment.id}",
+        f"Deployment {deployment.number} enqueued\n",
     )
     return deployment
 
@@ -143,6 +145,15 @@ def get_live_deployment(dbsession: DBSession, project: Project) -> Deployment | 
         dbsession.query(Deployment)
         .filter(Deployment.project == project)
         .filter(Deployment.status == "COMPLETE")
+        .order_by(Deployment.number.desc())
+        .first()
+    )
+
+
+def get_last_deployment(dbsession: DBSession, project: Project) -> Deployment | None:
+    return (
+        dbsession.query(Deployment)
+        .filter(Deployment.project == project)
         .order_by(Deployment.number.desc())
         .first()
     )

@@ -14,7 +14,11 @@ from disco.endpoints.dependencies import get_db, get_project_from_url
 from disco.models import ApiKey, Project
 from disco.models.db import Session
 from disco.utils import commandoutputs
-from disco.utils.deployments import create_deployment, get_deployment_by_number
+from disco.utils.deployments import (
+    create_deployment,
+    get_deployment_by_number,
+    get_last_deployment,
+)
 from disco.utils.discofile import DiscoFile
 from disco.utils.projects import get_project_by_name
 
@@ -97,7 +101,12 @@ async def deployment_output_get(
             project = get_project_by_name(dbsession, project_name)
             if project is None:
                 raise HTTPException(status_code=404)
-            deployment = get_deployment_by_number(dbsession, project, deployment_number)
+            if deployment_number == 0:
+                deployment = get_last_deployment(dbsession, project)
+            else:
+                deployment = get_deployment_by_number(
+                    dbsession, project, deployment_number
+                )
             if deployment is None:
                 raise HTTPException(status_code=404)
             source = f"DEPLOYMENT_{deployment.id}"
