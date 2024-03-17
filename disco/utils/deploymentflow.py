@@ -162,6 +162,45 @@ def replace_deployment(
             == ServiceType.static
         ):
             prepare_static_site(new_deployment_info, log_output)
+        if (
+            "hook:deploy:start:before" in new_deployment_info.disco_file.services
+            and new_deployment_info.disco_file.services["hook:deploy:start:before"].type
+            == ServiceType.command
+        ):
+            log_output("Runnnig hook:deploy:start:before command\n")
+            service_name = "hook:deploy:start:before"
+            service = new_deployment_info.disco_file.services[service_name]
+            if service.image.pull is not None:
+                image = service.image.pull
+            else:
+                image = docker.image_name(
+                    registry_host=new_deployment_info.registry_host,
+                    project_name=new_deployment_info.project_name,
+                    deployment_number=new_deployment_info.number,
+                    dockerfile=service.image.dockerfile or "Dockerfile",
+                    context=service.image.context or ".",
+                )
+            env_variables = new_deployment_info.env_variables + [
+                ("DISCO_PROJECT_NAME", new_deployment_info.project_name),
+                ("DISCO_SERVICE_NAME", service_name),
+                ("DISCO_HOST", new_deployment_info.disco_host),
+                ("DISCO_IP", new_deployment_info.disco_ip),
+            ]
+            volumes = [
+                (v.name, v.destination_path)
+                for v in new_deployment_info.disco_file.services[service_name].volumes
+            ]
+            docker.run(
+                image=image,
+                project_name=new_deployment_info.project_name,
+                name=f"{new_deployment_info.project_name}-hook-deploy-start-before.{new_deployment_info.number}",
+                env_variables=env_variables,
+                volumes=volumes,
+                networks=["disco-caddy-daemon"],
+                command=service.command,
+                timeout=300,
+                log_output=log_output,
+            )
     if new_deployment_info is not None:
         assert new_deployment_info.disco_file is not None
         create_networks(new_deployment_info, recovery, log_output)
