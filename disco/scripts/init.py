@@ -337,6 +337,7 @@ def write_caddy_init_config(disco_ip) -> None:
                             }
                         ],
                         "tls_connection_policies": [{"fallback_sni": disco_ip}],
+                        "protocols": ["h1", "h2"],
                     }
                 }
             },
