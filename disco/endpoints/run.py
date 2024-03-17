@@ -18,7 +18,7 @@ from disco.models.db import Session
 from disco.utils import commandoutputs
 from disco.utils.commandruns import create_command_run, get_command_run_by_number
 from disco.utils.deployments import get_live_deployment
-from disco.utils.discofile import DiscoFile, ServiceType
+from disco.utils.discofile import DiscoFile, ServiceType, get_disco_file_from_str
 from disco.utils.projects import get_project_by_name
 
 log = logging.getLogger(__name__)
@@ -47,7 +47,7 @@ def run_post(
     deployment = get_live_deployment(dbsession, project)
     if deployment is None:
         raise HTTPException(422, "Must deploy first")
-    disco_file: DiscoFile = DiscoFile.model_validate_json(deployment.disco_file)
+    disco_file: DiscoFile = get_disco_file_from_str(deployment.disco_file)
     if req_body.service is None:
         if len(list(disco_file.services.keys())) == 0:
             raise HTTPException(422)

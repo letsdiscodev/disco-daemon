@@ -7,7 +7,7 @@ from sqlalchemy.orm.session import Session as DBSession
 from disco.models import ApiKey, CommandRun, Deployment, Project
 from disco.models.db import Session
 from disco.utils import commandoutputs, docker, keyvalues
-from disco.utils.discofile import DiscoFile, ServiceType
+from disco.utils.discofile import DiscoFile, ServiceType, get_disco_file_from_str
 from disco.utils.encryption import decrypt
 
 log = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ def create_command_run(
     timeout: int,
     by_api_key: ApiKey,
 ) -> tuple[CommandRun, Callable[[], None]]:
-    disco_file: DiscoFile = DiscoFile.model_validate_json(deployment.disco_file)
+    disco_file: DiscoFile = get_disco_file_from_str(deployment.disco_file)
     assert deployment.status == "COMPLETE"
     assert service in disco_file.services
     number = get_next_run_number(dbsession, project)
@@ -37,18 +37,14 @@ def create_command_run(
         by_api_key=by_api_key,
     )
     dbsession.add(command_run)
-    if disco_file.services[service].image.pull is not None:
-        image = disco_file.services[service].image.pull
-        assert image is not None
-    else:
-        registry_host = keyvalues.get_value(dbsession, "REGISTRY_HOST")
-        image = docker.image_name(
-            registry_host=registry_host,
-            project_name=deployment.project_name,
-            deployment_number=deployment.number,
-            dockerfile=disco_file.services[service].image.dockerfile or "Dockerfile",
-            context=disco_file.services[service].image.context or ".",
-        )
+    registry_host = keyvalues.get_value(dbsession, "REGISTRY_HOST")
+    image = docker.get_image_name_for_service(
+        disco_file=disco_file,
+        service_name=service,
+        registry_host=registry_host,
+        project_name=project.name,
+        deployment_number=deployment.number,
+    )
     project_name = project.name
     run_number = command_run.number
     run_id = command_run.id

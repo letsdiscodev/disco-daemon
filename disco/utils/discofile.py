@@ -16,9 +16,8 @@ class PublishedPort(BaseModel):
 
 
 class Image(BaseModel):
-    dockerfile: str | None = None
-    context: str | None = None
-    pull: str | None = None
+    dockerfile: str = "Dockerfile"
+    context: str = "."
 
 
 class ServiceType(str, Enum):
@@ -34,7 +33,7 @@ class Service(BaseModel):
         alias="publicPath",
         pattern=r"/.+",
     )
-    image: Image = Image()
+    image: str = "default"
     port: int = 8000
     command: str | None = None
     published_ports: list[PublishedPort] = Field(
@@ -47,3 +46,26 @@ class Service(BaseModel):
 class DiscoFile(BaseModel):
     version: Decimal
     services: dict[str, Service] = {}
+    images: dict[str, Image] = {}
+
+
+DEFAULT_DISCO_FILE = """{
+    "version": "1.0",
+    "services": {
+        "web": {}
+    }
+}"""
+
+
+def get_disco_file_from_str(disco_file_str: str | None) -> DiscoFile:
+    if disco_file_str is None:
+        disco_file_str = DEFAULT_DISCO_FILE
+    disco_file = DiscoFile.model_validate_json(disco_file_str)
+    if len(disco_file.images) == 0 and any(
+        [service.image == "default" for service in disco_file.services.values()]
+    ):
+        disco_file.images["default"] = Image(
+            dockerfile="Dockerfile",
+            context=".",
+        )
+    return disco_file

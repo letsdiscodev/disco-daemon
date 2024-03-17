@@ -16,7 +16,7 @@ from disco.utils.deployments import (
     set_deployment_disco_file,
     set_deployment_status,
 )
-from disco.utils.discofile import DiscoFile, ServiceType
+from disco.utils.discofile import DiscoFile, ServiceType, get_disco_file_from_str
 from disco.utils.encryption import decrypt
 from disco.utils.filesystem import (
     copy_static_site_src_to_deployment_folder,
@@ -62,7 +62,7 @@ class DeploymentInfo:
             disco_ip=disco_ip,
             domain_name=deployment.domain,
             github_host=deployment.github_host,
-            disco_file=DiscoFile.model_validate_json(deployment.disco_file)
+            disco_file=get_disco_file_from_str(deployment.disco_file)
             if deployment.disco_file is not None
             else None,
             env_variables=[
@@ -170,16 +170,13 @@ def replace_deployment(
             log_output("Runnnig hook:deploy:start:before command\n")
             service_name = "hook:deploy:start:before"
             service = new_deployment_info.disco_file.services[service_name]
-            if service.image.pull is not None:
-                image = service.image.pull
-            else:
-                image = docker.image_name(
-                    registry_host=new_deployment_info.registry_host,
-                    project_name=new_deployment_info.project_name,
-                    deployment_number=new_deployment_info.number,
-                    dockerfile=service.image.dockerfile or "Dockerfile",
-                    context=service.image.context or ".",
-                )
+            image = docker.get_image_name_for_service(
+                disco_file=new_deployment_info.disco_file,
+                service_name=service_name,
+                registry_host=new_deployment_info.registry_host,
+                project_name=new_deployment_info.project_name,
+                deployment_number=new_deployment_info.number,
+            )
             env_variables = new_deployment_info.env_variables + [
                 ("DISCO_PROJECT_NAME", new_deployment_info.project_name),
                 ("DISCO_SERVICE_NAME", service_name),
@@ -304,62 +301,42 @@ def read_disco_file_for_deployment(
 ) -> DiscoFile | None:
     log_output("Reading Disco file from project folder\n")
     disco_file_str = read_disco_file(new_deployment_info.project_name)
-    if disco_file_str is None:
+    if disco_file_str is not None:
+        log_output("Found disco.json\n")
+        with Session() as dbsession:
+            with dbsession.begin():
+                deployment = get_deployment_by_id(dbsession, new_deployment_info.id)
+                assert deployment is not None
+                set_deployment_disco_file(deployment, disco_file_str)
+    else:
         log_output("No disco.json found, falling back to default config\n")
-        default_config = dict(
-            version="1.0",
-            services=dict(
-                web=dict(
-                    image=dict(
-                        dockerfile="Dockerfile",
-                        context=".",
-                    ),
-                    port=8000,
-                    command=None,
-                )
-            ),
-        )
-        return DiscoFile.model_validate(default_config)
-    log_output("Found disco.json\n")
-    with Session() as dbsession:
-        with dbsession.begin():
-            deployment = get_deployment_by_id(dbsession, new_deployment_info.id)
-            assert deployment is not None
-            set_deployment_disco_file(deployment, disco_file_str)
-    return DiscoFile.model_validate_json(disco_file_str)
+    return get_disco_file_from_str(disco_file_str)
 
 
 def build_images(
     new_deployment_info: DeploymentInfo,
     log_output: Callable[[str], None],
 ) -> list[str]:
-    images = set()
     log_output("Building images\n")
     assert new_deployment_info.disco_file is not None
-    for service_name, service in new_deployment_info.disco_file.services.items():
-        if service.image.pull is not None:
-            # Docker will take care of pulling when service is created
-            continue
-        if service.type == ServiceType.static and service.image.dockerfile is None:
-            continue
-        image = docker.image_name(
+    images = []
+    for image_name, image in new_deployment_info.disco_file.images.items():
+        log_output(f"Building image {image_name}\n")
+        internal_image_name = docker.internal_image_name(
             registry_host=new_deployment_info.registry_host,
             project_name=new_deployment_info.project_name,
             deployment_number=new_deployment_info.number,
-            dockerfile=service.image.dockerfile or "Dockerfile",
-            context=service.image.context or ".",
+            image_name=image_name,
         )
-        if image not in images:
-            images.add(image)
-            log_output(f"Building image of {service_name}: {image}\n")
-            docker.build_image(
-                image=image,
-                project_name=new_deployment_info.project_name,
-                dockerfile=service.image.dockerfile or "Dockerfile",
-                context=service.image.context or ".",
-                log_output=log_output,
-            )
-    return list(images)
+        images.append(internal_image_name)
+        docker.build_image(
+            image=internal_image_name,
+            project_name=new_deployment_info.project_name,
+            dockerfile=image.dockerfile,
+            context=image.context,
+            log_output=log_output,
+        )
+    return images
 
 
 def push_images(
@@ -450,17 +427,13 @@ def start_services(
             ("DISCO_HOST", new_deployment_info.disco_host),
             ("DISCO_IP", new_deployment_info.disco_ip),
         ]
-
-        if service.image.pull is not None:
-            image = service.image.pull
-        else:
-            image = docker.image_name(
-                registry_host=new_deployment_info.registry_host,
-                project_name=new_deployment_info.project_name,
-                deployment_number=new_deployment_info.number,
-                dockerfile=service.image.dockerfile or "Dockerfile",
-                context=service.image.context or ".",
-            )
+        image = docker.get_image_name_for_service(
+            disco_file=new_deployment_info.disco_file,
+            service_name=service_name,
+            registry_host=new_deployment_info.registry_host,
+            project_name=new_deployment_info.project_name,
+            deployment_number=new_deployment_info.number,
+        )
         log_output(f"Starting service {service_name}\n")
         try:
             # TODO in recovery, we should check if service is already running first

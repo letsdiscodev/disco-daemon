@@ -1,10 +1,10 @@
-import hashlib
 import logging
 import subprocess
 from datetime import datetime, timedelta
 from multiprocessing import cpu_count
 from typing import Callable
 
+from disco.utils.discofile import DiscoFile
 from disco.utils.filesystem import project_path
 
 log = logging.getLogger(__name__)
@@ -264,17 +264,13 @@ def list_networks_for_project(project_name: str) -> list[str]:
     return networks
 
 
-def image_name(
+def internal_image_name(
     registry_host: str | None,
     project_name: str,
     deployment_number: int,
-    dockerfile: str,
-    context: str,
+    image_name: str,
 ) -> str:
-    h = hashlib.new("sha256")
-    h.update(f"dockerfile={dockerfile}&context={context}".encode("utf-8"))
-    config_hash = h.hexdigest()
-    base_name = f"disco/project-{project_name}-{config_hash}:{deployment_number}"
+    base_name = f"disco/project-{project_name}-{image_name}:{deployment_number}"
     if registry_host is None:
         return base_name
     return f"{registry_host}/{base_name}"
@@ -634,3 +630,28 @@ def deployment_network_name(project_name: str, deployment_number: int) -> str:
 
 def deployment_web_network_name(project_name: str, deployment_number: int) -> str:
     return f"disco-project-{project_name}-{deployment_number}-caddy"
+
+
+def get_image_name_for_service(
+    disco_file: DiscoFile,
+    service_name: str,
+    registry_host: str | None,
+    project_name: str,
+    deployment_number: int,
+) -> str:
+    if service_name not in disco_file.services:
+        raise Exception(
+            f"Service {service_name} not in Discofile: {list(disco_file.services.keys())}"
+        )
+    service = disco_file.services[service_name]
+    if service.image in disco_file.images:
+        # image built by Disco
+        return internal_image_name(
+            registry_host=registry_host,
+            project_name=project_name,
+            deployment_number=deployment_number,
+            image_name=service.image,
+        )
+    else:
+        # image hosted in a Docker registry
+        return service.image
