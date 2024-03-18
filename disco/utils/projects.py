@@ -90,6 +90,9 @@ def delete_project(dbsession: DBSession, project: Project, by_api_key: ApiKey) -
             docker.stop_service(service_name, log_output=lambda x: None)
         except Exception:
             log.info("Failed to stop service %s", service_name)
+    containers = docker.list_containers_for_project(project.name)
+    for container in containers:
+        docker.remove_container(container, log_output=lambda x: None)
     networks = docker.list_networks_for_project(project.name)
     for network in networks:
         try:

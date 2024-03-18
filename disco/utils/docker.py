@@ -190,6 +190,30 @@ def list_services_for_project(project_name: str) -> list[str]:
     return services
 
 
+def list_containers_for_project(project_name: str) -> list[str]:
+    args = [
+        "docker",
+        "container",
+        "ls",
+        "-a",
+        "--filter",
+        f"label=disco.project.name={project_name}",
+        "--format",
+        "{{ .Name }}",
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    containers = [line.decode("utf-8")[:-1] for line in process.stdout.readlines()]
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+    return containers
+
+
 def list_services_for_deployment(
     project_name: str, deployment_number: int
 ) -> list[str]:
@@ -506,74 +530,88 @@ def run(
     log_output: Callable[[str], None],
     timeout: int = 600,
 ) -> None:
-    more_args = []
-    for var_name, var_value in env_variables:
-        more_args.append("--env")
-        more_args.append(f"{var_name}={var_value}")
-    for volume, destination in volumes:
-        more_args.append("--mount")
-        more_args.append(
-            f"type=volume,source=disco-volume-{volume},destination={destination}"
+    try:
+        more_args = []
+        for var_name, var_value in env_variables:
+            more_args.append("--env")
+            more_args.append(f"{var_name}={var_value}")
+        for volume, destination in volumes:
+            more_args.append("--mount")
+            more_args.append(
+                f"type=volume,source=disco-volume-{volume},destination={destination}"
+            )
+        args = [
+            "docker",
+            "container",
+            "create",
+            "--name",
+            name,
+            "--label",
+            f"disco.project.name={project_name}",
+            "--label",
+            f"disco.service.name={name}",
+            *more_args,
+            image,
+            *(command.split() if command is not None else []),
+        ]
+        process = subprocess.Popen(
+            args=args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
         )
-    args = [
-        "docker",
-        "container",
-        "create",
-        "--name",
-        name,
-        "--label",
-        f"disco.project.name={project_name}",
-        "--label",
-        f"disco.service.name={name}",
-        *more_args,
-        image,
-        *(command.split() if command is not None else []),
-    ]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    timeout_dt = datetime.utcnow() + timedelta(seconds=timeout)
-    for line in process.stdout:
-        log_output(line.decode("utf-8"))
-        if datetime.utcnow() > timeout_dt:
-            process.terminate()
-            raise Exception(f"Running command failed, timeout after {timeout} seconds")
+        assert process.stdout is not None
+        timeout_dt = datetime.utcnow() + timedelta(seconds=timeout)
+        for line in process.stdout:
+            log_output(line.decode("utf-8"))
+            if datetime.utcnow() > timeout_dt:
+                process.terminate()
+                raise Exception(
+                    f"Running command failed, timeout after {timeout} seconds"
+                )
 
-    process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-    for network in networks:
-        add_network_to_container(container=name, network=network, log_output=log_output)
-    args = [
-        "docker",
-        "container",
-        "start",
-        "--attach",
-        name,
-    ]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    timeout_dt = datetime.utcnow() + timedelta(seconds=timeout)
-    for line in process.stdout:
-        log_output(line.decode("utf-8"))
-        if datetime.utcnow() > timeout_dt:
-            process.terminate()
-            raise Exception(f"Running command failed, timeout after {timeout} seconds")
+        process.wait()
+        if process.returncode != 0:
+            raise Exception(f"Docker returned status {process.returncode}")
+        for network in networks:
+            add_network_to_container(
+                container=name, network=network, log_output=log_output
+            )
+        args = [
+            "docker",
+            "container",
+            "start",
+            "--attach",
+            name,
+        ]
+        process = subprocess.Popen(
+            args=args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        assert process.stdout is not None
+        timeout_dt = datetime.utcnow() + timedelta(seconds=timeout)
+        for line in process.stdout:
+            log_output(line.decode("utf-8"))
+            if datetime.utcnow() > timeout_dt:
+                process.terminate()
+                raise Exception(
+                    f"Running command failed, timeout after {timeout} seconds"
+                )
 
-    process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
+        process.wait()
+        if process.returncode != 0:
+            raise Exception(f"Docker returned status {process.returncode}")
+    finally:
+        remove_container(name, log_output)
+
+
+def remove_container(name: str, log_output: Callable[[str], None]) -> None:
+    log_output(f"Removing container {name}\n")
     args = [
         "docker",
         "container",
         "rm",
+        "--force",
         name,
     ]
     process = subprocess.Popen(
@@ -582,12 +620,8 @@ def run(
         stderr=subprocess.STDOUT,
     )
     assert process.stdout is not None
-    timeout_dt = datetime.utcnow() + timedelta(seconds=timeout)
     for line in process.stdout:
         log_output(line.decode("utf-8"))
-        if datetime.utcnow() > timeout_dt:
-            process.terminate()
-            raise Exception(f"Running command failed, timeout after {timeout} seconds")
 
     process.wait()
     if process.returncode != 0:
