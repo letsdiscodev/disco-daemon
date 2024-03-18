@@ -167,6 +167,29 @@ def stop_service(name: str, log_output: Callable[[str], None]) -> None:
         raise Exception(f"Docker returned status {process.returncode}")
 
 
+def get_log_for_service(service_name: str) -> str:
+    args = [
+        "docker",
+        "service",
+        "logs",
+        service_name,
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    output = ""
+    for line in process.stdout:
+        output += line.decode("utf-8")
+
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+    return output
+
+
 def list_services_for_project(project_name: str) -> list[str]:
     args = [
         "docker",

@@ -454,6 +454,11 @@ def start_services(
                 log_output=log_output,
             )
         except Exception:
+            try:
+                service_log = docker.get_log_for_service(service_name=internal_service_name)
+                log_output(service_log)
+            except Exception:
+                pass
             if recovery:
                 log_output(f"Failed to start service {service_name}\n")
             else:
