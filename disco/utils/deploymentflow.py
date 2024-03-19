@@ -450,12 +450,15 @@ def start_services(
                     for p in service.published_ports
                 ],
                 networks=networks,
+                replicas=1,
                 command=service.command,
                 log_output=log_output,
             )
         except Exception:
             try:
-                service_log = docker.get_log_for_service(service_name=internal_service_name)
+                service_log = docker.get_log_for_service(
+                    service_name=internal_service_name
+                )
                 log_output(service_log)
             except Exception:
                 pass

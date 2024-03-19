@@ -57,6 +57,7 @@ def start_service(
     volumes: list[tuple[str, str]],
     published_ports: list[tuple[int, int, str]],
     networks: list[str],
+    replicas: int,
     command: str | None,
     log_output: Callable[[str], None],
 ) -> None:
@@ -88,6 +89,8 @@ def start_service(
         "--name",
         name,
         "--with-registry-auth",
+        "--replicas",
+        str(replicas),
         "--label",
         f"disco.project.name={project_name}",
         "--label",
@@ -110,19 +113,49 @@ def start_service(
         stderr=subprocess.STDOUT,
     )
     assert process.stdout is not None
-    timeout_seconds = 30
+    timeout_seconds = 900  # 15 minutes, safety net
     timeout = datetime.utcnow() + timedelta(seconds=timeout_seconds)
+    next_check = datetime.utcnow() + timedelta(seconds=3)
     for line in process.stdout:
         log_output(line.decode("utf-8"))
+        if datetime.utcnow() > next_check:
+            states = get_service_nodes_desired_state(name)
+            if len([state for state in states if state == "Shutdown"]) >= 3 * replicas:
+                # 3 attempts to start the service failed
+                process.terminate()
+                raise Exception("Starting task failed, too many failed attempts")
+            next_check += timedelta(seconds=3)
         if datetime.utcnow() > timeout:
             process.terminate()
             raise Exception(
-                f"Starting task failed, " f"timeout after {timeout_seconds} seconds"
+                f"Starting task failed, timeout after {timeout_seconds} seconds"
             )
 
     process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
+
+
+def get_service_nodes_desired_state(service_name: str) -> list[str]:
+    args = [
+        "docker",
+        "service",
+        "ps",
+        service_name,
+        "--format",
+        "{{ .DesiredState }}",
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    states = [line.decode("utf-8")[:-1] for line in process.stdout.readlines()]
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+    return states
 
 
 def push_image(image: str, log_output: Callable[[str], None]) -> None:
@@ -180,14 +213,22 @@ def get_log_for_service(service_name: str) -> str:
         stderr=subprocess.STDOUT,
     )
     assert process.stdout is not None
-    output = ""
-    for line in process.stdout:
-        output += line.decode("utf-8")
+    # Sometimes "docker service logs" hangs.
+    # It seems like a bug on their side.
+    # That's why we have those timeouts.
+    # It makes this function suitable to report
+    # when a service fails to start, but probably
+    # not for other purposes.
+    try:
+        stdout, _ = process.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        try:
+            stdout, _ = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            return ""
 
-    process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-    return output
+    return stdout.decode("utf-8")
 
 
 def list_services_for_project(project_name: str) -> list[str]:
