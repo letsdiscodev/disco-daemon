@@ -214,6 +214,7 @@ def get_log_for_service(service_name: str) -> str:
         "docker",
         "service",
         "logs",
+        "--raw",
         service_name,
     ]
     process = subprocess.Popen(

@@ -99,6 +99,18 @@ def serve_service(project_name: str, container_name: str, port: int) -> None:
         raise Exception("Caddy returned {response.status_code}: {response.text}")
 
 
+def get_served_service_for_project(project_name: str) -> str | None:
+    url = f"{BASE_URL}/id/disco-project-handler-{project_name}/upstreams/0/dial"
+    session = _get_session()
+    response = session.get(url, headers=HEADERS, timeout=10)
+    if response.status_code != 200:
+        return None
+    try:
+        return response.json().split(":")[0]
+    except Exception:
+        return None
+
+
 def serve_static_site(project_name: str, deployment_number: int) -> None:
     url = f"{BASE_URL}/id/disco-project-handler-{project_name}"
     req_body = {

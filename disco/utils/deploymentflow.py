@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import random
 from dataclasses import dataclass
 from typing import Callable
 
@@ -110,7 +111,7 @@ def process_deployment(deployment_id: str) -> None:
             recovery=False,
             log_output=log_output,
         )
-        log_output("Deployment complete 🪩🕺\n")
+        log_output(f"Deployment complete {random.choice(['🪩', '🕺', '💃'])}\n")
         set_current_deployment_status("COMPLETE")
     except Exception:
         set_current_deployment_status("FAILED")
@@ -265,7 +266,7 @@ def checkout_commit(
         # TODO if project doesn't have branch configured,
         #      save if origin/main exists, otherwise, origin/master
     else:
-        log_output("Fetching from git repo\n")
+        log_output(f"Fetching from {new_deployment_info.github_repo}\n")
         github.fetch(project_name=new_deployment_info.project_name)
     if new_deployment_info.commit_hash == "_DEPLOY_LATEST_":
         # TODO use project branch
@@ -425,9 +426,9 @@ def start_services(
             project_name=new_deployment_info.project_name,
             deployment_number=new_deployment_info.number,
         )
-        log_output(f"Starting service {internal_service_name}\n")
         try:
             if not recovery or not docker.service_exists(internal_service_name):
+                log_output(f"Starting service {internal_service_name}\n")
                 docker.start_service(
                     image=image,
                     name=internal_service_name,
@@ -510,14 +511,21 @@ def serve_new_deployment(
             new_deployment_info.project_name, "web", new_deployment_info.number
         )
         # TODO wait that it's listening on the port specified? + health check?
-        log_output(f"Sending HTTP traffic to {internal_service_name}\n")
         assert new_deployment_info.disco_file is not None
         try:
-            caddy.serve_service(
-                new_deployment_info.project_name,
-                internal_service_name,
-                port=new_deployment_info.disco_file.services["web"].port or 8000,
-            )
+            if (
+                not recovery
+                or caddy.get_served_service_for_project(
+                    new_deployment_info.project_name
+                )
+                != internal_service_name
+            ):
+                log_output(f"Sending HTTP traffic to {internal_service_name}\n")
+                caddy.serve_service(
+                    new_deployment_info.project_name,
+                    internal_service_name,
+                    port=new_deployment_info.disco_file.services["web"].port or 8000,
+                )
         except Exception:
             log_output(
                 f"Failed to update reverse proxy to serve "
