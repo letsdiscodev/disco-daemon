@@ -231,6 +231,57 @@ def get_log_for_service(service_name: str) -> str:
     return stdout.decode("utf-8")
 
 
+def network_exists(network_name: str) -> bool:
+    args = [
+        "docker",
+        "network",
+        "inspect",
+        network_name,
+    ]
+    process = subprocess.Popen(
+        args=args,
+    )
+    process.wait()
+    return process.returncode == 0
+
+
+def service_exists(service_name: str) -> bool:
+    args = [
+        "docker",
+        "service",
+        "inspect",
+        service_name,
+    ]
+    process = subprocess.Popen(
+        args=args,
+    )
+    process.wait()
+    return process.returncode == 0
+
+
+def get_networks_connected_to_container(container_name: str) -> list[str]:
+    args = [
+        "docker",
+        "inspect",
+        "--format",
+        "{{range $key, $value := .NetworkSettings.Networks}}{{$key}}{{println}}{{end}}",
+        container_name,
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    networks = [line.decode("utf-8")[:-1] for line in process.stdout.readlines()]
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+    # remove last emtpy line
+    networks = [network for network in networks if network != ""]
+    return networks
+
+
 def list_services_for_project(project_name: str) -> list[str]:
     args = [
         "docker",

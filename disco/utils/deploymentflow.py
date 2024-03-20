@@ -357,13 +357,12 @@ def create_networks(
         network_name = docker.deployment_network_name(
             new_deployment_info.project_name, new_deployment_info.number
         )
-        # TODO when in recovery, we should check if the network exists before
-        #      trying to create it.
-        docker.create_network(
-            network_name,
-            log_output,
-            project_name=new_deployment_info.project_name,
-        )
+        if not recovery or not docker.network_exists(network_name):
+            docker.create_network(
+                network_name,
+                log_output,
+                project_name=new_deployment_info.project_name,
+            )
     except Exception:
         if recovery:
             log_output(f"Failed to create network {network_name}\n")
@@ -376,20 +375,24 @@ def create_networks(
             new_deployment_info.project_name, new_deployment_info.number
         )
         try:
-            # TODO when in recovery, we should check if the network exists before
-            #      trying to create it.
-            docker.create_network(
-                web_network, log_output, project_name=new_deployment_info.project_name
-            )
+            if not recovery or not docker.network_exists(web_network):
+                docker.create_network(
+                    web_network,
+                    log_output,
+                    project_name=new_deployment_info.project_name,
+                )
         except Exception:
             if recovery:
                 log_output(f"Failed to create network {web_network}\n")
             else:
                 raise
         try:
-            # TODO when in recovery, we should check if the network is
-            #      already connected to the container
-            docker.add_network_to_container("disco-caddy", web_network, log_output)
+            if (
+                not recovery
+                or web_network
+                not in docker.get_networks_connected_to_container("disco-caddy")
+            ):
+                docker.add_network_to_container("disco-caddy", web_network, log_output)
         except Exception:
             if recovery:
                 log_output(f"Failed to add network {web_network} to disco-caddy\n")
@@ -436,24 +439,24 @@ def start_services(
         )
         log_output(f"Starting service {service_name}\n")
         try:
-            # TODO in recovery, we should check if service is already running first
-            docker.start_service(
-                image=image,
-                name=internal_service_name,
-                project_name=new_deployment_info.project_name,
-                project_service_name=service_name,
-                deployment_number=new_deployment_info.number,
-                env_variables=env_variables,
-                volumes=[(v.name, v.destination_path) for v in service.volumes],
-                published_ports=[
-                    (p.published_as, p.from_container_port, p.protocol)
-                    for p in service.published_ports
-                ],
-                networks=networks,
-                replicas=1,
-                command=service.command,
-                log_output=log_output,
-            )
+            if not recovery or not docker.service_exists(internal_service_name):
+                docker.start_service(
+                    image=image,
+                    name=internal_service_name,
+                    project_name=new_deployment_info.project_name,
+                    project_service_name=service_name,
+                    deployment_number=new_deployment_info.number,
+                    env_variables=env_variables,
+                    volumes=[(v.name, v.destination_path) for v in service.volumes],
+                    published_ports=[
+                        (p.published_as, p.from_container_port, p.protocol)
+                        for p in service.published_ports
+                    ],
+                    networks=networks,
+                    replicas=1,
+                    command=service.command,
+                    log_output=log_output,
+                )
         except Exception:
             try:
                 service_log = docker.get_log_for_service(
@@ -502,8 +505,8 @@ def stop_conflicting_port_services(
             f"(published port would conflict with new service)\n"
         )
         try:
-            # TODO in recovery, we should check if service is already stopped first
-            docker.stop_service(internal_service_name, log_output=log_output)
+            if not recovery or docker.service_exists(internal_service_name):
+                docker.stop_service(internal_service_name, log_output=log_output)
         except Exception:
             if recovery:
                 log_output(f"Failed to start service {service_name}\n")
@@ -522,7 +525,10 @@ def serve_new_deployment(
             new_deployment_info.project_name, "web", new_deployment_info.number
         )
         # TODO wait that it's listening on the port specified? + health check?
-        log_output("Sending traffic to new web service\n")
+        if recovery:
+            log_output("Sending traffic to previous web service\n")
+        else:
+            log_output("Sending traffic to new web service\n")
         assert new_deployment_info.disco_file is not None
         try:
             caddy.serve_service(
@@ -610,11 +616,11 @@ def remove_prev_networks(
         network_name = docker.deployment_network_name(
             prev_deployment_info.project_name, prev_deployment_info.number
         )
-        # TODO when in recovery, check that network exists first
-        docker.remove_network(
-            network_name,
-            log_output,
-        )
+        if not recovery or docker.network_exists(network_name):
+            docker.remove_network(
+                network_name,
+                log_output,
+            )
     except Exception:
         if recovery:
             log_output(f"Failed to remove network {network_name}\n")
@@ -630,14 +636,22 @@ def remove_prev_networks(
             prev_deployment_info.project_name, prev_deployment_info.number
         )
         try:
-            docker.remove_network_from_container("disco-caddy", web_network, log_output)
+            if (
+                not recovery
+                or web_network
+                in docker.get_networks_connected_to_container("disco-caddy")
+            ):
+                docker.remove_network_from_container(
+                    "disco-caddy", web_network, log_output
+                )
         except Exception:
             if recovery:
                 log_output(f"Failed to remove network {web_network} from disco-caddy\n")
             else:
                 raise
         try:
-            docker.remove_network(web_network, log_output)
+            if not recovery or docker.network_exists(web_network):
+                docker.remove_network(web_network, log_output)
         except Exception:
             if recovery:
                 log_output(f"Failed to remove network {web_network}\n")
