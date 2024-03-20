@@ -3,14 +3,13 @@ import logging
 import re
 import shutil
 import subprocess
-from typing import Callable
 
 from disco.utils.filesystem import project_path, projects_root
 
 log = logging.getLogger(__name__)
 
 
-def fetch(project_name: str, log_output: Callable[[str], None]) -> None:
+def fetch(project_name: str) -> None:
     log.info("Pulling from Github project %s", project_name)
     args = ["git", "fetch", "origin"]
     process = subprocess.Popen(
@@ -21,7 +20,10 @@ def fetch(project_name: str, log_output: Callable[[str], None]) -> None:
     )
     assert process.stdout is not None
     for line in process.stdout:
-        log_output(line.decode("utf-8"))
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
 
     process.wait()
     if process.returncode != 0:
@@ -32,7 +34,6 @@ def clone_project(
     project_name: str,
     github_repo: str,
     github_host: str,
-    log_output: Callable[[str], None],
 ) -> None:
     log.info("Cloning from Github project %s (%s)", project_name, github_repo)
     url = github_repo.replace("github.com", github_host)
@@ -45,16 +46,17 @@ def clone_project(
     )
     assert process.stdout is not None
     for line in process.stdout:
-        log_output(line.decode("utf-8"))
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
 
     process.wait()
     if process.returncode != 0:
         raise Exception(f"Git returned status {process.returncode}")
 
 
-def checkout_commit(
-    project_name: str, commit_hash: str, log_output: Callable[[str], None]
-) -> None:
+def checkout_commit(project_name: str, commit_hash: str) -> None:
     log.info(
         "Checking out commit from Github project %s: %s", project_name, commit_hash
     )
@@ -67,14 +69,17 @@ def checkout_commit(
     )
     assert process.stdout is not None
     for line in process.stdout:
-        log_output(line.decode("utf-8"))
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
 
     process.wait()
     if process.returncode != 0:
         raise Exception(f"Git returned status {process.returncode}")
 
 
-def checkout_latest(project_name: str, log_output: Callable[[str], None]) -> None:
+def checkout_latest(project_name: str) -> None:
     log.info("Checking out latest commit from Github project %s", project_name)
     branch = main_or_master(project_name)  # TODO receive branch as arg
     args = ["git", "checkout", f"origin/{branch}"]
@@ -86,7 +91,10 @@ def checkout_latest(project_name: str, log_output: Callable[[str], None]) -> Non
     )
     assert process.stdout is not None
     for line in process.stdout:
-        log_output(line.decode("utf-8"))
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
 
     process.wait()
     if process.returncode != 0:

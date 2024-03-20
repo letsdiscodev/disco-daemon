@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import traceback
 from dataclasses import dataclass
 from typing import Callable
 
@@ -111,12 +110,12 @@ def process_deployment(deployment_id: str) -> None:
             recovery=False,
             log_output=log_output,
         )
-        log_output("Deployment complete\n")
+        log_output("Deployment complete 🪩🕺\n")
         set_current_deployment_status("COMPLETE")
     except Exception:
         set_current_deployment_status("FAILED")
-        log_output(traceback.format_exc())
-        log_output("Deployment failed.\n")
+        log.exception("Exception while deploying")
+        log_output("Deployment failed\n")
         log_output("Restoring previous deployment\n")
         replace_deployment(
             new_deployment_id=prev_deployment_id,
@@ -167,7 +166,7 @@ def replace_deployment(
             and new_deployment_info.disco_file.services["hook:deploy:start:before"].type
             == ServiceType.command
         ):
-            log_output("Runnnig hook:deploy:start:before command\n")
+            log_output("Runnning hook:deploy:start:before command\n")
             service_name = "hook:deploy:start:before"
             service = new_deployment_info.disco_file.services[service_name]
             image = docker.get_image_name_for_service(
@@ -253,38 +252,32 @@ def checkout_commit(
     new_deployment_info: DeploymentInfo,
     log_output: Callable[[str], None],
 ) -> None:
-    log_output(f"Deployment of git {new_deployment_info.commit_hash}\n")
     assert new_deployment_info.github_repo is not None
     assert new_deployment_info.github_host is not None
     assert new_deployment_info.commit_hash is not None
     if not project_folder_exists(new_deployment_info.project_name):
-        log_output(f"Cloning project from {new_deployment_info.github_repo}\n")
+        log_output(f"Cloning {new_deployment_info.github_repo}\n")
         github.clone_project(
             project_name=new_deployment_info.project_name,
             github_repo=new_deployment_info.github_repo,
             github_host=new_deployment_info.github_host,
-            log_output=log_output,
         )
         # TODO if project doesn't have branch configured,
         #      save if origin/main exists, otherwise, origin/master
     else:
-        log_output("Fetching latest commits from git repo\n")
-        github.fetch(
-            project_name=new_deployment_info.project_name, log_output=log_output
-        )
+        log_output("Fetching from git repo\n")
+        github.fetch(project_name=new_deployment_info.project_name)
     if new_deployment_info.commit_hash == "_DEPLOY_LATEST_":
         # TODO use project branch
         log_output("Checking out latest commit\n")
         github.checkout_latest(
             new_deployment_info.project_name,
-            log_output=log_output,
         )
     else:
-        log_output(f"Checking out commit {new_deployment_info.commit_hash}\n")
+        log_output(f"Checking out {new_deployment_info.commit_hash}\n")
         github.checkout_commit(
             new_deployment_info.project_name,
             new_deployment_info.commit_hash,
-            log_output=log_output,
         )
     commit_hash = github.get_head_commit_hash(new_deployment_info.project_name)
     if new_deployment_info.commit_hash != commit_hash:
@@ -299,10 +292,8 @@ def read_disco_file_for_deployment(
     new_deployment_info: DeploymentInfo,
     log_output: Callable[[str], None],
 ) -> DiscoFile | None:
-    log_output("Reading Disco file from project folder\n")
     disco_file_str = read_disco_file(new_deployment_info.project_name)
     if disco_file_str is not None:
-        log_output("Found disco.json\n")
         with Session() as dbsession:
             with dbsession.begin():
                 deployment = get_deployment_by_id(dbsession, new_deployment_info.id)
@@ -317,7 +308,6 @@ def build_images(
     new_deployment_info: DeploymentInfo,
     log_output: Callable[[str], None],
 ) -> list[str]:
-    log_output("Building images\n")
     assert new_deployment_info.disco_file is not None
     images = []
     for image_name, image in new_deployment_info.disco_file.images.items():
@@ -345,7 +335,7 @@ def push_images(
 ) -> None:
     log_output("Pushing images to Disco registry\n")
     for image in images:
-        docker.push_image(image, log_output=log_output)
+        docker.push_image(image)
 
 
 def create_networks(
@@ -360,12 +350,11 @@ def create_networks(
         if not recovery or not docker.network_exists(network_name):
             docker.create_network(
                 network_name,
-                log_output,
                 project_name=new_deployment_info.project_name,
             )
     except Exception:
         if recovery:
-            log_output(f"Failed to create network {network_name}\n")
+            log.error("Failed to create network %s", network_name)
         else:
             raise
 
@@ -378,12 +367,11 @@ def create_networks(
             if not recovery or not docker.network_exists(web_network):
                 docker.create_network(
                     web_network,
-                    log_output,
                     project_name=new_deployment_info.project_name,
                 )
         except Exception:
             if recovery:
-                log_output(f"Failed to create network {web_network}\n")
+                log.error("Failed to create network %s", web_network)
             else:
                 raise
         try:
@@ -392,10 +380,11 @@ def create_networks(
                 or web_network
                 not in docker.get_networks_connected_to_container("disco-caddy")
             ):
-                docker.add_network_to_container("disco-caddy", web_network, log_output)
+                docker.add_network_to_container("disco-caddy", web_network)
         except Exception:
             if recovery:
-                log_output(f"Failed to add network {web_network} to disco-caddy\n")
+                log_output("Failed to configure networks")
+                log.error("Failed to add network to disco-caddy: %s", web_network)
             else:
                 raise
 
@@ -405,7 +394,6 @@ def start_services(
     recovery: bool,
     log_output: Callable[[str], None],
 ) -> None:
-    log_output("Starting services\n")
     assert new_deployment_info.disco_file is not None
     for service_name, service in new_deployment_info.disco_file.services.items():
         if service.type != ServiceType.container:
@@ -437,7 +425,7 @@ def start_services(
             project_name=new_deployment_info.project_name,
             deployment_number=new_deployment_info.number,
         )
-        log_output(f"Starting service {service_name}\n")
+        log_output(f"Starting service {internal_service_name}\n")
         try:
             if not recovery or not docker.service_exists(internal_service_name):
                 docker.start_service(
@@ -455,9 +443,9 @@ def start_services(
                     networks=networks,
                     replicas=1,
                     command=service.command,
-                    log_output=log_output,
                 )
         except Exception:
+            log_output(f"Failed to start service {internal_service_name}\n")
             try:
                 service_log = docker.get_log_for_service(
                     service_name=internal_service_name
@@ -465,9 +453,7 @@ def start_services(
                 log_output(service_log)
             except Exception:
                 pass
-            if recovery:
-                log_output(f"Failed to start service {service_name}\n")
-            else:
+            if not recovery:
                 raise
 
 
@@ -501,16 +487,15 @@ def stop_conflicting_port_services(
             prev_deployment_info.number,
         )
         log_output(
-            f"Stopping previous service {service_name} "
-            f"(published port would conflict with new service)\n"
+            f"Stopping service {internal_service_name} "
+            f"(published port would conflict with replacement service)\n"
         )
         try:
             if not recovery or docker.service_exists(internal_service_name):
-                docker.stop_service(internal_service_name, log_output=log_output)
+                docker.stop_service(internal_service_name)
         except Exception:
-            if recovery:
-                log_output(f"Failed to start service {service_name}\n")
-            else:
+            log_output(f"Failed to stop service {internal_service_name}\n")
+            if not recovery:
                 raise
 
 
@@ -525,10 +510,7 @@ def serve_new_deployment(
             new_deployment_info.project_name, "web", new_deployment_info.number
         )
         # TODO wait that it's listening on the port specified? + health check?
-        if recovery:
-            log_output("Sending traffic to previous web service\n")
-        else:
-            log_output("Sending traffic to new web service\n")
+        log_output(f"Sending HTTP traffic to {internal_service_name}\n")
         assert new_deployment_info.disco_file is not None
         try:
             caddy.serve_service(
@@ -537,12 +519,11 @@ def serve_new_deployment(
                 port=new_deployment_info.disco_file.services["web"].port or 8000,
             )
         except Exception:
-            if recovery:
-                log_output(
-                    f"Failed to update Caddy to serve "
-                    f"deployment {new_deployment_info.number}\n"
-                )
-            else:
+            log_output(
+                f"Failed to update reverse proxy to serve "
+                f"deployment {new_deployment_info.number}\n"
+            )
+            if not recovery:
                 raise
     else:  # static
         try:
@@ -550,12 +531,11 @@ def serve_new_deployment(
                 new_deployment_info.project_name, new_deployment_info.number
             )
         except Exception:
-            if recovery:
-                log_output(
-                    f"Failed to update Caddy to serve "
-                    f"deployment {new_deployment_info.number}\n"
-                )
-            else:
+            log_output(
+                f"Failed to update server to serve "
+                f"deployment {new_deployment_info.number}\n"
+            )
+            if not recovery:
                 raise
 
 
@@ -589,19 +569,17 @@ def stop_prev_services(
                 )
             )
     except Exception:
-        if recovery:
-            log_output("Failed to retrieve list of services to stop\n")
-            return
-        else:
+        log_output("Failed to retrieve list of services to stop\n")
+        if not recovery:
             raise
 
     for service in all_services - current_services:
         try:
-            docker.stop_service(service, log_output)
+            log_output(f"Stopping service {service}\n")
+            docker.stop_service(service)
         except Exception:
-            if recovery:
-                log_output(f"Failed to stop service {service}\n")
-            else:
+            log_output(f"Failed to stop service {service}\n")
+            if not recovery:
                 raise
 
 
@@ -617,14 +595,11 @@ def remove_prev_networks(
             prev_deployment_info.project_name, prev_deployment_info.number
         )
         if not recovery or docker.network_exists(network_name):
-            docker.remove_network(
-                network_name,
-                log_output,
-            )
+            docker.remove_network(network_name)
     except Exception:
-        if recovery:
-            log_output(f"Failed to remove network {network_name}\n")
-        else:
+        log_output("Failed to clean up networks\n")
+        log.error("Failed to remove network %s", network_name)
+        if not recovery:
             raise
     assert prev_deployment_info.disco_file is not None
     if (
@@ -641,21 +616,19 @@ def remove_prev_networks(
                 or web_network
                 in docker.get_networks_connected_to_container("disco-caddy")
             ):
-                docker.remove_network_from_container(
-                    "disco-caddy", web_network, log_output
-                )
+                docker.remove_network_from_container("disco-caddy", web_network)
         except Exception:
-            if recovery:
-                log_output(f"Failed to remove network {web_network} from disco-caddy\n")
-            else:
+            log_output("Failed to clean up networks\n")
+            log.error("Failed to remove network from disco-caddy: %s", web_network)
+            if not recovery:
                 raise
         try:
             if not recovery or docker.network_exists(web_network):
-                docker.remove_network(web_network, log_output)
+                docker.remove_network(web_network)
         except Exception:
-            if recovery:
-                log_output(f"Failed to remove network {web_network}\n")
-            else:
+            log_output("Failed to clean up networks\n")
+            log.error("Failed to remove network %s", web_network)
+            if not recovery:
                 raise
 
 

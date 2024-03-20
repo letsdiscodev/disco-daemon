@@ -59,7 +59,6 @@ def start_service(
     networks: list[str],
     replicas: int,
     command: str | None,
-    log_output: Callable[[str], None],
 ) -> None:
     more_args = []
     for var_name, var_value in env_variables:
@@ -117,7 +116,10 @@ def start_service(
     timeout = datetime.utcnow() + timedelta(seconds=timeout_seconds)
     next_check = datetime.utcnow() + timedelta(seconds=3)
     for line in process.stdout:
-        log_output(line.decode("utf-8"))
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
         if datetime.utcnow() > next_check:
             states = get_service_nodes_desired_state(name)
             if len([state for state in states if state == "Shutdown"]) >= 3 * replicas:
@@ -158,8 +160,8 @@ def get_service_nodes_desired_state(service_name: str) -> list[str]:
     return states
 
 
-def push_image(image: str, log_output: Callable[[str], None]) -> None:
-    log_output(f"Pushing image {image}\n")
+def push_image(image: str) -> None:
+    log.info("Pushing image %s", image)
     args = [
         "docker",
         "push",
@@ -172,14 +174,18 @@ def push_image(image: str, log_output: Callable[[str], None]) -> None:
     )
     assert process.stdout is not None
     for line in process.stdout:
-        log_output(line.decode("utf-8"))
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
 
     process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
 
 
-def stop_service(name: str, log_output: Callable[[str], None]) -> None:
+def stop_service(name: str) -> None:
+    log.info("Stopping service %s", name)
     args = [
         "docker",
         "service",
@@ -193,7 +199,10 @@ def stop_service(name: str, log_output: Callable[[str], None]) -> None:
     )
     assert process.stdout is not None
     for line in process.stdout:
-        log_output(line.decode("utf-8"))
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
 
     process.wait()
     if process.returncode != 0:
@@ -449,10 +458,8 @@ def set_syslog_service(disco_host: str, syslog_urls: list[str]) -> None:
         raise Exception(ex.stdout.decode("utf-8")) from ex
 
 
-def create_network(
-    name: str, log_output: Callable[[str], None], project_name: str | None = None
-) -> None:
-    log_output(f"Creating network {name}\n")
+def create_network(name: str, project_name: str | None = None) -> None:
+    log.info("Creating network %s", name)
     more_args = []
     if project_name is not None:
         more_args += [
@@ -478,15 +485,18 @@ def create_network(
     )
     assert process.stdout is not None
     for line in process.stdout:
-        log_output(line.decode("utf-8"))
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
 
     process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
 
 
-def pull(image: str, log_output: Callable[[str], None]) -> None:
-    log_output(f"Pulling Docker image {image}\n")
+def pull(image: str) -> None:
+    log.info("Pulling Docker image %s", image)
     args = [
         "docker",
         "pull",
@@ -499,15 +509,18 @@ def pull(image: str, log_output: Callable[[str], None]) -> None:
     )
     assert process.stdout is not None
     for line in process.stdout:
-        log_output(line.decode("utf-8"))
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
 
     process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
 
 
-def remove_network(name: str, log_output: Callable[[str], None]) -> None:
-    log_output(f"Removing network {name}\n")
+def remove_network(name: str) -> None:
+    log.info("Removing network %s", name)
     args = [
         "docker",
         "network",
@@ -521,7 +534,10 @@ def remove_network(name: str, log_output: Callable[[str], None]) -> None:
     )
     assert process.stdout is not None
     for line in process.stdout:
-        log_output(line.decode("utf-8"))
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
 
     process.wait()
     if process.returncode != 0:
@@ -529,9 +545,10 @@ def remove_network(name: str, log_output: Callable[[str], None]) -> None:
 
 
 def add_network_to_service(
-    service: str, network: str, log_output: Callable[[str], None]
+    service: str,
+    network: str,
 ) -> None:
-    log_output(f"Adding network {network} to service {service}\n")
+    log.info("Adding network to service: %s to %s", network, service)
     args = [
         "docker",
         "service",
@@ -547,7 +564,10 @@ def add_network_to_service(
     )
     assert process.stdout is not None
     for line in process.stdout:
-        log_output(line.decode("utf-8"))
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
 
     process.wait()
     if process.returncode != 0:
@@ -555,9 +575,10 @@ def add_network_to_service(
 
 
 def remove_network_from_service(
-    service: str, network: str, log_output: Callable[[str], None]
+    service: str,
+    network: str,
 ) -> None:
-    log_output(f"Removing network {network} from service {service}\n")
+    log.info("Removing network from service: %s from %s", network, service)
     args = [
         "docker",
         "service",
@@ -573,17 +594,18 @@ def remove_network_from_service(
     )
     assert process.stdout is not None
     for line in process.stdout:
-        log_output(line.decode("utf-8"))
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
 
     process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
 
 
-def add_network_to_container(
-    container: str, network: str, log_output: Callable[[str], None]
-) -> None:
-    log_output(f"Adding network {network} to container {container}\n")
+def add_network_to_container(container: str, network: str) -> None:
+    log.info("Adding network to container: %s to %s", network, container)
     args = [
         "docker",
         "network",
@@ -598,17 +620,18 @@ def add_network_to_container(
     )
     assert process.stdout is not None
     for line in process.stdout:
-        log_output(line.decode("utf-8"))
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
 
     process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
 
 
-def remove_network_from_container(
-    container: str, network: str, log_output: Callable[[str], None]
-) -> None:
-    log_output(f"Removing network {network} from container {container}\n")
+def remove_network_from_container(container: str, network: str) -> None:
+    log.info("Removing network from container: %s from %s", network, container)
     args = [
         "docker",
         "network",
@@ -623,7 +646,10 @@ def remove_network_from_container(
     )
     assert process.stdout is not None
     for line in process.stdout:
-        log_output(line.decode("utf-8"))
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
 
     process.wait()
     if process.returncode != 0:
@@ -673,7 +699,10 @@ def run(
         assert process.stdout is not None
         timeout_dt = datetime.utcnow() + timedelta(seconds=timeout)
         for line in process.stdout:
-            log_output(line.decode("utf-8"))
+            line_text = line.decode("utf-8")
+            if line_text.endswith("\n"):
+                line_text = line_text[:-1]
+            log.info("Output: %s", line_text)
             if datetime.utcnow() > timeout_dt:
                 process.terminate()
                 raise Exception(
@@ -684,9 +713,7 @@ def run(
         if process.returncode != 0:
             raise Exception(f"Docker returned status {process.returncode}")
         for network in networks:
-            add_network_to_container(
-                container=name, network=network, log_output=log_output
-            )
+            add_network_to_container(container=name, network=network)
         args = [
             "docker",
             "container",
@@ -713,11 +740,11 @@ def run(
         if process.returncode != 0:
             raise Exception(f"Docker returned status {process.returncode}")
     finally:
-        remove_container(name, log_output)
+        remove_container(name)
 
 
-def remove_container(name: str, log_output: Callable[[str], None]) -> None:
-    log_output(f"Removing container {name}\n")
+def remove_container(name: str) -> None:
+    log.info("Removing container %s", name)
     args = [
         "docker",
         "container",
@@ -732,7 +759,10 @@ def remove_container(name: str, log_output: Callable[[str], None]) -> None:
     )
     assert process.stdout is not None
     for line in process.stdout:
-        log_output(line.decode("utf-8"))
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
 
     process.wait()
     if process.returncode != 0:

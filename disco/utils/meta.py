@@ -12,7 +12,7 @@ def update_disco(
         raise Exception("An update is already in progress")
     save_is_updating(dbsession)
     if pull:
-        docker.pull(image, log_output=lambda _: None)
+        docker.pull(image)
     _run_cmd(
         [
             "docker",
