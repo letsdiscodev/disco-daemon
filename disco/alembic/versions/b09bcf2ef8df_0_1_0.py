@@ -1,14 +1,14 @@
 """0.1.0
 
-Revision ID: 76644a45a9ac
+Revision ID: b09bcf2ef8df
 Revises:
-Create Date: 2024-03-03 13:05:58.426045
+Create Date: 2024-03-21 00:21:43.113911
 
 """
 import sqlalchemy as sa
 from alembic import op
 
-revision = "76644a45a9ac"
+revision = "b09bcf2ef8df"
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -160,6 +160,22 @@ def upgrade():
         unique=False,
     )
     op.create_table(
+        "project_key_values",
+        sa.Column("key", sa.String(length=255), nullable=False),
+        sa.Column("project_id", sa.String(length=32), nullable=False),
+        sa.Column("created", sa.DateTime(), nullable=True),
+        sa.Column("updated", sa.DateTime(), nullable=True),
+        sa.Column("value", sa.UnicodeText(), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["project_id"],
+            ["projects.id"],
+            name=op.f("fk_project_key_values_project_id_projects"),
+        ),
+        sa.PrimaryKeyConstraint(
+            "key", "project_id", name=op.f("pk_project_key_values")
+        ),
+    )
+    op.create_table(
         "command_runs",
         sa.Column("id", sa.String(length=32), nullable=False),
         sa.Column("created", sa.DateTime(), nullable=True),
@@ -227,26 +243,9 @@ def upgrade():
         ["deployment_id"],
         unique=False,
     )
-    op.create_table(
-        "project_key_values",
-        sa.Column("key", sa.String(length=255), nullable=False),
-        sa.Column("project_id", sa.String(length=32), nullable=False),
-        sa.Column("created", sa.DateTime(), nullable=True),
-        sa.Column("updated", sa.DateTime(), nullable=True),
-        sa.Column("value", sa.UnicodeText(), nullable=True),
-        sa.ForeignKeyConstraint(
-            ["project_id"],
-            ["projects.id"],
-            name=op.f("fk_project_key_values_project_id_projects"),
-        ),
-        sa.PrimaryKeyConstraint(
-            "key", "project_id", name=op.f("pk_project_key_values")
-        ),
-    )
 
 
 def downgrade():
-    op.drop_table("project_key_values")
     op.drop_index(
         op.f("ix_deployment_env_variables_deployment_id"),
         table_name="deployment_env_variables",
@@ -257,6 +256,7 @@ def downgrade():
     op.drop_index(op.f("ix_command_runs_deployment_id"), table_name="command_runs")
     op.drop_index(op.f("ix_command_runs_by_api_key_id"), table_name="command_runs")
     op.drop_table("command_runs")
+    op.drop_table("project_key_values")
     op.drop_index(
         op.f("ix_project_env_variables_project_id"), table_name="project_env_variables"
     )
