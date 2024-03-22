@@ -389,6 +389,31 @@ def list_networks_for_project(project_name: str) -> list[str]:
     return networks
 
 
+def get_networks_for_deployment(project_name: str, deployment_number: int) -> list[str]:
+    args = [
+        "docker",
+        "network",
+        "ls",
+        "--filter",
+        f"label=disco.project.name={project_name}",
+        "--filter",
+        f"label=disco.deployment.number={deployment_number}",
+        "--format",
+        "{{ .Name }}",
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    networks = [line.decode("utf-8")[:-1] for line in process.stdout.readlines()]
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+    return networks
+
+
 def internal_image_name(
     registry_host: str | None,
     project_name: str,
@@ -459,13 +484,20 @@ def set_syslog_service(disco_host: str, syslog_urls: list[str]) -> None:
         raise Exception(ex.stdout.decode("utf-8")) from ex
 
 
-def create_network(name: str, project_name: str | None = None) -> None:
+def create_network(
+    name: str, project_name: str | None = None, deployment_number: int | None = None
+) -> None:
     log.info("Creating network %s", name)
     more_args = []
     if project_name is not None:
         more_args += [
             "--label",
             f"disco.project.name={project_name}",
+        ]
+    if deployment_number is not None:
+        more_args += [
+            "--label",
+            f"disco.deployment.number={deployment_number}",
         ]
     args = [
         "docker",
@@ -801,3 +833,40 @@ def get_image_name_for_service(
     else:
         # image hosted in a Docker registry
         return service.image
+
+
+def login(disco_host_home: str, host: str, username: str, password: str) -> None:
+    import disco
+    log.info("Docker login to %s", host)
+    args = [
+        "docker",
+        "run",
+        "--rm",
+        "--mount",
+        "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+        "--mount",
+        f"type=bind,source={disco_host_home},target=/root",
+        f"letsdiscodev/daemon:{disco.__version__}",
+        "docker",
+        "login",
+        "--username",
+        username,
+        "--password",
+        password,
+        f"https://{host}",
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
+
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")

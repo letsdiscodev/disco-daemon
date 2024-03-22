@@ -46,7 +46,6 @@ class DeploymentInfo:
     @staticmethod
     def from_deployment(
         deployment: Deployment,
-        registry_host: str | None,
         disco_host: str,
         disco_ip: str,
     ) -> DeploymentInfo:
@@ -57,7 +56,7 @@ class DeploymentInfo:
             commit_hash=deployment.commit_hash,
             project_name=deployment.project_name,
             github_repo=deployment.github_repo,
-            registry_host=registry_host,
+            registry_host=deployment.registry_host,
             disco_host=disco_host,
             disco_ip=disco_ip,
             domain_name=deployment.domain,
@@ -183,6 +182,10 @@ def replace_deployment(
                 ("DISCO_HOST", new_deployment_info.disco_host),
                 ("DISCO_IP", new_deployment_info.disco_ip),
             ]
+            if new_deployment_info.domain_name is not None:
+                env_variables += [
+                    ("DISCO_PROJECT_DOMAIN", new_deployment_info.domain_name),
+                ]
             volumes = [
                 (v.name, v.destination_path)
                 for v in new_deployment_info.disco_file.services[service_name].volumes
@@ -211,7 +214,8 @@ def replace_deployment(
         ):
             serve_new_deployment(new_deployment_info, recovery, log_output)
     stop_prev_services(new_deployment_info, prev_deployment_info, recovery, log_output)
-    remove_prev_networks(prev_deployment_info, recovery, log_output)
+    if new_deployment_info is not None:
+        remove_unused_networks(new_deployment_info)
 
 
 def get_deployment_info(
@@ -221,7 +225,6 @@ def get_deployment_info(
         with dbsession.begin():
             disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
             disco_ip = keyvalues.get_value(dbsession, "DISCO_IP")
-            registry_host = keyvalues.get_value(dbsession, "REGISTRY_HOST")
             assert disco_host is not None
             assert disco_ip is not None
             if new_deployment_id is not None:
@@ -229,7 +232,6 @@ def get_deployment_info(
                 if new_deployment is not None:
                     new_deployment_info = DeploymentInfo.from_deployment(
                         deployment=new_deployment,
-                        registry_host=registry_host,
                         disco_host=disco_host,
                         disco_ip=disco_ip,
                     )
@@ -240,7 +242,6 @@ def get_deployment_info(
                 assert prev_deployment is not None
                 prev_deployment_info = DeploymentInfo.from_deployment(
                     prev_deployment,
-                    registry_host=registry_host,
                     disco_host=disco_host,
                     disco_ip=disco_ip,
                 )
@@ -334,7 +335,7 @@ def push_images(
     images: list[str],
     log_output: Callable[[str], None],
 ) -> None:
-    log_output("Pushing images to Disco registry\n")
+    log_output("Pushing images to registry\n")
     for image in images:
         docker.push_image(image)
 
@@ -419,6 +420,10 @@ def start_services(
             ("DISCO_HOST", new_deployment_info.disco_host),
             ("DISCO_IP", new_deployment_info.disco_ip),
         ]
+        if new_deployment_info.domain_name is not None:
+            env_variables += [
+                ("DISCO_PROJECT_DOMAIN", new_deployment_info.domain_name),
+            ]
         image = docker.get_image_name_for_service(
             disco_file=new_deployment_info.disco_file,
             service_name=service_name,
@@ -591,53 +596,28 @@ def stop_prev_services(
                 raise
 
 
-def remove_prev_networks(
-    prev_deployment_info: DeploymentInfo | None,
-    recovery: bool,
-    log_output: Callable[[str], None],
+def remove_unused_networks(
+    new_deployment_info: DeploymentInfo,
 ) -> None:
-    if prev_deployment_info is None:
-        return
     try:
-        network_name = docker.deployment_network_name(
-            prev_deployment_info.project_name, prev_deployment_info.number
+        networks_to_keep = docker.list_networks_for_deployment(
+            project_name=new_deployment_info.project_name,
+            deployment_number=new_deployment_info.number,
         )
-        if not recovery or docker.network_exists(network_name):
-            docker.remove_network(network_name)
+        project_networks = docker.list_networks_for_project(
+            project_name=new_deployment_info.project_name,
+        )
+        caddy_networks = docker.get_networks_connected_to_container("disco-caddy")
+        for network_name in project_networks:
+            if network_name not in networks_to_keep:
+                if network_name in caddy_networks:
+                    docker.remove_network_from_container("disco-caddy", network_name)
+                try:
+                    docker.remove_network(network_name)
+                except Exception:
+                    log.error("Failed to remove network %s", network_name)
     except Exception:
-        log_output("Failed to clean up networks\n")
-        log.error("Failed to remove network %s", network_name)
-        if not recovery:
-            raise
-    assert prev_deployment_info.disco_file is not None
-    if (
-        "web" in prev_deployment_info.disco_file.services
-        and prev_deployment_info.disco_file.services["web"].type
-        == ServiceType.container
-    ):
-        web_network = docker.deployment_web_network_name(
-            prev_deployment_info.project_name, prev_deployment_info.number
-        )
-        try:
-            if (
-                not recovery
-                or web_network
-                in docker.get_networks_connected_to_container("disco-caddy")
-            ):
-                docker.remove_network_from_container("disco-caddy", web_network)
-        except Exception:
-            log_output("Failed to clean up networks\n")
-            log.error("Failed to remove network from disco-caddy: %s", web_network)
-            if not recovery:
-                raise
-        try:
-            if not recovery or docker.network_exists(web_network):
-                docker.remove_network(web_network)
-        except Exception:
-            log_output("Failed to clean up networks\n")
-            log.error("Failed to remove network %s", web_network)
-            if not recovery:
-                raise
+        log.error("Failed to remove networks")
 
 
 def prepare_static_site(

@@ -60,6 +60,10 @@ def create_command_run(
         ("DISCO_IP", keyvalues.get_value(dbsession, "DISCO_IP")),
         ("DISCO_API_KEY", by_api_key.id),
     ]
+    if deployment.domain is not None:
+        env_variables += [
+            ("DISCO_PROJECT_DOMAIN", deployment.domain),
+        ]
     network = docker.deployment_network_name(project.name, deployment.number)
     volumes = [
         (v.name, v.destination_path) for v in disco_file.services[service].volumes

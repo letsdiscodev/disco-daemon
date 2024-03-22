@@ -10,7 +10,7 @@ from disco.models import (
     DeploymentEnvironmentVariable,
     Project,
 )
-from disco.utils import commandoutputs
+from disco.utils import commandoutputs, keyvalues
 from disco.utils.discofile import DiscoFile
 from disco.utils.mq.tasks import enqueue_task
 
@@ -59,6 +59,7 @@ def create_deployment(
         disco_file=disco_file.model_dump_json(indent=2, by_alias=True)
         if disco_file is not None
         else None,
+        registry_host=keyvalues.get_value(dbsession, "REGISTRY_HOST"),
         by_api_key=by_api_key,
     )
     dbsession.add(deployment)

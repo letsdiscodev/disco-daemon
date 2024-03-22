@@ -21,6 +21,7 @@ class Deployment(Base):
     github_repo = Column(Unicode(2048), nullable=True)
     github_host = Column(Unicode(2048), nullable=True)
     domain = Column(Unicode(255), nullable=True)
+    registry_host = Column(Unicode(2048), nullable=True)
     project_id = Column(
         String(32),
         ForeignKey("projects.id"),
