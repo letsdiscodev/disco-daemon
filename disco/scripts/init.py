@@ -19,10 +19,12 @@ from disco.utils.encryption import generate_key
 log = logging.getLogger(__name__)
 
 
-def main():
+def main() -> None:
     logging.basicConfig(level=logging.INFO)
     disco_ip = os.environ.get("DISCO_IP")
     host_home = os.environ.get("HOST_HOME")
+    assert disco_ip is not None
+    assert host_home is not None
     create_database()
     print("Setting initial state in internal database")
     with Session() as dbsession:
@@ -44,8 +46,8 @@ def main():
     docker_swarm_init(disco_ip)
     node_id = get_this_swarm_node_id()
     label_swarm_node(node_id, "disco-role=main")
-    docker.create_network("disco-caddy-daemon", log_output=lambda x: None)
-    docker.create_network("disco-logging", log_output=lambda x: None)
+    docker.create_network("disco-caddy-daemon")
+    docker.create_network("disco-logging")
     public_ca_cert = certificate_stuff(disco_ip)
     with Session() as dbsession:
         with dbsession.begin():
@@ -109,7 +111,7 @@ def docker_swarm_init(disco_ip: str) -> None:
     )
 
 
-def docker_swarm_create_disco_encryption_key():
+def docker_swarm_create_disco_encryption_key() -> None:
     print("Generating encyrption key for encryption at rest")
     verbose = os.environ.get("DISCO_VERBOSE") == "true"
     process = subprocess.Popen(
