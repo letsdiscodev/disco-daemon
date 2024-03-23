@@ -411,11 +411,9 @@ def create_static_site_dir(host_home) -> None:
 def create_docker_config(host_home) -> None:
     # If the file doesn't exist, we create it so that we can mount it.
     # It's needed when we authenticate to a Docker Registry.
-    path = f"/host{host_home}/.docker/config.json"
-    if not os.path.isfile(path):
+    path = f"/host{host_home}/.docker"
+    if not os.path.isdir(path):
         os.makedirs(f"/host{host_home}/.docker")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("{}")  # empty config
 
 
 def start_disco_daemon(host_home: str) -> None:
@@ -435,7 +433,7 @@ def start_disco_daemon(host_home: str) -> None:
             "--mount",
             f"type=bind,source={host_home}/.ssh,target=/root/.ssh",
             "--mount",
-            f"type=bind,source={host_home}/.docker/config.json,target=/root/.docker/config.json",
+            f"type=bind,source={host_home}/.docker,target=/root/.docker",
             "--mount",
             f"type=bind,source={host_home}/disco/projects,target=/disco/projects",
             "--mount",
@@ -480,7 +478,7 @@ def start_disco_worker(host_home: str) -> None:
             "--mount",
             f"type=bind,source={host_home}/.ssh,target=/root/.ssh",
             "--mount",
-            f"type=bind,source={host_home}/.docker/config.json,target=/root/.docker/config.json",
+            f"type=bind,source={host_home}/.docker,target=/root/.docker",
             "--mount",
             f"type=bind,source={host_home}/disco/projects,target=/disco/projects",
             "--mount",

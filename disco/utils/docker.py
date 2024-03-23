@@ -389,7 +389,9 @@ def list_networks_for_project(project_name: str) -> list[str]:
     return networks
 
 
-def get_networks_for_deployment(project_name: str, deployment_number: int) -> list[str]:
+def list_networks_for_deployment(
+    project_name: str, deployment_number: int
+) -> list[str]:
     args = [
         "docker",
         "network",
@@ -837,6 +839,7 @@ def get_image_name_for_service(
 
 def login(disco_host_home: str, host: str, username: str, password: str) -> None:
     import disco
+
     log.info("Docker login to %s", host)
     args = [
         "docker",
@@ -870,3 +873,51 @@ def login(disco_host_home: str, host: str, username: str, password: str) -> None
     process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
+
+
+def get_swarm_join_token() -> str:
+    log.info("Getting Docker Swarm join token")
+    args = [
+        "docker",
+        "swarm",
+        "join-token",
+        "--quiet",
+        "worker",
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    output = ""
+    for line in process.stdout:
+        output += line.decode("utf-8")
+
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+    token = output.split("\n")[0]
+    return token
+
+
+def scale(services: dict[str, int]) -> None:
+    log.info("Scaling services %s", " ".join([f"{s}={n}" for s, n in services.items()]))
+    args = [
+        "docker",
+        "service",
+        "scale",
+        "--detach",
+        *[f"{service_name}={scale}" for service_name, scale in services.items()],
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)

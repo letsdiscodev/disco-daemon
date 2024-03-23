@@ -59,7 +59,9 @@ def registry_post(
     assert disco_host_home is not None
     docker.login(
         disco_host_home=disco_host_home,
-        host=req_body.host, username=req_body.username, password=req_body.password,
+        host=req_body.host,
+        username=req_body.username,
+        password=req_body.password,
     )
     keyvalues.set_value(dbsession=dbsession, key="REGISTRY_HOST", value=req_body.host)
     return {

@@ -335,8 +335,8 @@ def push_images(
     images: list[str],
     log_output: Callable[[str], None],
 ) -> None:
-    log_output("Pushing images to registry\n")
     for image in images:
+        log_output(f"Pushing image to registry: {image}\n")
         docker.push_image(image)
 
 
@@ -353,6 +353,7 @@ def create_networks(
             docker.create_network(
                 network_name,
                 project_name=new_deployment_info.project_name,
+                deployment_number=new_deployment_info.number,
             )
     except Exception:
         if recovery:
@@ -370,6 +371,7 @@ def create_networks(
                 docker.create_network(
                     web_network,
                     project_name=new_deployment_info.project_name,
+                    deployment_number=new_deployment_info.number,
                 )
         except Exception:
             if recovery:

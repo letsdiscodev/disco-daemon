@@ -7,9 +7,11 @@ from disco.endpoints import (
     envvariables,
     logs,
     meta,
+    nodes,
     projectkeyvalues,
     projects,
     run,
+    scale,
     syslog,
 )
 from disco.endpoints.webhooks import github
@@ -28,6 +30,8 @@ app.include_router(run.router)
 app.include_router(envvariables.router)
 app.include_router(projectkeyvalues.router)
 app.include_router(logs.router)
+app.include_router(nodes.router)
+app.include_router(scale.router)
 app.include_router(syslog.router)
 app.include_router(github.router)
 
