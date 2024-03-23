@@ -112,7 +112,7 @@ def docker_swarm_init(disco_ip: str) -> None:
 
 
 def docker_swarm_create_disco_encryption_key() -> None:
-    print("Generating encyrption key for encryption at rest")
+    print("Generating encryption key for encryption at rest")
     verbose = os.environ.get("DISCO_VERBOSE") == "true"
     process = subprocess.Popen(
         args=[
