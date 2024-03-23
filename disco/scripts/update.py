@@ -3,16 +3,21 @@ import logging
 import os
 import subprocess
 from datetime import datetime, timedelta
+from typing import Callable
+
+from alembic import command
+from alembic.config import Config
 
 import disco
 from disco.models.db import Session
+from disco.scripts.init import start_disco_daemon, start_disco_worker
 from disco.utils import keyvalues
 from disco.utils.meta import save_done_updating
 
 log = logging.getLogger(__name__)
 
 
-def main():
+def main() -> None:
     logging.basicConfig(level=logging.INFO)
     with Session() as dbsession:
         with dbsession.begin():
@@ -31,7 +36,9 @@ def main():
     print("Running upgrade tasks")
     ttl = 9999
     while installed_version != disco.__version__:
-        TASKS[installed_version]()
+        assert installed_version is not None
+        task = get_update_function_for_version(installed_version)
+        task()
         with Session() as dbsession:
             with dbsession.begin():
                 installed_version = keyvalues.get_value(
@@ -48,6 +55,7 @@ def main():
     with Session() as dbsession:
         with dbsession.begin():
             host_home = keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
+    assert host_home is not None
     start_disco_daemon(host_home)
     start_disco_worker(host_home)
     with Session() as dbsession:
@@ -83,85 +91,6 @@ def _run_cmd(args: list[str], timeout=600) -> str:
     return output
 
 
-def start_disco_daemon(host_home: str) -> None:
-    _run_cmd(
-        [
-            "docker",
-            "service",
-            "create",
-            "--name",
-            "disco",
-            "--network",
-            "disco-caddy-daemon",
-            "--network",
-            "disco-logging",
-            "--mount",
-            "source=disco-data,target=/disco/data",
-            "--mount",
-            f"type=bind,source={host_home}/.ssh,target=/root/.ssh",
-            "--mount",
-            f"type=bind,source={host_home}/.docker,target=/root/.docker",
-            "--mount",
-            f"type=bind,source={host_home}/disco/projects,target=/disco/projects",
-            "--mount",
-            f"type=bind,source={host_home}/disco/srv,target=/disco/srv",
-            "--mount",
-            "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
-            "--mount",
-            "type=bind,source=/var/run/caddy,target=/var/run/caddy",
-            "--mount",
-            "source=disco-certs,target=/certs",
-            "--constraint",
-            "node.labels.disco-role==main",
-            f"letsdiscodev/daemon:{disco.__version__}",
-            "uvicorn",
-            "disco.app:app",
-            "--port",
-            "80",
-            "--host",
-            "0.0.0.0",
-            "--root-path",
-            "/.disco",
-        ]
-    )
-
-
-def start_disco_worker(host_home: str) -> None:
-    _run_cmd(
-        [
-            "docker",
-            "service",
-            "create",
-            "--name",
-            "disco-worker",
-            "--network",
-            "disco-caddy-daemon",
-            "--network",
-            "disco-logging",
-            "--mount",
-            "source=disco-data,target=/disco/data",
-            "--mount",
-            f"type=bind,source={host_home}/.ssh,target=/root/.ssh",
-            "--mount",
-            f"type=bind,source={host_home}/.docker,target=/root/.docker",
-            "--mount",
-            f"type=bind,source={host_home}/disco/projects,target=/disco/projects",
-            "--mount",
-            f"type=bind,source={host_home}/disco/srv,target=/disco/srv",
-            "--mount",
-            "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
-            "--mount",
-            "type=bind,source=/var/run/caddy,target=/var/run/caddy",
-            "--mount",
-            "source=disco-certs,target=/certs",
-            "--constraint",
-            "node.labels.disco-role==main",
-            f"letsdiscodev/daemon:{disco.__version__}",
-            "disco_worker",
-        ]
-    )
-
-
 def stop_disco_daemon() -> None:
     _run_cmd(
         [
@@ -184,12 +113,30 @@ def stop_disco_worker() -> None:
     )
 
 
-def task_0_1_0():
-    print("Upating from 0.1.0 to 0.2.0")
-    # TODO run Alembic migration, etc.
+def alembic_upgrade(version_hash: str) -> None:
+    config = Config("/disco/app/alembic.ini")
+    command.upgrade(config, version_hash)
+
+
+def task_0_1_x() -> None:
+    print("Upating from 0.1.x to 0.2.x")
+    alembic_upgrade("eba27af20db2")
     with Session() as dbsession:
         with dbsession.begin():
             keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.2.0")
 
 
-TASKS = {"0.1.0": task_0_1_0}
+def task_patch() -> None:
+    with Session() as dbsession:
+        with dbsession.begin():
+            keyvalues.set_value(
+                dbsession=dbsession, key="DISCO_VERSION", value=disco.__version__
+            )
+
+
+def get_update_function_for_version(version: str) -> Callable[[], None]:
+    if version.startswith("0.1."):
+        return task_0_1_x
+    if version.startswith("0.2."):
+        return task_patch
+    raise NotImplementedError(f"Update missing for version {version}")
