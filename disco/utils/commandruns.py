@@ -56,6 +56,7 @@ def create_command_run(
     env_variables += [
         ("DISCO_PROJECT_NAME", project_name),
         ("DISCO_SERVICE_NAME", service),
+        ("DISCO_COMMIT", deployment.commit_hash),
         ("DISCO_HOST", keyvalues.get_value(dbsession, "DISCO_HOST")),
         ("DISCO_IP", keyvalues.get_value(dbsession, "DISCO_IP")),
         ("DISCO_API_KEY", by_api_key.id),
@@ -66,7 +67,8 @@ def create_command_run(
         ]
     network = docker.deployment_network_name(project.name, deployment.number)
     volumes = [
-        (v.name, v.destination_path) for v in disco_file.services[service].volumes
+        ("volume", v.name, v.destination_path)
+        for v in disco_file.services[service].volumes
     ]
 
     def func() -> None:

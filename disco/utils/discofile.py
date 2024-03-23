@@ -61,11 +61,24 @@ def get_disco_file_from_str(disco_file_str: str | None) -> DiscoFile:
     if disco_file_str is None:
         disco_file_str = DEFAULT_DISCO_FILE
     disco_file = DiscoFile.model_validate_json(disco_file_str)
-    if len(disco_file.images) == 0 and any(
-        [service.image == "default" for service in disco_file.services.values()]
-    ):
+    if _should_add_default_image(disco_file):
         disco_file.images["default"] = Image(
             dockerfile="Dockerfile",
             context=".",
         )
     return disco_file
+
+
+def _should_add_default_image(disco_file: DiscoFile) -> bool:
+    if "default" in disco_file.images:
+        # already defined
+        return False
+    for service in disco_file.services.values():
+        if service.image != "default":
+            continue
+        if service.type == ServiceType.static and service.command is None:
+            continue
+        # at this point, it uses default and will execute something
+        return True
+    # no service used the default image, no need to add it
+    return False

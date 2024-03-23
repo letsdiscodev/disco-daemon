@@ -13,6 +13,10 @@ def project_path(project_name: str) -> str:
     return f"/disco/projects/{project_name}"
 
 
+def project_path_on_host(host_home: str, project_name: str) -> str:
+    return f"{host_home}{project_path(project_name)}"
+
+
 def project_folder_exists(project_name: str):
     return os.path.isdir(project_path(project_name))
 
@@ -35,7 +39,24 @@ def static_site_deployment_path(project_name: str, deployment_number: int) -> st
     return f"/disco/srv/{project_name}/{deployment_number}"
 
 
-def static_site_src_path(project_name: str, public_path: str) -> str:
+def static_site_deployment_path_host_machine(
+    host_home: str, project_name: str, deployment_number: int
+) -> str:
+    path = static_site_deployment_path(project_name, deployment_number)
+    return f"{host_home}{path}"
+
+
+def create_static_site_deployment_directory(
+    host_home: str, project_name: str, deployment_number: int
+) -> str:
+    path = static_site_deployment_path(project_name, deployment_number)
+    os.makedirs(path)
+    return static_site_deployment_path_host_machine(
+        host_home, project_name, deployment_number
+    )
+
+
+def static_site_src_public_path(project_name: str, public_path: str) -> str:
     path = os.path.abspath(f"{project_path(project_name)}{public_path}")
     if not path.startswith(f"{project_path(project_name)}/"):
         # prevent traversal attacks
@@ -46,6 +67,6 @@ def static_site_src_path(project_name: str, public_path: str) -> str:
 def copy_static_site_src_to_deployment_folder(
     project_name: str, public_path: str, deployment_number: int
 ) -> None:
-    src_path = static_site_src_path(project_name, public_path)
+    src_path = static_site_src_public_path(project_name, public_path)
     dst_path = static_site_deployment_path(project_name, deployment_number)
     shutil.copytree(src_path, dst_path)

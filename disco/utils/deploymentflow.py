@@ -20,7 +20,9 @@ from disco.utils.discofile import DiscoFile, ServiceType, get_disco_file_from_st
 from disco.utils.encryption import decrypt
 from disco.utils.filesystem import (
     copy_static_site_src_to_deployment_folder,
+    create_static_site_deployment_directory,
     project_folder_exists,
+    project_path_on_host,
     read_disco_file,
 )
 
@@ -38,6 +40,7 @@ class DeploymentInfo:
     github_repo: str | None
     github_host: str | None
     registry_host: str | None
+    host_home: str
     disco_host: str
     disco_ip: str
     domain_name: str | None
@@ -46,6 +49,7 @@ class DeploymentInfo:
     @staticmethod
     def from_deployment(
         deployment: Deployment,
+        host_home: str,
         disco_host: str,
         disco_ip: str,
     ) -> DeploymentInfo:
@@ -57,6 +61,7 @@ class DeploymentInfo:
             project_name=deployment.project_name,
             github_repo=deployment.github_repo,
             registry_host=deployment.registry_host,
+            host_home=host_home,
             disco_host=disco_host,
             disco_ip=disco_ip,
             domain_name=deployment.domain,
@@ -147,11 +152,16 @@ def replace_deployment(
         assert new_deployment_info is not None
         if new_deployment_info.commit_hash is not None:
             checkout_commit(new_deployment_info, log_output)
+        else:
+            new_deployment_info.commit_hash = github.get_head_commit_hash(
+                new_deployment_info.project_name
+            )
         if new_deployment_info.disco_file is None:
             new_deployment_info.disco_file = read_disco_file_for_deployment(
                 new_deployment_info, log_output
             )
         assert new_deployment_info.disco_file is not None
+        assert new_deployment_info.commit_hash is not None
         images = build_images(new_deployment_info, log_output)
         if new_deployment_info.registry_host is not None:
             push_images(images, log_output)
@@ -179,6 +189,7 @@ def replace_deployment(
             env_variables = new_deployment_info.env_variables + [
                 ("DISCO_PROJECT_NAME", new_deployment_info.project_name),
                 ("DISCO_SERVICE_NAME", service_name),
+                ("DISCO_COMMIT", new_deployment_info.commit_hash),
                 ("DISCO_HOST", new_deployment_info.disco_host),
                 ("DISCO_IP", new_deployment_info.disco_ip),
             ]
@@ -187,7 +198,7 @@ def replace_deployment(
                     ("DISCO_PROJECT_DOMAIN", new_deployment_info.domain_name),
                 ]
             volumes = [
-                (v.name, v.destination_path)
+                ("volume", v.name, v.destination_path)
                 for v in new_deployment_info.disco_file.services[service_name].volumes
             ]
             docker.run(
@@ -225,13 +236,16 @@ def get_deployment_info(
         with dbsession.begin():
             disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
             disco_ip = keyvalues.get_value(dbsession, "DISCO_IP")
+            host_home = keyvalues.get_value(dbsession, "HOST_HOME")
             assert disco_host is not None
             assert disco_ip is not None
+            assert host_home is not None
             if new_deployment_id is not None:
                 new_deployment = get_deployment_by_id(dbsession, new_deployment_id)
                 if new_deployment is not None:
                     new_deployment_info = DeploymentInfo.from_deployment(
                         deployment=new_deployment,
+                        host_home=host_home,
                         disco_host=disco_host,
                         disco_ip=disco_ip,
                     )
@@ -242,6 +256,7 @@ def get_deployment_info(
                 assert prev_deployment is not None
                 prev_deployment_info = DeploymentInfo.from_deployment(
                     prev_deployment,
+                    host_home=host_home,
                     disco_host=disco_host,
                     disco_ip=disco_ip,
                 )
@@ -399,6 +414,7 @@ def start_services(
     log_output: Callable[[str], None],
 ) -> None:
     assert new_deployment_info.disco_file is not None
+    assert new_deployment_info.commit_hash is not None
     for service_name, service in new_deployment_info.disco_file.services.items():
         if service.type != ServiceType.container:
             continue
@@ -419,6 +435,7 @@ def start_services(
         env_variables = new_deployment_info.env_variables + [
             ("DISCO_PROJECT_NAME", new_deployment_info.project_name),
             ("DISCO_SERVICE_NAME", service_name),
+            ("DISCO_COMMIT", new_deployment_info.commit_hash),
             ("DISCO_HOST", new_deployment_info.disco_host),
             ("DISCO_IP", new_deployment_info.disco_ip),
         ]
@@ -443,7 +460,9 @@ def start_services(
                     project_service_name=service_name,
                     deployment_number=new_deployment_info.number,
                     env_variables=env_variables,
-                    volumes=[(v.name, v.destination_path) for v in service.volumes],
+                    volumes=[
+                        ("volume", v.name, v.destination_path) for v in service.volumes
+                    ],
                     published_ports=[
                         (p.published_as, p.from_container_port, p.protocol)
                         for p in service.published_ports
@@ -632,9 +651,64 @@ def prepare_static_site(
         and new_deployment_info.disco_file.services["web"].type == ServiceType.static
     )
     assert new_deployment_info.disco_file.services["web"].public_path is not None
-    log_output("Copying static files\n")
-    copy_static_site_src_to_deployment_folder(
-        project_name=new_deployment_info.project_name,
-        public_path=new_deployment_info.disco_file.services["web"].public_path,
-        deployment_number=new_deployment_info.number,
-    )
+    assert new_deployment_info.commit_hash is not None
+    if new_deployment_info.disco_file.services["web"].command is not None:
+        log_output("Runnning static site command\n")
+        service_name = "web"
+        service = new_deployment_info.disco_file.services[service_name]
+        assert service.public_path is not None
+        image = docker.get_image_name_for_service(
+            disco_file=new_deployment_info.disco_file,
+            service_name=service_name,
+            registry_host=new_deployment_info.registry_host,
+            project_name=new_deployment_info.project_name,
+            deployment_number=new_deployment_info.number,
+        )
+        env_variables = new_deployment_info.env_variables + [
+            ("DISCO_PROJECT_NAME", new_deployment_info.project_name),
+            ("DISCO_SERVICE_NAME", service_name),
+            ("DISCO_COMMIT", new_deployment_info.commit_hash),
+            ("DISCO_HOST", new_deployment_info.disco_host),
+            ("DISCO_IP", new_deployment_info.disco_ip),
+            ("DISCO_REPO_PATH", "/repo"),
+            ("DISCO_DIST_PATH", service.public_path),
+        ]
+        if new_deployment_info.domain_name is not None:
+            env_variables += [
+                ("DISCO_PROJECT_DOMAIN", new_deployment_info.domain_name),
+            ]
+        repo_path = project_path_on_host(
+            host_home=new_deployment_info.host_home,
+            project_name=new_deployment_info.project_name,
+        )
+        dist_path = create_static_site_deployment_directory(
+            host_home=new_deployment_info.host_home,
+            project_name=new_deployment_info.project_name,
+            deployment_number=new_deployment_info.number,
+        )
+        volumes = [
+            ("volume", v.name, v.destination_path)
+            for v in new_deployment_info.disco_file.services[service_name].volumes
+        ] + [
+            ("bind", repo_path, "/repo"),
+            ("bind", dist_path, service.public_path),
+        ]
+        docker.run(
+            image=image,
+            project_name=new_deployment_info.project_name,
+            name=f"{new_deployment_info.project_name}-hook-deploy-start-before.{new_deployment_info.number}",
+            env_variables=env_variables,
+            volumes=volumes,
+            networks=[],
+            workdir="/repo",
+            command=service.command,
+            timeout=300,
+            log_output=log_output,
+        )
+    else:
+        log_output("Copying static files\n")
+        copy_static_site_src_to_deployment_folder(
+            project_name=new_deployment_info.project_name,
+            public_path=new_deployment_info.disco_file.services["web"].public_path,
+            deployment_number=new_deployment_info.number,
+        )

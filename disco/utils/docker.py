@@ -54,7 +54,7 @@ def start_service(
     project_service_name: str,
     deployment_number: int,
     env_variables: list[tuple[str, str]],
-    volumes: list[tuple[str, str]],
+    volumes: list[tuple[str, str, str]],
     published_ports: list[tuple[int, int, str]],
     networks: list[str],
     replicas: int,
@@ -64,10 +64,11 @@ def start_service(
     for var_name, var_value in env_variables:
         more_args.append("--env")
         more_args.append(f"{var_name}={var_value}")
-    for volume, destination in volumes:
+    for volume_type, volume, destination in volumes:
+        assert volume_type == "volume"
         more_args.append("--mount")
         more_args.append(
-            f"type=volume,source=disco-volume-{volume},destination={destination}"
+            f"type={volume_type},source=disco-volume-{volume},destination={destination}"
         )
     if len(volumes) > 0:
         # volumes are on the main node
@@ -696,10 +697,11 @@ def run(
     project_name: str,
     name: str,
     env_variables: list[tuple[str, str]],
-    volumes: list[tuple[str, str]],
+    volumes: list[tuple[str, str, str]],
     networks: list[str],
     command: str | None,
     log_output: Callable[[str], None],
+    workdir: str | None = None,
     timeout: int = 600,
 ) -> None:
     try:
@@ -707,11 +709,19 @@ def run(
         for var_name, var_value in env_variables:
             more_args.append("--env")
             more_args.append(f"{var_name}={var_value}")
-        for volume, destination in volumes:
+        for volume_type, volume, destination in volumes:
+            assert volume_type in ["bind", "volume"]
+            if volume_type == "volume":
+                source = f"disco-volume-{volume}"
+            else:
+                source = volume
             more_args.append("--mount")
             more_args.append(
-                f"type=volume,source=disco-volume-{volume},destination={destination}"
+                f"type={volume_type},source={source},destination={destination}"
             )
+        if workdir is not None:
+            more_args.append("--workdir")
+            more_args.append(workdir)
         args = [
             "docker",
             "container",
