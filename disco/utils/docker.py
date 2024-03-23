@@ -325,7 +325,7 @@ def list_containers_for_project(project_name: str) -> list[str]:
         "--filter",
         f"label=disco.project.name={project_name}",
         "--format",
-        "{{ .Name }}",
+        "{{ .Names }}",
     ]
     process = subprocess.Popen(
         args=args,
@@ -333,7 +333,9 @@ def list_containers_for_project(project_name: str) -> list[str]:
         stderr=subprocess.STDOUT,
     )
     assert process.stdout is not None
-    containers = [line.decode("utf-8")[:-1] for line in process.stdout.readlines()]
+    containers = [
+        line.decode("utf-8")[:-1].split(",")[0] for line in process.stdout.readlines()
+    ]
     process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")

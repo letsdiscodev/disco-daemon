@@ -152,7 +152,7 @@ def replace_deployment(
         assert new_deployment_info is not None
         if new_deployment_info.commit_hash is not None:
             checkout_commit(new_deployment_info, log_output)
-        else:
+        elif new_deployment_info.github_repo is not None:
             new_deployment_info.commit_hash = github.get_head_commit_hash(
                 new_deployment_info.project_name
             )
@@ -161,7 +161,6 @@ def replace_deployment(
                 new_deployment_info, log_output
             )
         assert new_deployment_info.disco_file is not None
-        assert new_deployment_info.commit_hash is not None
         images = build_images(new_deployment_info, log_output)
         if new_deployment_info.registry_host is not None:
             push_images(images, log_output)
@@ -189,13 +188,16 @@ def replace_deployment(
             env_variables = new_deployment_info.env_variables + [
                 ("DISCO_PROJECT_NAME", new_deployment_info.project_name),
                 ("DISCO_SERVICE_NAME", service_name),
-                ("DISCO_COMMIT", new_deployment_info.commit_hash),
                 ("DISCO_HOST", new_deployment_info.disco_host),
                 ("DISCO_IP", new_deployment_info.disco_ip),
             ]
             if new_deployment_info.domain_name is not None:
                 env_variables += [
                     ("DISCO_PROJECT_DOMAIN", new_deployment_info.domain_name),
+                ]
+            if new_deployment_info.commit_hash is not None:
+                env_variables += [
+                    ("DISCO_COMMIT", new_deployment_info.commit_hash),
                 ]
             volumes = [
                 ("volume", v.name, v.destination_path)
@@ -414,7 +416,6 @@ def start_services(
     log_output: Callable[[str], None],
 ) -> None:
     assert new_deployment_info.disco_file is not None
-    assert new_deployment_info.commit_hash is not None
     for service_name, service in new_deployment_info.disco_file.services.items():
         if service.type != ServiceType.container:
             continue
@@ -435,7 +436,6 @@ def start_services(
         env_variables = new_deployment_info.env_variables + [
             ("DISCO_PROJECT_NAME", new_deployment_info.project_name),
             ("DISCO_SERVICE_NAME", service_name),
-            ("DISCO_COMMIT", new_deployment_info.commit_hash),
             ("DISCO_HOST", new_deployment_info.disco_host),
             ("DISCO_IP", new_deployment_info.disco_ip),
         ]
@@ -443,6 +443,11 @@ def start_services(
             env_variables += [
                 ("DISCO_PROJECT_DOMAIN", new_deployment_info.domain_name),
             ]
+        if new_deployment_info.commit_hash is not None:
+            env_variables += [
+                ("DISCO_COMMIT", new_deployment_info.commit_hash),
+            ]
+
         image = docker.get_image_name_for_service(
             disco_file=new_deployment_info.disco_file,
             service_name=service_name,
@@ -651,7 +656,6 @@ def prepare_static_site(
         and new_deployment_info.disco_file.services["web"].type == ServiceType.static
     )
     assert new_deployment_info.disco_file.services["web"].public_path is not None
-    assert new_deployment_info.commit_hash is not None
     if new_deployment_info.disco_file.services["web"].command is not None:
         log_output("Runnning static site command\n")
         service_name = "web"
@@ -667,7 +671,6 @@ def prepare_static_site(
         env_variables = new_deployment_info.env_variables + [
             ("DISCO_PROJECT_NAME", new_deployment_info.project_name),
             ("DISCO_SERVICE_NAME", service_name),
-            ("DISCO_COMMIT", new_deployment_info.commit_hash),
             ("DISCO_HOST", new_deployment_info.disco_host),
             ("DISCO_IP", new_deployment_info.disco_ip),
             ("DISCO_REPO_PATH", "/repo"),
@@ -676,6 +679,10 @@ def prepare_static_site(
         if new_deployment_info.domain_name is not None:
             env_variables += [
                 ("DISCO_PROJECT_DOMAIN", new_deployment_info.domain_name),
+            ]
+        if new_deployment_info.commit_hash is not None:
+            env_variables += [
+                ("DISCO_COMMIT", new_deployment_info.commit_hash),
             ]
         repo_path = project_path_on_host(
             host_home=new_deployment_info.host_home,
