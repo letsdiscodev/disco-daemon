@@ -8,6 +8,7 @@ from disco.models import ApiKey, Project
 from disco.utils import caddy, docker, github, sshkeys
 from disco.utils.caddy import add_project_route
 from disco.utils.commandoutputs import delete_output_for_source
+from disco.utils.filesystem import remove_project_static_deployments_if_any
 from disco.utils.sshkeys import create_deploy_key
 
 log = logging.getLogger(__name__)
@@ -80,6 +81,7 @@ def delete_project(dbsession: DBSession, project: Project, by_api_key: ApiKey) -
             github.remove_repo(project.name)
         except Exception:
             log.info("Failed to remove Github repo for project %s", project.name)
+    remove_project_static_deployments_if_any(project.name)
     try:
         caddy.remove_project_route(project.name)
     except Exception:

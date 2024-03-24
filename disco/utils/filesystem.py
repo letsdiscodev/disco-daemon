@@ -35,8 +35,12 @@ def static_sites_root() -> str:
     return "/disco/srv"
 
 
+def static_site_deployments_path(project_name: str) -> str:
+    return f"/disco/srv/{project_name}"
+
+
 def static_site_deployment_path(project_name: str, deployment_number: int) -> str:
-    return f"/disco/srv/{project_name}/{deployment_number}"
+    return f"{static_site_deployments_path(project_name)}/{deployment_number}"
 
 
 def static_site_deployment_path_host_machine(
@@ -54,6 +58,12 @@ def create_static_site_deployment_directory(
     return static_site_deployment_path_host_machine(
         host_home, project_name, deployment_number
     )
+
+
+def remove_project_static_deployments_if_any(project_name: str) -> None:
+    path = static_site_deployments_path(project_name)
+    if os.path.isdir(path):
+        shutil.rmtree(path)
 
 
 def static_site_src_public_path(project_name: str, public_path: str) -> str:
