@@ -8,8 +8,10 @@ from disco.models import ApiKey, Project
 from disco.utils import caddy, docker, github, sshkeys
 from disco.utils.caddy import add_project_route
 from disco.utils.commandoutputs import delete_output_for_source
+from disco.utils.envvariables import set_env_variables
 from disco.utils.filesystem import remove_project_static_deployments_if_any
-from disco.utils.sshkeys import create_deploy_key
+from disco.utils.sshkeys import create_deploy_key, set_deploy_key
+from disco.utils.sshkeys import github_host as ssh_github_host
 
 log = logging.getLogger(__name__)
 
@@ -18,7 +20,11 @@ def create_project(
     dbsession: DBSession,
     name: str,
     github_repo: str | None,
+    github_webhook_token: str | None,
     domain: str | None,
+    ssh_key_pub: str | None,
+    ssh_key_private: str | None,
+    env_variables: list[tuple[str, str]],
     by_api_key: ApiKey,
 ) -> tuple[Project, str | None]:
     project = Project(
@@ -27,17 +33,31 @@ def create_project(
         github_repo=github_repo,
         domain=domain,
     )
+    if ssh_key_pub is not None and ssh_key_private is not None:
+        set_deploy_key(
+            project_name=name, private_key=ssh_key_private, public_key=ssh_key_pub
+        )
     if github_repo is not None:
         if github.repo_is_public(github_repo):
             project.github_host = "github.com"
             ssh_key_pub = None
         else:
-            github_host, ssh_key_pub = create_deploy_key(name)
+            if github_webhook_token is None:
+                github_webhook_token = token_hex(16)
+            if ssh_key_pub is None:
+                ssh_key_pub = create_deploy_key(name)
+            github_host = ssh_github_host(name)
             project.github_host = github_host
-            project.github_webhook_token = token_hex(16)
+            project.github_webhook_token = github_webhook_token
     else:
         ssh_key_pub = None
     dbsession.add(project)
+    set_env_variables(
+        dbsession=dbsession,
+        project=project,
+        env_variables=env_variables,
+        by_api_key=by_api_key,
+    )
     if domain is not None:
         add_project_route(project_name=project.name, domain=project.domain)
     log.info("%s created project %s", by_api_key.log(), project.log())

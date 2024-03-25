@@ -42,8 +42,15 @@ def create_deployment(
     commit_hash: str | None,
     disco_file: DiscoFile | None,
     by_api_key: ApiKey | None,
+    number: int | None = None,
 ) -> Deployment:
-    number = get_next_deployment_number(dbsession, project)
+    if number is not None:
+        if len(project.deployments) > 0:
+            raise Exception(
+                "Cannot set deployment number if project already has deployments"
+            )
+    else:
+        number = get_next_deployment_number(dbsession, project)
     prev_deployment = get_live_deployment(dbsession, project)
     deployment = Deployment(
         id=uuid.uuid4().hex,

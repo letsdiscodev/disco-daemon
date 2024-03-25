@@ -80,3 +80,52 @@ def copy_static_site_src_to_deployment_folder(
     src_path = static_site_src_public_path(project_name, public_path)
     dst_path = static_site_deployment_path(project_name, deployment_number)
     shutil.copytree(src_path, dst_path)
+
+
+def _certificate_directory(domain: str) -> str:
+    return f"/disco/caddy/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/{domain}"
+
+
+def get_caddy_key_crt(domain: str) -> str:
+    path = f"{_certificate_directory(domain)}/{domain}.crt"
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def set_caddy_key_crt(domain: str, value: str) -> None:
+    directory = _certificate_directory(domain)
+    if not os.path.isdir(directory):
+        os.makedirs(directory)
+    path = f"{directory}/{domain}.crt"
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(value)
+
+
+def get_caddy_key_key(domain: str) -> str:
+    path = f"{_certificate_directory(domain)}/{domain}.key"
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def set_caddy_key_key(domain: str, value: str) -> None:
+    directory = _certificate_directory(domain)
+    if not os.path.isdir(directory):
+        os.makedirs(directory)
+    path = f"{directory}/{domain}.key"
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(value)
+
+
+def get_caddy_key_meta(domain: str) -> str:
+    path = f"{_certificate_directory(domain)}/{domain}.json"
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def set_caddy_key_meta(domain: str, value: str) -> None:
+    directory = _certificate_directory(domain)
+    if not os.path.isdir(directory):
+        os.makedirs(directory)
+    path = f"{directory}/{domain}.json"
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(value)
