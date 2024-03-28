@@ -14,6 +14,7 @@ from disco.endpoints.envvariables import EnvVariable
 from disco.models import ApiKey, Project
 from disco.utils import sshkeys
 from disco.utils.deployments import create_deployment, get_live_deployment
+from disco.utils.discofile import get_disco_file_from_str
 from disco.utils.dns import domain_points_to_here
 from disco.utils.encryption import decrypt
 from disco.utils.envvariables import get_env_variables_for_project
@@ -219,6 +220,12 @@ def export_get(
     log.info("Exporting project %s by %s", project.log(), api_key.log())
     env_variables = get_env_variables_for_project(dbsession, project)
     deployment = get_live_deployment(dbsession, project)
+    volume_names = []
+    if deployment is not None:
+        disco_file = get_disco_file_from_str(deployment.disco_file)
+        for service in disco_file.services.values():
+            for volume in service.volumes:
+                volume_names.append(volume.name)
     return {
         "name": project.name,
         "domain": project.domain,
@@ -250,4 +257,5 @@ def export_get(
         }
         if deployment is not None
         else None,
+        "volumes": volume_names,
     }

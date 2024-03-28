@@ -13,6 +13,7 @@ from disco.endpoints import (
     run,
     scale,
     syslog,
+    volumes,
 )
 from disco.endpoints.webhooks import github
 
@@ -25,6 +26,7 @@ app = FastAPI()
 
 app.include_router(meta.router)
 app.include_router(projects.router)
+app.include_router(volumes.router)
 app.include_router(deployments.router)
 app.include_router(run.router)
 app.include_router(envvariables.router)
