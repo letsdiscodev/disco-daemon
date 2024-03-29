@@ -69,6 +69,7 @@ def volume_get(
             "busybox",
             "tar",
             "--create",
+            "--gzip",
             "--file",
             "-",
             ".",
