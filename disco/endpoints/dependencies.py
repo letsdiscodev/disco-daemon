@@ -1,7 +1,6 @@
 from typing import Annotated
 
-from anyio import Path
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Path
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models.db import Session

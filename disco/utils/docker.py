@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import subprocess
 from datetime import datetime, timedelta
@@ -135,6 +136,98 @@ def start_service(
             )
 
     process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+
+
+async def start_service_async(
+    image: str,
+    name: str,
+    project_name: str,
+    project_service_name: str,
+    deployment_number: int,
+    env_variables: list[tuple[str, str]],
+    volumes: list[tuple[str, str, str]],
+    published_ports: list[tuple[int, int, str]],
+    networks: list[str],
+    replicas: int,
+    command: str | None,
+) -> None:
+    more_args = []
+    for var_name, var_value in env_variables:
+        more_args.append("--env")
+        more_args.append(f"{var_name}={var_value}")
+    for volume_type, volume, destination in volumes:
+        assert volume_type == "volume"
+        more_args.append("--mount")
+        more_args.append(
+            f"type={volume_type},source=disco-volume-{volume},destination={destination}"
+        )
+    if len(volumes) > 0:
+        # volumes are on the main node
+        more_args.append("--constraint")
+        more_args.append("node.labels.disco-role==main")
+    for host_port, container_port, protocol in published_ports:
+        more_args.append("--publish")
+        more_args.append(
+            f"published={host_port},target={container_port},protocol={protocol}"
+        )
+    for network in networks:
+        more_args.append("--network")
+        more_args.append(f"name={network},alias={project_service_name}")
+    args = [
+        "docker",
+        "service",
+        "create",
+        "--name",
+        name,
+        "--with-registry-auth",
+        "--replicas",
+        str(replicas),
+        "--label",
+        f"disco.project.name={project_name}",
+        "--label",
+        f"disco.service.name={project_service_name}",
+        "--label",
+        f"disco.deployment.number={deployment_number}",
+        "--container-label",
+        f"disco.project.name={project_name}",
+        "--container-label",
+        f"disco.service.name={project_service_name}",
+        "--container-label",
+        f"disco.deployment.number={deployment_number}",
+        *more_args,
+        image,
+        *(command.split() if command is not None else []),
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    timeout_seconds = 900  # 15 minutes, safety net
+    timeout = datetime.utcnow() + timedelta(seconds=timeout_seconds)
+    next_check = datetime.utcnow() + timedelta(seconds=3)
+    async for line in process.stdout:
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
+        if datetime.utcnow() > next_check:
+            states = get_service_nodes_desired_state(name)
+            if len([state for state in states if state == "Shutdown"]) >= 3 * replicas:
+                # 3 attempts to start the service failed
+                process.terminate()
+                raise Exception("Starting task failed, too many failed attempts")
+            next_check += timedelta(seconds=3)
+        if datetime.utcnow() > timeout:
+            process.terminate()
+            raise Exception(
+                f"Starting task failed, timeout after {timeout_seconds} seconds"
+            )
+
+    await process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
 
