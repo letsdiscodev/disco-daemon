@@ -3,6 +3,8 @@ import logging
 from fastapi import FastAPI
 
 from disco.endpoints import (
+    apikeyinvites,
+    apikeys,
     deployments,
     envvariables,
     logs,
@@ -34,6 +36,8 @@ app.include_router(projectkeyvalues.router)
 app.include_router(logs.router)
 app.include_router(nodes.router)
 app.include_router(scale.router)
+app.include_router(apikeys.router)
+app.include_router(apikeyinvites.router)
 app.include_router(syslog.router)
 app.include_router(github.router)
 

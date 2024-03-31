@@ -6,7 +6,7 @@ from sqlalchemy.orm.session import Session as DBSession
 
 from disco.endpoints.dependencies import get_db
 from disco.models.db import Session
-from disco.utils.auth import get_valid_api_key_by_id
+from disco.utils.apikeys import get_valid_api_key_by_id
 
 security = HTTPBasic()
 

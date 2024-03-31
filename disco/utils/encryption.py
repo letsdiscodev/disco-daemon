@@ -57,3 +57,8 @@ def _encryption_key() -> bytes:
         with open("/run/secrets/disco_encryption_key", "rb") as f:
             _cached_encryption_key = f.read()
     return _cached_encryption_key
+
+
+def obfuscate(string: str) -> str:
+    asterisks = "*" * (len(string) - 4)
+    return f"{string[:3]}{asterisks}{string[-1]}"

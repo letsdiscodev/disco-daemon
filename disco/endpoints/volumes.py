@@ -12,7 +12,7 @@ from disco.endpoints.dependencies import get_db, get_project_from_url
 from disco.models import ApiKey, Project
 from disco.models.db import Session
 from disco.utils import docker, keyvalues
-from disco.utils.auth import get_api_key_by_id
+from disco.utils.apikeys import get_api_key_by_id
 from disco.utils.deployments import get_live_deployment
 from disco.utils.discofile import get_disco_file_from_str
 from disco.utils.encryption import decrypt

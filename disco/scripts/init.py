@@ -12,7 +12,7 @@ from disco import config
 from disco.models.db import Session, engine
 from disco.models.meta import metadata
 from disco.utils import docker, keyvalues
-from disco.utils.auth import create_api_key
+from disco.utils.apikeys import create_api_key
 from disco.utils.caddy import write_caddy_init_config
 from disco.utils.encryption import generate_key
 

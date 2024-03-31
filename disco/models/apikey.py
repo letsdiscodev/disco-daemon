@@ -13,8 +13,10 @@ class ApiKey(Base):
     created = Column(DateTime, default=datetime.utcnow)
     updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     name = Column(Unicode(255), nullable=False)
-    # to show entries in the logs without leaking credentials
-    log_id = Column(String(32), default=lambda: token_hex(16), nullable=False)
+    public_key = Column(
+        String(32), default=lambda: token_hex(16), nullable=False, index=True
+    )
+    deleted = Column(DateTime)
 
     def log(self):
-        return f"API_KEY_{self.log_id} ({self.name})"
+        return f"API_KEY_{self.public_key} ({self.name})"
