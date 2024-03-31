@@ -1,5 +1,4 @@
 """Script that runs when installing Disco on a server"""
-import json
 import logging
 import os
 import subprocess
@@ -14,6 +13,7 @@ from disco.models.db import Session, engine
 from disco.models.meta import metadata
 from disco.utils import docker, keyvalues
 from disco.utils.auth import create_api_key
+from disco.utils.caddy import write_caddy_init_config
 from disco.utils.encryption import generate_key
 
 log = logging.getLogger(__name__)
@@ -280,84 +280,6 @@ def certificate_stuff(disco_ip: str) -> str:
 
 def create_caddy_socket_dir() -> None:
     os.makedirs("/host/var/run/caddy")
-
-
-def write_caddy_init_config(disco_ip) -> None:
-    init_config = {
-        "admin": {
-            "enforce_origin": False,
-            "listen": "unix//var/run/caddy/caddy.sock",
-            "origins": ["disco-caddy"],
-        },
-        "apps": {
-            "http": {
-                "servers": {
-                    "disco": {
-                        "listen": [":443"],
-                        "routes": [
-                            {
-                                "@id": "ip-handle",
-                                "handle": [
-                                    {
-                                        "handler": "subroute",
-                                        "routes": [
-                                            {
-                                                "match": [{"path": ["/.disco*"]}],
-                                                "handle": [
-                                                    {
-                                                        "@id": "ip-handle-disco-handle",
-                                                        "handler": "reverse_proxy",
-                                                        "rewrite": {
-                                                            "strip_path_prefix": "/.disco"
-                                                        },
-                                                        "upstreams": [
-                                                            {"dial": "disco:80"}
-                                                        ],
-                                                    }
-                                                ],
-                                            },
-                                            {
-                                                "handle": [
-                                                    {
-                                                        # for registry
-                                                        "@id": "ip-handle-root-handle",
-                                                        "handler": "reverse_proxy",
-                                                        "rewrite": {
-                                                            "strip_path_prefix": "/.disco"
-                                                        },
-                                                        "upstreams": [
-                                                            {"dial": "disco:80"}
-                                                        ],
-                                                    }
-                                                ],
-                                            },
-                                        ],
-                                    }
-                                ],
-                                "match": [{"host": [disco_ip]}],
-                                "terminal": True,
-                            }
-                        ],
-                        "tls_connection_policies": [{"fallback_sni": disco_ip}],
-                        "protocols": ["h1", "h2"],
-                    }
-                }
-            },
-            "tls": {
-                "certificates": {
-                    "load_files": [
-                        {
-                            "certificate": f"/certs/{disco_ip}.crt",
-                            "key": f"/certs/{disco_ip}.key",
-                            "tags": ["cert0"],
-                        }
-                    ]
-                }
-            },
-        },
-    }
-    with open("/initconfig/config.json", "w", encoding="utf-8") as f:
-        json.dump(init_config, f)
 
 
 def start_caddy(host_home: str) -> None:

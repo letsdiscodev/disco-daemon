@@ -1,8 +1,12 @@
+import logging
 import subprocess
 
 from sqlalchemy.orm.session import Session as DBSession
 
-from disco.utils import docker, keyvalues
+from disco.models import ApiKey
+from disco.utils import caddy, docker, keyvalues
+
+log = logging.getLogger(__name__)
 
 
 def update_disco(
@@ -57,3 +61,12 @@ def save_is_updating(dbsession: DBSession) -> None:
 
 def save_done_updating(dbsession: DBSession) -> None:
     keyvalues.delete_value(dbsession, "DISCO_IS_UPDATING")
+
+
+def set_disco_host(dbsession: DBSession, host: str, by_api_key: ApiKey) -> None:
+    prev_host = keyvalues.get_value(dbsession=dbsession, key="DISCO_HOST")
+    log.info(
+        "Setting Disco host from %s to %s by %s", prev_host, host, by_api_key.log()
+    )
+    caddy.set_disco_domain(host)
+    keyvalues.set_value(dbsession=dbsession, key="DISCO_HOST", value=host)
