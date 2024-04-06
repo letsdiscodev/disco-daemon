@@ -24,6 +24,7 @@ class ServiceType(str, Enum):
     container = "container"
     static = "static"
     command = "command"
+    cron = "cron"
 
 
 class Service(BaseModel):
@@ -41,6 +42,7 @@ class Service(BaseModel):
         alias="publishedPorts",
     )
     volumes: list[Volume] = []
+    schedule: str = Field("* * * * *", pattern=r"^\*|\d+ \*|\d+ \*|\d+ \*|\d+ \*|\d+$")
 
 
 class DiscoFile(BaseModel):

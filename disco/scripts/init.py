@@ -61,7 +61,6 @@ def main() -> None:
     start_caddy(host_home)
     print("Setting up Disco")
     start_disco_daemon(host_home)
-    start_disco_worker(host_home)
 
 
 def _run_cmd(args: list[str], timeout=600) -> str:
@@ -383,47 +382,5 @@ def start_disco_daemon(host_home: str) -> None:
             "0.0.0.0",
             "--root-path",
             "/.disco",
-        ]
-    )
-
-
-def start_disco_worker(host_home: str) -> None:
-    _run_cmd(
-        [
-            "docker",
-            "service",
-            "create",
-            "--name",
-            "disco-worker",
-            "--network",
-            "disco-caddy-daemon",
-            "--network",
-            "disco-logging",
-            "--mount",
-            "source=disco-data,target=/disco/data",
-            "--mount",
-            f"type=bind,source={host_home}/.ssh,target=/root/.ssh",
-            "--mount",
-            f"type=bind,source={host_home}/.docker,target=/root/.docker",
-            "--mount",
-            f"type=bind,source={host_home}/disco/projects,target=/disco/projects",
-            "--mount",
-            f"type=bind,source={host_home}/disco/srv,target=/disco/srv",
-            "--mount",
-            "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
-            "--mount",
-            "type=bind,source=/var/run/caddy,target=/var/run/caddy",
-            "--mount",
-            "source=disco-certs,target=/certs",
-            "--mount",
-            "source=disco-caddy-data,target=/disco/caddy/data",
-            "--mount",
-            "source=disco-caddy-config,target=/disco/caddy/config",
-            "--secret",
-            "disco_encryption_key",
-            "--constraint",
-            "node.labels.disco-role==main",
-            f"letsdiscodev/daemon:{disco.__version__}",
-            "disco_worker",
         ]
     )

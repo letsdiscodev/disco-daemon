@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm.session import Session as DBSession
 from sse_starlette.sse import EventSourceResponse
@@ -20,6 +20,7 @@ from disco.utils.deployments import (
     get_last_deployment,
 )
 from disco.utils.discofile import DiscoFile
+from disco.utils.mq.tasks import enqueue_task_deprecated
 from disco.utils.projects import get_project_by_name
 
 log = logging.getLogger(__name__)
@@ -64,6 +65,15 @@ class DeploymentRequestBody(BaseModel):
         return self
 
 
+def process_deployment(deployment_id: str) -> None:
+    enqueue_task_deprecated(
+        task_name="PROCESS_DEPLOYMENT",
+        body=dict(
+            deployment_id=deployment_id,
+        ),
+    )
+
+
 @router.post(
     "/projects/{project_name}/deployments",
     status_code=201,
@@ -74,6 +84,7 @@ def deployments_post(
     project: Annotated[Project, Depends(get_project_from_url)],
     api_key: Annotated[ApiKey, Depends(get_api_key)],
     req_body: DeploymentRequestBody,
+    background_tasks: BackgroundTasks,
 ):
     deployment = create_deployment(
         dbsession=dbsession,
@@ -82,6 +93,7 @@ def deployments_post(
         disco_file=req_body.disco_file,
         by_api_key=api_key,
     )
+    background_tasks.add_task(process_deployment, deployment.id)
     return {
         "deployment": {
             "number": deployment.number,

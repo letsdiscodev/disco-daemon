@@ -761,6 +761,32 @@ def add_network_to_container(container: str, network: str) -> None:
         raise Exception(f"Docker returned status {process.returncode}")
 
 
+async def add_network_to_container_async(container: str, network: str) -> None:
+    log.info("Adding network to container: %s to %s", network, container)
+    args = [
+        "docker",
+        "network",
+        "connect",
+        network,
+        container,
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    async for line in process.stdout:
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
+
+    await process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+
+
 def remove_network_from_container(container: str, network: str) -> None:
     log.info("Removing network from container: %s from %s", network, container)
     args = [
@@ -883,6 +909,102 @@ def run(
         remove_container(name)
 
 
+async def run_async(
+    image: str,
+    project_name: str,
+    name: str,
+    env_variables: list[tuple[str, str]],
+    volumes: list[tuple[str, str, str]],
+    networks: list[str],
+    command: str | None,
+    log_output: Callable[[str], None],
+    workdir: str | None = None,
+    timeout: int = 600,
+) -> None:
+    try:
+        more_args = []
+        for var_name, var_value in env_variables:
+            more_args.append("--env")
+            more_args.append(f"{var_name}={var_value}")
+        for volume_type, volume, destination in volumes:
+            assert volume_type in ["bind", "volume"]
+            if volume_type == "volume":
+                source = f"disco-volume-{volume}"
+            else:
+                source = volume
+            more_args.append("--mount")
+            more_args.append(
+                f"type={volume_type},source={source},destination={destination}"
+            )
+        if workdir is not None:
+            more_args.append("--workdir")
+            more_args.append(workdir)
+        args = [
+            "docker",
+            "container",
+            "create",
+            "--name",
+            name,
+            "--label",
+            f"disco.project.name={project_name}",
+            "--label",
+            f"disco.service.name={name}",
+            *more_args,
+            image,
+            *(command.split() if command is not None else []),
+        ]
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        assert process.stdout is not None
+        timeout_dt = datetime.utcnow() + timedelta(seconds=timeout)
+        async for line in process.stdout:
+            line_text = line.decode("utf-8")
+            if line_text.endswith("\n"):
+                line_text = line_text[:-1]
+            log.info("Output: %s", line_text)
+            if datetime.utcnow() > timeout_dt:
+                process.terminate()
+                raise Exception(
+                    f"Running command failed, timeout after {timeout} seconds"
+                )
+
+        await process.wait()
+        if process.returncode != 0:
+            raise Exception(f"Docker returned status {process.returncode}")
+        for network in networks:
+            await add_network_to_container_async(container=name, network=network)
+        args = [
+            "docker",
+            "container",
+            "start",
+            "--attach",
+            name,
+        ]
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        assert process.stdout is not None
+        timeout_dt = datetime.utcnow() + timedelta(seconds=timeout)
+        async for line in process.stdout:
+            log_output(line.decode("utf-8"))
+            if datetime.utcnow() > timeout_dt:
+                process.terminate()
+                raise Exception(
+                    f"Running command failed, timeout after {timeout} seconds"
+                )
+
+        await process.wait()
+        if process.returncode != 0:
+            raise Exception(f"Docker returned status {process.returncode}")
+    finally:
+        await remove_container_async(name)
+
+
 def remove_container(name: str) -> None:
     log.info("Removing container %s", name)
     args = [
@@ -905,6 +1027,32 @@ def remove_container(name: str) -> None:
         log.info("Output: %s", line_text)
 
     process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+
+
+async def remove_container_async(name: str) -> None:
+    log.info("Removing container %s", name)
+    args = [
+        "docker",
+        "container",
+        "rm",
+        "--force",
+        name,
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    async for line in process.stdout:
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
+
+    await process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
 

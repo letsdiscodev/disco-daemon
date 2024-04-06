@@ -1,47 +1,26 @@
-import json
+import asyncio
 import logging
-import uuid
 from typing import Any
 
-from sqlalchemy.orm.session import Session as DBSession
-
-from disco.models import Task
+from disco.utils.asyncworker import QueueTask, async_worker
+from disco.utils.mq.handlers import HANDLERS
 
 log = logging.getLogger(__name__)
 
 
-def enqueue_task(dbsession: DBSession, task_name: str, body: dict[str, Any]) -> None:
-    task = Task(
-        id=uuid.uuid4().hex,
-        name=task_name,
-        status="QUEUED",
-        body=json.dumps(body),
-    )
-    log.info("Enqueued task %s", task_name)
-    dbsession.add(task)
+def enqueue_task_deprecated(task_name: str, body: dict[str, Any]) -> None:
+    log.info("Enqueuing task %s", task_name)
 
+    def run_sync() -> None:
+        HANDLERS[task_name](task_body=body)
 
-def get_task_by_id(dbsession: DBSession, task_id: str) -> Task | None:
-    return dbsession.query(Task).get(task_id)
+    async def run_async() -> None:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, run_sync)
 
+    queue_task = QueueTask(run=run_async)
 
-def get_next_task(dbsession: DBSession) -> Task | None:
-    task = (
-        dbsession.query(Task)
-        .filter(Task.status == "QUEUED")
-        .order_by(Task.created.asc())
-        .first()
-    )
-    if task is not None:
-        task.status = "PROCESSING"
-    return task
+    async def enqueue():
+        await async_worker.queue.put(queue_task)
 
-
-def mark_task_as_completed(task: Task, result: dict[str, Any]) -> None:
-    task.status = "COMPLETED"
-    task.result = json.dumps(result)
-
-
-def mark_task_as_failed(task: Task, result: dict[str, Any]) -> None:
-    task.status = "FAILED"
-    task.result = json.dumps(result)
+    asyncio.run_coroutine_threadsafe(enqueue(), async_worker.get_loop())

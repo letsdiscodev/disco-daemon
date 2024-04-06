@@ -1,7 +1,7 @@
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path
 from pydantic import BaseModel, Field
 from sqlalchemy.orm.session import Session as DBSession
 
@@ -15,10 +15,20 @@ from disco.utils.envvariables import (
     get_env_variables_for_project,
     set_env_variables,
 )
+from disco.utils.mq.tasks import enqueue_task_deprecated
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(get_api_key)])
+
+
+def process_deployment(deployment_id: str) -> None:
+    enqueue_task_deprecated(
+        task_name="PROCESS_DEPLOYMENT",
+        body=dict(
+            deployment_id=deployment_id,
+        ),
+    )
 
 
 @router.get("/projects/{project_name}/env")
@@ -53,6 +63,7 @@ def env_variables_post(
     project: Annotated[Project, Depends(get_project_from_url)],
     api_key: Annotated[ApiKey, Depends(get_api_key)],
     req_env_variables: ReqEnvVariables,
+    background_tasks: BackgroundTasks,
 ):
     deployment = set_env_variables(
         dbsession=dbsession,
@@ -62,6 +73,8 @@ def env_variables_post(
         ],
         by_api_key=api_key,
     )
+    if deployment is not None:
+        background_tasks.add_task(process_deployment, deployment.id)
     return {
         "deployment": {
             "number": deployment.number,
@@ -107,12 +120,15 @@ def env_variable_delete(
         ProjectEnvironmentVariable, Depends(get_env_variable_from_url)
     ],
     api_key: Annotated[ApiKey, Depends(get_api_key)],
+    background_tasks: BackgroundTasks,
 ):
     deployment = delete_env_variable(
         dbsession=dbsession,
         env_variable=env_variable,
         by_api_key=api_key,
     )
+    if deployment is not None:
+        background_tasks.add_task(process_deployment, deployment.id)
     return {
         "deployment": {
             "number": deployment.number,

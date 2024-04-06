@@ -12,7 +12,6 @@ from disco.models import (
 )
 from disco.utils import commandoutputs, keyvalues
 from disco.utils.discofile import DiscoFile
-from disco.utils.mq.tasks import enqueue_task
 
 log = logging.getLogger(__name__)
 
@@ -79,13 +78,6 @@ def create_deployment(
         )
         dbsession.add(deploy_env_var)
     log.info("Created deployment %s", deployment.log())
-    enqueue_task(
-        dbsession=dbsession,
-        task_name="PROCESS_DEPLOYMENT",
-        body=dict(
-            deployment_id=deployment.id,
-        ),
-    )
     commandoutputs.save(
         dbsession,
         f"DEPLOYMENT_{deployment.id}",
@@ -123,15 +115,16 @@ def get_deployment_by_number(
     )
 
 
-BUILD_STATUS = Literal[
+DEPLOYMENT_STATUS = Literal[
     "QUEUED",
     "IN_PROGRESS",
     "COMPLETE",
+    "SKIPPED",
     "FAILED",
 ]
 
 
-def set_deployment_status(deployment: Deployment, status: BUILD_STATUS) -> None:
+def set_deployment_status(deployment: Deployment, status: DEPLOYMENT_STATUS) -> None:
     log.info(
         "Setting deployment status of deployment %s to %s", deployment.log(), status
     )
@@ -163,5 +156,29 @@ def get_last_deployment(dbsession: DBSession, project: Project) -> Deployment | 
         dbsession.query(Deployment)
         .filter(Deployment.project == project)
         .order_by(Deployment.number.desc())
+        .first()
+    )
+
+
+def get_deployment_in_progress(
+    dbsession: DBSession, project: Project
+) -> Deployment | None:
+    return (
+        dbsession.query(Deployment)
+        .filter(Deployment.project == project)
+        .filter(Deployment.status == "IN_PROGRESS")
+        .order_by(Deployment.number.desc())
+        .first()
+    )
+
+
+def get_oldest_queued_deployment(
+    dbsession: DBSession, project: Project
+) -> Deployment | None:
+    return (
+        dbsession.query(Deployment)
+        .filter(Deployment.project == project)
+        .filter(Deployment.status == "QUEUED")
+        .order_by(Deployment.number.asc())
         .first()
     )

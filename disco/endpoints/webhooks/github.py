@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Header, Request
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.endpoints.dependencies import get_db
-from disco.utils.mq.tasks import enqueue_task
+from disco.utils.mq.tasks import enqueue_task_deprecated
 
 log = logging.getLogger(__name__)
 
@@ -32,8 +32,7 @@ def github_webhook_service_post(
         )
         return {}
     log.info("Received Github webhook %s for %s", x_github_event, webhook_token)
-    enqueue_task(
-        dbsession=dbsession,
+    enqueue_task_deprecated(
         task_name="PROCESS_GITHUB_WEBHOOK",
         body=dict(
             webhook_token=webhook_token,

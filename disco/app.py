@@ -1,4 +1,6 @@
+import asyncio
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
@@ -18,13 +20,26 @@ from disco.endpoints import (
     volumes,
 )
 from disco.endpoints.webhooks import github
+from disco.utils.asyncworker import async_worker
 
 logging.basicConfig(level=logging.INFO)
 
 log = logging.getLogger(__name__)
 
 log.info("Initializing Disco daemon")
-app = FastAPI()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    loop = asyncio.get_running_loop()
+    async_worker.set_loop(loop)
+    worker_task = loop.create_task(async_worker.work())
+    yield
+    async_worker.stop()
+    await worker_task
+
+
+app = FastAPI(lifespan=lifespan)
 
 app.include_router(meta.router)
 app.include_router(projects.router)
@@ -44,7 +59,7 @@ app.include_router(github.router)
 
 @app.get("/")
 def root_get():
-    return {"disco": "/"}
+    return {"disco": True}
 
 
 log.info("Ready to disco")

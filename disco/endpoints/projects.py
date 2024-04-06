@@ -2,7 +2,7 @@ import logging
 from typing import Annotated
 
 import randomname
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_core import InitErrorDetails, PydanticCustomError
@@ -26,6 +26,7 @@ from disco.utils.filesystem import (
     set_caddy_key_key,
     set_caddy_key_meta,
 )
+from disco.utils.mq.tasks import enqueue_task_deprecated
 from disco.utils.projects import (
     create_project,
     delete_project,
@@ -71,11 +72,21 @@ class NewProjectRequestBody(BaseModel):
     deployment_number: int | None = Field(None, alias="deploymentNumber")
 
 
+def process_deployment(deployment_id: str) -> None:
+    enqueue_task_deprecated(
+        task_name="PROCESS_DEPLOYMENT",
+        body=dict(
+            deployment_id=deployment_id,
+        ),
+    )
+
+
 @router.post("/projects", status_code=201)
 def projects_post(
     dbsession: Annotated[DBSession, Depends(get_db)],
     api_key: Annotated[ApiKey, Depends(get_api_key)],
     req_body: NewProjectRequestBody,
+    background_tasks: BackgroundTasks,
 ):
     if req_body.generate_suffix:
         req_body.name = f"{req_body.name}-{randomname.get_name()}"
@@ -167,6 +178,7 @@ def projects_post(
             number=req_body.deployment_number,
             by_api_key=api_key,
         )
+        background_tasks.add_task(process_deployment, deployment.id)
     else:
         deployment = None
     return {

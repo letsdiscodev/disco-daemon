@@ -8,9 +8,12 @@ from typing import Callable
 from disco.models import Deployment
 from disco.models.db import Session
 from disco.utils import caddy, commandoutputs, docker, github, keyvalues
+from disco.utils.asyncworker import async_worker
 from disco.utils.deployments import (
-    BUILD_STATUS,
+    DEPLOYMENT_STATUS,
     get_deployment_by_id,
+    get_deployment_in_progress,
+    get_last_deployment,
     get_live_deployment,
     set_deployment_commit_hash,
     set_deployment_disco_file,
@@ -77,6 +80,8 @@ class DeploymentInfo:
 
 
 def process_deployment(deployment_id: str) -> None:
+    from disco.utils.mq.tasks import enqueue_task_deprecated
+
     def log_output(output: str | None) -> None:
         if output is not None:
             log.info("Deployment %s: %s", deployment_id, output)
@@ -84,12 +89,42 @@ def process_deployment(deployment_id: str) -> None:
             with dbsession.begin():
                 commandoutputs.save(dbsession, f"DEPLOYMENT_{deployment_id}", output)
 
-    def set_current_deployment_status(status: BUILD_STATUS) -> None:
+    def set_current_deployment_status(status: DEPLOYMENT_STATUS) -> None:
         with Session() as dbsession:
             with dbsession.begin():
                 deployment = get_deployment_by_id(dbsession, deployment_id)
                 assert deployment is not None
                 set_deployment_status(deployment, status)
+
+    with Session() as dbsession:
+        with dbsession.begin():
+            deployment = get_deployment_by_id(dbsession, deployment_id)
+            assert deployment is not None
+            deployment_in_progress = get_deployment_in_progress(
+                dbsession, deployment.project
+            )
+            if deployment_in_progress is not None:
+                log_output(
+                    f"Deployment {deployment_in_progress.number} in progress, "
+                    "waiting for build to complete "
+                    f"before processing deployment {deployment.number}.\n"
+                )
+                return
+            last_deployment = get_last_deployment(dbsession, deployment.project)
+            if last_deployment is not None and last_deployment.id != deployment_id:
+                log_output(
+                    f"Deployment {last_deployment.number} is latest, "
+                    f"skipping deployment {deployment.number}.\n"
+                )
+                set_current_deployment_status("SKIPPED")
+                log_output(None)  # end
+                enqueue_task_deprecated(
+                    task_name="PROCESS_DEPLOYMENT_IF_ANY",
+                    body={
+                        "project_id": deployment.project_id,
+                    },
+                )
+                return
 
     set_current_deployment_status("IN_PROGRESS")
     log_output("Starting deployment\n")
@@ -131,6 +166,17 @@ def process_deployment(deployment_id: str) -> None:
     finally:
         log.info("Finished processing build %s", deployment_id)
         log_output(None)  # end
+
+    with Session() as dbsession:
+        with dbsession.begin():
+            deployment = get_deployment_by_id(dbsession, deployment_id)
+            assert deployment is not None
+            enqueue_task_deprecated(
+                task_name="PROCESS_DEPLOYMENT_IF_ANY",
+                body={
+                    "project_id": deployment.project_id,
+                },
+            )
 
 
 def replace_deployment(
@@ -214,6 +260,8 @@ def replace_deployment(
                 timeout=300,
                 log_output=log_output,
             )
+    if prev_deployment_info is not None:
+        async_worker.pause_project_crons(prev_deployment_info.project_name)  # TODO here
     if new_deployment_info is not None:
         assert new_deployment_info.disco_file is not None
         create_networks(new_deployment_info, recovery, log_output)
@@ -226,6 +274,13 @@ def replace_deployment(
             and new_deployment_info.domain_name is not None
         ):
             serve_new_deployment(new_deployment_info, recovery, log_output)
+        async_worker.reload_and_resume_project_crons(
+            prev_project_name=prev_deployment_info.project_name
+            if prev_deployment_info is not None
+            else None,
+            project_name=new_deployment_info.project_name,
+            deployment_number=new_deployment_info.number,
+        )
     stop_prev_services(new_deployment_info, prev_deployment_info, recovery, log_output)
     if new_deployment_info is not None:
         remove_unused_networks(new_deployment_info)

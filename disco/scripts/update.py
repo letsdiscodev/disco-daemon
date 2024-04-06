@@ -10,7 +10,7 @@ from alembic.config import Config
 
 import disco
 from disco.models.db import Session
-from disco.scripts.init import start_disco_daemon, start_disco_worker
+from disco.scripts.init import start_disco_daemon
 from disco.utils import keyvalues
 from disco.utils.meta import save_done_updating
 
@@ -57,7 +57,6 @@ def main() -> None:
             host_home = keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
     start_disco_daemon(host_home)
-    start_disco_worker(host_home)
     with Session() as dbsession:
         with dbsession.begin():
             save_done_updating(dbsession)
