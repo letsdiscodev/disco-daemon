@@ -4,6 +4,7 @@ import logging
 import random
 
 from fastapi import APIRouter, Depends, HTTPException
+from sse_starlette import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
 from disco.auth import get_api_key_wo_tx
@@ -62,7 +63,10 @@ async def read_logs(project_name: str | None, service_name: str | None):
     try:
         while True:
             log_obj = await log_queue.get()
-            yield json.dumps(log_obj)
+            yield ServerSentEvent(
+                event="output",
+                data=json.dumps(log_obj),
+            )
     finally:
         try:
             await start_logspout_process.wait()

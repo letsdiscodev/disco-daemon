@@ -4,11 +4,12 @@ import logging
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_core import InitErrorDetails, PydanticCustomError
 from sqlalchemy.orm.session import Session as DBSession
+from sse_starlette import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
 from disco.auth import get_api_key, get_api_key_wo_tx
@@ -130,7 +131,9 @@ def run_post(
     dependencies=[Depends(get_api_key_wo_tx)],
 )
 async def run_output_get(
-    project_name: str, run_number: int, after: datetime | None = None
+    project_name: str,
+    run_number: int,
+    last_event_id: Annotated[str | None, Header()] = None,
 ):
     with Session() as dbsession:
         with dbsession.begin():
@@ -141,6 +144,11 @@ async def run_output_get(
             if run is None:
                 raise HTTPException(status_code=404)
             source = f"RUN_{run.id}"
+            after = None
+            if last_event_id is not None:
+                output = commandoutputs.get_by_id(dbsession, last_event_id)
+                if output is not None:
+                    after = output.created
 
     # TODO refactor, this is copy-pasted from deployment output
     async def get_run_output(source: str, after: datetime | None):
@@ -150,13 +158,22 @@ async def run_output_get(
                     output = commandoutputs.get_next(dbsession, source, after=after)
                     if output is not None:
                         if output.text is None:
+                            yield ServerSentEvent(
+                                id=output.id,
+                                event="end",
+                                data="",
+                            )
                             return
                         after = output.created
-                        yield json.dumps(
-                            {
-                                "timestamp": output.created.isoformat(),
-                                "text": output.text,
-                            }
+                        yield ServerSentEvent(
+                            id=output.id,
+                            event="output",
+                            data=json.dumps(
+                                {
+                                    "timestamp": output.created.isoformat(),
+                                    "text": output.text,
+                                }
+                            ),
                         )
             if output is None:
                 await asyncio.sleep(0.1)

@@ -24,3 +24,7 @@ def get_next(
 
 def delete_output_for_source(dbsession: DBSession, source: str) -> None:
     dbsession.query(CommandOutput).filter(CommandOutput.source == source).delete()
+
+
+def get_by_id(dbsession, output_id) -> CommandOutput | None:
+    return dbsession.query(CommandOutput).get(output_id)
