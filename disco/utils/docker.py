@@ -363,6 +363,18 @@ def service_exists(service_name: str) -> bool:
     return process.returncode == 0
 
 
+async def service_exists_async(service_name: str) -> bool:
+    args = [
+        "docker",
+        "service",
+        "inspect",
+        service_name,
+    ]
+    process = await asyncio.create_subprocess_exec(*args)
+    await process.wait()
+    return process.returncode == 0
+
+
 def get_networks_connected_to_container(container_name: str) -> list[str]:
     args = [
         "docker",
