@@ -16,8 +16,5 @@ from disco.models.projectenvironmentvariable import (
     ProjectEnvironmentVariable,  # noqa: F401
 )
 from disco.models.projectkeyvalue import ProjectKeyValue  # noqa: F401
-from disco.models.task import (
-    Task,  # noqa: F401
-)
 
 configure_mappers()
