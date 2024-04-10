@@ -5,13 +5,11 @@ from cryptography.fernet import Fernet
 
 
 @overload
-def encrypt(string: str) -> str:
-    ...
+def encrypt(string: str) -> str: ...
 
 
 @overload
-def encrypt(string: None) -> None:
-    ...
+def encrypt(string: None) -> None: ...
 
 
 def encrypt(string: str | None) -> str | None:
@@ -25,13 +23,11 @@ def encrypt(string: str | None) -> str | None:
 
 
 @overload
-def decrypt(string: str) -> str:
-    ...
+def decrypt(string: str) -> str: ...
 
 
 @overload
-def decrypt(string: None) -> None:
-    ...
+def decrypt(string: None) -> None: ...
 
 
 def decrypt(string: str | None) -> str | None:

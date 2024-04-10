@@ -1,4 +1,5 @@
 """Script that runs when updating Disco to the latest version"""
+
 import logging
 import os
 import subprocess

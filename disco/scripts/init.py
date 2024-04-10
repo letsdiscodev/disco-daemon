@@ -1,4 +1,5 @@
 """Script that runs when installing Disco on a server"""
+
 import logging
 import os
 import subprocess
