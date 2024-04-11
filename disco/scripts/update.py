@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import subprocess
 from datetime import datetime, timedelta
 from typing import Callable
@@ -25,6 +26,7 @@ def main() -> None:
             installed_version = keyvalues.get_value(
                 dbsession=dbsession, key="DISCO_VERSION"
             )
+            assert installed_version is not None
             if installed_version == disco.__version__:
                 print(f"Current version is latest ({disco.__version__}), not updating.")
                 save_done_updating(dbsession)
@@ -33,7 +35,8 @@ def main() -> None:
     print(f"New version: {installed_version}")
     print("Stopping existing Disco processes")
     stop_disco_daemon()
-    stop_disco_worker()
+    if re.match(r"^0\.(1|2|3)\..+$", installed_version):
+        stop_disco_worker()
     print("Running upgrade tasks")
     ttl = 9999
     while installed_version != disco.__version__:
@@ -118,6 +121,14 @@ def alembic_upgrade(version_hash: str) -> None:
     command.upgrade(config, version_hash)
 
 
+def task_0_3_x() -> None:
+    print("Upating from 0.3.x to 0.4.x")
+    alembic_upgrade("3eb8871ccb85")
+    with Session() as dbsession:
+        with dbsession.begin():
+            keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.4.0")
+
+
 def task_0_2_x() -> None:
     print("Upating from 0.2.x to 0.3.x")
     alembic_upgrade("d0cba3cd3238")
@@ -148,6 +159,8 @@ def get_update_function_for_version(version: str) -> Callable[[], None]:
     if version.startswith("0.2."):
         return task_0_2_x
     if version.startswith("0.3."):
-        assert disco.__version__.startswith("0.3.")
+        return task_0_3_x
+    if version.startswith("0.4."):
+        assert disco.__version__.startswith("0.4.")
         return task_patch
     raise NotImplementedError(f"Update missing for version {version}")
