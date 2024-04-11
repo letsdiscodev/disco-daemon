@@ -3,12 +3,13 @@ import json
 import logging
 import random
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sse_starlette import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
 from disco.auth import get_api_key_wo_tx
 from disco.models.db import Session
+from disco.utils import docker
 from disco.utils.projects import get_project_by_name
 
 log = logging.getLogger(__name__)
@@ -17,33 +18,58 @@ router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 
 
 @router.get("/logs")
-async def logs_all():
-    return EventSourceResponse(read_logs(project_name=None, service_name=None))
+async def logs_all(background_tasks: BackgroundTasks):
+    return EventSourceResponse(
+        read_logs(
+            project_name=None, service_name=None, background_tasks=background_tasks
+        )
+    )
 
 
 @router.get("/logs/{project_name}")
-async def logs_project(project_name: str):
-    with Session() as dbsession:
-        with dbsession.begin():
-            project = get_project_by_name(dbsession, project_name)
-            if project is None:
-                raise HTTPException(status_code=404)
-    return EventSourceResponse(read_logs(project_name=project_name, service_name=None))
-
-
-@router.get("/logs/{project_name}/{service_name}")
-async def logs_project_service(project_name: str, service_name: str):
+async def logs_project(
+    project_name: str,
+    background_tasks: BackgroundTasks,
+):
     with Session() as dbsession:
         with dbsession.begin():
             project = get_project_by_name(dbsession, project_name)
             if project is None:
                 raise HTTPException(status_code=404)
     return EventSourceResponse(
-        read_logs(project_name=project_name, service_name=service_name)
+        read_logs(
+            project_name=project_name,
+            service_name=None,
+            background_tasks=background_tasks,
+        )
     )
 
 
-async def read_logs(project_name: str | None, service_name: str | None):
+@router.get("/logs/{project_name}/{service_name}")
+async def logs_project_service(
+    project_name: str,
+    service_name: str,
+    background_tasks: BackgroundTasks,
+):
+    with Session() as dbsession:
+        with dbsession.begin():
+            project = get_project_by_name(dbsession, project_name)
+            if project is None:
+                raise HTTPException(status_code=404)
+    return EventSourceResponse(
+        read_logs(
+            project_name=project_name,
+            service_name=service_name,
+            background_tasks=background_tasks,
+        )
+    )
+
+
+async def read_logs(
+    project_name: str | None,
+    service_name: str | None,
+    background_tasks: BackgroundTasks,
+):
     port = random.randint(10000, 65535)
     logspout_cmd = LOGSPOUT_CMD.copy()
     assert logspout_cmd[4] == "{name}"
@@ -52,7 +78,7 @@ async def read_logs(project_name: str | None, service_name: str | None):
     logspout_cmd[-1] = logspout_cmd[-1].format(port=port)
     transport = None
     log_queue: asyncio.Queue[dict[str, str | dict[str, str]]] = asyncio.Queue()
-    start_logspout_process = await asyncio.create_subprocess_exec(*logspout_cmd)
+    await asyncio.create_subprocess_exec(*logspout_cmd)
     loop = asyncio.get_running_loop()
     transport, _ = await loop.create_datagram_endpoint(
         lambda: JsonLogServer(
@@ -68,19 +94,14 @@ async def read_logs(project_name: str | None, service_name: str | None):
                 data=json.dumps(log_obj),
             )
     finally:
-        try:
-            await start_logspout_process.wait()
-            rm_logspout_process = await asyncio.create_subprocess_exec(
-                "docker", "service", "rm", syslog_service
-            )
-            await rm_logspout_process.wait()
-        except Exception:
-            log.exception("Exception terminating logspout")
+        log.info("HTTP Connection for logs disconnected")
         if transport is not None:
             try:
                 transport.close()
+                log.info("Closed datagram log endpoint")
             except Exception:
                 log.exception("Exception closing transport")
+        background_tasks.add_task(docker.stop_service_async, syslog_service)
 
 
 LOGSPOUT_CMD = [

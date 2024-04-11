@@ -303,6 +303,31 @@ def stop_service(name: str) -> None:
         raise Exception(f"Docker returned status {process.returncode}")
 
 
+async def stop_service_async(name: str) -> None:
+    log.info("Stopping service %s", name)
+    args = [
+        "docker",
+        "service",
+        "rm",
+        name,
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    async for line in process.stdout:
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
+
+    await process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+
+
 def get_log_for_service(service_name: str) -> str:
     args = [
         "docker",
