@@ -81,22 +81,8 @@ def process_deployment_if_any(task_body):
             )
 
 
-def set_syslog_service(task_body):
-    from disco.utils import docker, keyvalues, syslog
-
-    db_data = dict()
-
-    with Session() as dbsession:
-        with dbsession.begin():
-            db_data["disco_host"] = keyvalues.get_value(dbsession, "DISCO_HOST")
-            db_data["urls"] = syslog.get_syslog_urls(dbsession)
-
-    docker.set_syslog_service(db_data["disco_host"], db_data["urls"])
-
-
 HANDLERS = dict(
     PROCESS_GITHUB_WEBHOOK=process_github_webhook,
     PROCESS_DEPLOYMENT=process_deployment,
     PROCESS_DEPLOYMENT_IF_ANY=process_deployment_if_any,
-    SET_SYSLOG_SERVICE=set_syslog_service,
 )

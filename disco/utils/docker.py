@@ -215,7 +215,7 @@ async def start_service_async(
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
         if datetime.utcnow() > next_check:
-            states = get_service_nodes_desired_state(name)
+            states = await get_service_nodes_desired_state_async(name)
             if len([state for state in states if state == "Shutdown"]) >= 3 * replicas:
                 # 3 attempts to start the service failed
                 process.terminate()
@@ -249,6 +249,28 @@ def get_service_nodes_desired_state(service_name: str) -> list[str]:
     assert process.stdout is not None
     states = [line.decode("utf-8")[:-1] for line in process.stdout.readlines()]
     process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+    return states
+
+
+async def get_service_nodes_desired_state_async(service_name: str) -> list[str]:
+    args = [
+        "docker",
+        "service",
+        "ps",
+        service_name,
+        "--format",
+        "{{ .DesiredState }}",
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    states = [line.decode("utf-8")[:-1] async for line in process.stdout]
+    await process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
     return states
@@ -369,6 +391,8 @@ def network_exists(network_name: str) -> bool:
     ]
     process = subprocess.Popen(
         args=args,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     process.wait()
     return process.returncode == 0
@@ -395,7 +419,11 @@ async def service_exists_async(service_name: str) -> bool:
         "inspect",
         service_name,
     ]
-    process = await asyncio.create_subprocess_exec(*args)
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     await process.wait()
     return process.returncode == 0
 
@@ -565,33 +593,22 @@ def service_name(project_name: str, service: str, deployment_number: int) -> str
     return f"{project_name}-{deployment_number}-{service}"
 
 
-def set_syslog_service(disco_host: str, syslog_urls: list[str]) -> None:
-    # TODO we may want to just update the existing service instead
-    #      to avoid losing logs while the new service is starting?
-    args = [
-        "docker",
-        "service",
-        "rm",
-        "--name",
-        "disco-syslog",
-    ]
-    try:
-        log.info("Trying to stop existing syslog service")
-        subprocess.run(
-            args=args,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        log.info("Stopped existing syslog service")
-    except subprocess.CalledProcessError:
-        log.info(
-            "Failed to stop existing service. Expected if no syslog service was running"
-        )
+async def set_syslog_service(disco_host: str, syslog_urls: list[str]) -> None:
     if len(syslog_urls) == 0:
-        log.info("No syslog URL specified, not starting new syslog service")
-        return
-    log.info("Starting new syslog service")
+        if await service_exists_async("disco-syslog"):
+            await stop_service_async("disco-syslog")
+        else:
+            log.info("Syslog service already stopped")
+    else:
+        if await service_exists_async("disco-syslog"):
+            await _update_syslog_service(disco_host, syslog_urls)
+        else:
+            await _start_syslog_service(disco_host, syslog_urls)
+
+
+async def _start_syslog_service(disco_host: str, syslog_urls: list[str]) -> None:
+    node_count = await get_node_count()
+    log.info("Starting syslog service")
     args = [
         "docker",
         "service",
@@ -607,16 +624,119 @@ def set_syslog_service(disco_host: str, syslog_urls: list[str]) -> None:
         "gliderlabs/logspout",
         ",".join(syslog_urls),
     ]
-    try:
-        subprocess.run(
-            args=args,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        log.info("New syslog service started")
-    except subprocess.CalledProcessError as ex:
-        raise Exception(ex.stdout.decode("utf-8")) from ex
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    timeout_seconds = 900  # 15 minutes, safety net
+    timeout = datetime.utcnow() + timedelta(seconds=timeout_seconds)
+    next_check = datetime.utcnow() + timedelta(seconds=3)
+    async for line in process.stdout:
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
+        if datetime.utcnow() > next_check:
+            states = await get_service_nodes_desired_state_async("disco-syslog")
+            if (
+                len([state for state in states if state == "Shutdown"])
+                >= 3 * node_count
+            ):
+                # 3 attempts to start the service failed
+                process.terminate()
+                raise Exception("Starting task failed, too many failed attempts")
+            next_check += timedelta(seconds=3)
+        if datetime.utcnow() > timeout:
+            process.terminate()
+            raise Exception(
+                f"Starting task failed, timeout after {timeout_seconds} seconds"
+            )
+
+    await process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+
+    log.info("Syslog service started")
+
+
+async def _update_syslog_service(disco_host: str, syslog_urls: list[str]) -> None:
+    node_count = await get_node_count()
+    log.info("Updating syslog service")
+    args = [
+        "docker",
+        "service",
+        "update",
+        "disco-syslog",
+        "--env-add",
+        f"SYSLOG_HOSTNAME={disco_host}",
+        "--args",
+        ",".join(syslog_urls),
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    timeout_seconds = 900  # 15 minutes, safety net
+    timeout = datetime.utcnow() + timedelta(seconds=timeout_seconds)
+    next_check = datetime.utcnow() + timedelta(seconds=3)
+    async for line in process.stdout:
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
+        if datetime.utcnow() > next_check:
+            states = await get_service_nodes_desired_state_async("disco-syslog")
+            if (
+                len([state for state in states if state == "Shutdown"])
+                >= 3 * node_count
+            ):
+                # 3 attempts to start the service failed
+                process.terminate()
+                raise Exception("Starting task failed, too many failed attempts")
+            next_check += timedelta(seconds=3)
+        if datetime.utcnow() > timeout:
+            process.terminate()
+            raise Exception(
+                f"Starting task failed, timeout after {timeout_seconds} seconds"
+            )
+
+    await process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+
+    log.info("Syslog service updated")
+
+
+async def get_node_count() -> int:
+    log.info("Getting Docker Swarm node count")
+    args = [
+        "docker",
+        "info",
+        "--format",
+        "{{ .Swarm.Nodes }}",
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    async for line in process.stdout:
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
+        node_count = int(line_text)
+        break
+
+    await process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+    return node_count
 
 
 def create_network(
