@@ -65,7 +65,6 @@ def main() -> None:
 
 
 def _run_cmd(args: list[str], timeout=600) -> str:
-    verbose = os.environ.get("DISCO_VERBOSE") == "true"
     process = subprocess.Popen(
         args=args,
         stdout=subprocess.PIPE,
@@ -77,18 +76,14 @@ def _run_cmd(args: list[str], timeout=600) -> str:
     for line in process.stdout:
         decoded_line = line.decode("utf-8")
         output += decoded_line
-        if verbose:
-            print(decoded_line, end="", flush=True)
-        else:
-            print(".", end="", flush=True)
+        print(decoded_line, end="", flush=True)
         if datetime.utcnow() > timeout_dt:
             process.terminate()
             raise Exception(f"Running command failed, timeout after {timeout} seconds")
     process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}:\n{output}")
-    if not verbose:
-        print("", flush=True)
+    print("", flush=True)
     return output
 
 
@@ -113,7 +108,6 @@ def docker_swarm_init(disco_ip: str) -> None:
 
 def docker_swarm_create_disco_encryption_key() -> None:
     print("Generating encryption key for encryption at rest")
-    verbose = os.environ.get("DISCO_VERBOSE") == "true"
     process = subprocess.Popen(
         args=[
             "docker",
@@ -127,10 +121,7 @@ def docker_swarm_create_disco_encryption_key() -> None:
         stderr=subprocess.STDOUT,
     )
     stdout, _ = process.communicate(generate_key())
-    if verbose:
-        print(stdout, flush=True)
-    else:
-        print(".", flush=True)
+    print(stdout, flush=True)
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
 

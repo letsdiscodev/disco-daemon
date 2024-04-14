@@ -1,7 +1,6 @@
 """Script that runs when updating Disco to the latest version"""
 
 import logging
-import os
 import re
 import subprocess
 from datetime import datetime, timedelta
@@ -67,7 +66,6 @@ def main() -> None:
 
 
 def _run_cmd(args: list[str], timeout=600) -> str:
-    verbose = os.environ.get("DISCO_VERBOSE") == "true"
     process = subprocess.Popen(
         args=args,
         stdout=subprocess.PIPE,
@@ -79,18 +77,14 @@ def _run_cmd(args: list[str], timeout=600) -> str:
     for line in process.stdout:
         decoded_line = line.decode("utf-8")
         output += decoded_line
-        if verbose:
-            print(decoded_line, end="", flush=True)
-        else:
-            print(".", end="", flush=True)
+        print(decoded_line, end="", flush=True)
         if datetime.utcnow() > timeout_dt:
             process.terminate()
             raise Exception(f"Running command failed, timeout after {timeout} seconds")
     process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}:\n{output}")
-    if not verbose:
-        print("", flush=True)
+    print("", flush=True)
     return output
 
 
