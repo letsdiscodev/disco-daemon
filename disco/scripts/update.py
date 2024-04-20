@@ -1,6 +1,7 @@
 """Script that runs when updating Disco to the latest version"""
 
 import logging
+import os
 import re
 import subprocess
 from datetime import datetime, timedelta
@@ -20,6 +21,9 @@ log = logging.getLogger(__name__)
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
+    image = os.environ.get("DISCO_IMAGE")
+    if image is None:  # backward compat for version <= 0.4.1
+        image = "letsdiscodev/daemon:latest"
     with Session() as dbsession:
         with dbsession.begin():
             installed_version = keyvalues.get_value(
@@ -59,7 +63,7 @@ def main() -> None:
         with dbsession.begin():
             host_home = keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
-    start_disco_daemon(host_home)
+    start_disco_daemon(host_home, image)
     with Session() as dbsession:
         with dbsession.begin():
             save_done_updating(dbsession)

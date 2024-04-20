@@ -23,6 +23,8 @@ def update_disco(
             "run",
             "--rm",
             "--detach",
+            "--env",
+            f"DISCO_IMAGE={image}",
             "--mount",
             "source=disco-data,target=/disco/data",
             "--mount",

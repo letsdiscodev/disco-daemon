@@ -24,8 +24,10 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
     disco_ip = os.environ.get("DISCO_IP")
     host_home = os.environ.get("HOST_HOME")
+    image = os.environ.get("DISCO_IMAGE")
     assert disco_ip is not None
     assert host_home is not None
+    assert image is not None
     create_database()
     print("Setting initial state in internal database")
     with Session() as dbsession:
@@ -61,7 +63,7 @@ def main() -> None:
     write_caddy_init_config(disco_ip)
     start_caddy(host_home)
     print("Setting up Disco")
-    start_disco_daemon(host_home)
+    start_disco_daemon(host_home, image)
 
 
 def _run_cmd(args: list[str], timeout=600) -> str:
@@ -329,7 +331,7 @@ def create_docker_config(host_home) -> None:
         os.makedirs(f"/host{host_home}/.docker")
 
 
-def start_disco_daemon(host_home: str) -> None:
+def start_disco_daemon(host_home: str, image: str) -> None:
     _run_cmd(
         [
             "docker",
@@ -365,7 +367,7 @@ def start_disco_daemon(host_home: str) -> None:
             "disco_encryption_key",
             "--constraint",
             "node.labels.disco-role==main",
-            f"letsdiscodev/daemon:{disco.__version__}",
+            image,
             "uvicorn",
             "disco.app:app",
             "--port",
