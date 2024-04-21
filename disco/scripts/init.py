@@ -121,8 +121,7 @@ def docker_swarm_create_disco_encryption_key() -> None:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
-    stdout, _ = process.communicate(generate_key())
-    print(stdout, flush=True)
+    _, _ = process.communicate(generate_key())
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
 
