@@ -253,7 +253,7 @@ def replace_deployment(
                 volumes=volumes,
                 networks=["disco-caddy-daemon"],
                 command=service.command,
-                timeout=300,
+                timeout=service.timeout,
                 log_output=log_output,
             )
     if prev_deployment_info is not None:
@@ -748,13 +748,13 @@ def prepare_static_site(
         docker.run(
             image=image,
             project_name=new_deployment_info.project_name,
-            name=f"{new_deployment_info.project_name}-hook-deploy-start-before.{new_deployment_info.number}",
+            name=f"{new_deployment_info.project_name}-build-static-site.{new_deployment_info.number}",
             env_variables=env_variables,
             volumes=volumes,
             networks=[],
             workdir="/repo",
             command=service.command,
-            timeout=300,
+            timeout=service.timeout,
             log_output=log_output,
         )
     else:

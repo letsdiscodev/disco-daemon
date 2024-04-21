@@ -43,6 +43,7 @@ class Service(BaseModel):
     )
     volumes: list[Volume] = []
     schedule: str = Field("* * * * *", pattern=r"^\*|\d+ \*|\d+ \*|\d+ \*|\d+ \*|\d+$")
+    timeout: int = 300  # commands, static site generation
 
 
 class DiscoFile(BaseModel):
