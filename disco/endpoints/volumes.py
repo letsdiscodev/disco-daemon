@@ -121,9 +121,7 @@ async def volume_set(
                 for env_var in deployment.env_variables
             ]
             disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
-            disco_ip = keyvalues.get_value(dbsession, "DISCO_IP")
             assert disco_host is not None
-            assert disco_ip is not None
             api_key = get_api_key_by_id(dbsession, api_key_id)
             assert api_key is not None
             api_key_log = api_key.log()
@@ -218,7 +216,6 @@ async def volume_set(
             ("DISCO_PROJECT_NAME", project_name),
             ("DISCO_SERVICE_NAME", service_name),
             ("DISCO_HOST", disco_host),
-            ("DISCO_IP", disco_ip),
         ]
         if domain_name is not None:
             env_variables += [

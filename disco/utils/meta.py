@@ -70,5 +70,5 @@ def set_disco_host(dbsession: DBSession, host: str, by_api_key: ApiKey) -> None:
     log.info(
         "Setting Disco host from %s to %s by %s", prev_host, host, by_api_key.log()
     )
-    caddy.set_disco_domain(host)
+    caddy.update_disco_host(host)
     keyvalues.set_value(dbsession=dbsession, key="DISCO_HOST", value=host)

@@ -57,7 +57,6 @@ def create_command_run(
         ("DISCO_PROJECT_NAME", project_name),
         ("DISCO_SERVICE_NAME", service),
         ("DISCO_HOST", keyvalues.get_value(dbsession, "DISCO_HOST")),
-        ("DISCO_IP", keyvalues.get_value(dbsession, "DISCO_IP")),
         ("DISCO_API_KEY", by_api_key.id),
     ]
     if deployment.domain is not None:

@@ -45,7 +45,6 @@ class DeploymentInfo:
     registry_host: str | None
     host_home: str
     disco_host: str
-    disco_ip: str
     domain_name: str | None
     env_variables: list[tuple[str, str]]
 
@@ -54,7 +53,6 @@ class DeploymentInfo:
         deployment: Deployment,
         host_home: str,
         disco_host: str,
-        disco_ip: str,
     ) -> DeploymentInfo:
         return DeploymentInfo(
             id=deployment.id,
@@ -66,7 +64,6 @@ class DeploymentInfo:
             registry_host=deployment.registry_host,
             host_home=host_home,
             disco_host=disco_host,
-            disco_ip=disco_ip,
             domain_name=deployment.domain,
             github_host=deployment.github_host,
             disco_file=get_disco_file_from_str(deployment.disco_file)
@@ -235,7 +232,6 @@ def replace_deployment(
                 ("DISCO_PROJECT_NAME", new_deployment_info.project_name),
                 ("DISCO_SERVICE_NAME", service_name),
                 ("DISCO_HOST", new_deployment_info.disco_host),
-                ("DISCO_IP", new_deployment_info.disco_ip),
             ]
             if new_deployment_info.domain_name is not None:
                 env_variables += [
@@ -292,10 +288,8 @@ def get_deployment_info(
     with Session() as dbsession:
         with dbsession.begin():
             disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
-            disco_ip = keyvalues.get_value(dbsession, "DISCO_IP")
             host_home = keyvalues.get_value(dbsession, "HOST_HOME")
             assert disco_host is not None
-            assert disco_ip is not None
             assert host_home is not None
             if new_deployment_id is not None:
                 new_deployment = get_deployment_by_id(dbsession, new_deployment_id)
@@ -304,7 +298,6 @@ def get_deployment_info(
                         deployment=new_deployment,
                         host_home=host_home,
                         disco_host=disco_host,
-                        disco_ip=disco_ip,
                     )
             else:
                 new_deployment_info = None
@@ -315,7 +308,6 @@ def get_deployment_info(
                     prev_deployment,
                     host_home=host_home,
                     disco_host=disco_host,
-                    disco_ip=disco_ip,
                 )
             else:
                 prev_deployment_info = None
@@ -492,7 +484,6 @@ def start_services(
             ("DISCO_PROJECT_NAME", new_deployment_info.project_name),
             ("DISCO_SERVICE_NAME", service_name),
             ("DISCO_HOST", new_deployment_info.disco_host),
-            ("DISCO_IP", new_deployment_info.disco_ip),
         ]
         if new_deployment_info.domain_name is not None:
             env_variables += [
@@ -727,7 +718,6 @@ def prepare_static_site(
             ("DISCO_PROJECT_NAME", new_deployment_info.project_name),
             ("DISCO_SERVICE_NAME", service_name),
             ("DISCO_HOST", new_deployment_info.disco_host),
-            ("DISCO_IP", new_deployment_info.disco_ip),
             ("DISCO_REPO_PATH", "/repo"),
             ("DISCO_DIST_PATH", service.public_path),
         ]

@@ -26,7 +26,6 @@ router = APIRouter(dependencies=[Depends(get_api_key)])
 def meta_get(dbsession: Annotated[DBSession, Depends(get_db)]):
     return {
         "version": disco.__version__,
-        "ip": keyvalues.get_value(dbsession, "DISCO_IP"),
         "discoHost": keyvalues.get_value(dbsession, "DISCO_HOST"),
         "registryHost": keyvalues.get_value(dbsession, "REGISTRY_HOST"),
     }
@@ -71,7 +70,6 @@ def registry_post(
     keyvalues.set_value(dbsession=dbsession, key="REGISTRY_HOST", value=req_body.host)
     return {
         "version": disco.__version__,
-        "ip": keyvalues.get_value(dbsession, "DISCO_IP"),
         "discoHost": keyvalues.get_value(dbsession, "DISCO_HOST"),
         "registryHost": keyvalues.get_value(dbsession, "REGISTRY_HOST"),
     }
@@ -128,7 +126,6 @@ def host_post(
     set_disco_host(dbsession=dbsession, host=req_body.host, by_api_key=api_key)
     return {
         "version": disco.__version__,
-        "ip": keyvalues.get_value(dbsession, "DISCO_IP"),
         "discoHost": keyvalues.get_value(dbsession, "DISCO_HOST"),
         "registryHost": keyvalues.get_value(dbsession, "REGISTRY_HOST"),
     }

@@ -53,7 +53,6 @@ class ProjectCron(Cron):
         disco_file: DiscoFile,
         deployment: Deployment,
         disco_host: str,
-        disco_ip: str,
     ) -> ProjectCron:
         schedule = disco_file.services[service_name].schedule
         cron = croniter(schedule, datetime.utcnow())
@@ -64,7 +63,6 @@ class ProjectCron(Cron):
             ("DISCO_PROJECT_NAME", deployment.project.name),
             ("DISCO_SERVICE_NAME", service_name),
             ("DISCO_HOST", disco_host),
-            ("DISCO_IP", disco_ip),
         ]
         if deployment.domain is not None:
             env_variables += [
@@ -112,7 +110,6 @@ class ProjectCron(Cron):
         disco_file: DiscoFile,
         deployment: Deployment,
         disco_host: str,
-        disco_ip: str,
     ) -> None:
         command = disco_file.services[self.service_name].command
         assert command is not None
@@ -128,7 +125,6 @@ class ProjectCron(Cron):
             ("DISCO_PROJECT_NAME", deployment.project.name),
             ("DISCO_SERVICE_NAME", self.service_name),
             ("DISCO_HOST", disco_host),
-            ("DISCO_IP", disco_ip),
         ]
         if deployment.domain is not None:
             env_variables += [
@@ -228,9 +224,7 @@ class AsyncWorker:
         with Session() as dbsession:
             with dbsession.begin():
                 disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
-                disco_ip = keyvalues.get_value(dbsession, "DISCO_IP")
                 assert disco_host is not None
-                assert disco_ip is not None
                 project = get_project_by_name(dbsession, project_name)
                 assert project is not None
                 deployment = get_deployment_by_number(
@@ -249,7 +243,6 @@ class AsyncWorker:
                             disco_file=disco_file,
                             deployment=deployment,
                             disco_host=disco_host,
-                            disco_ip=disco_ip,
                         )
                     else:
                         crons_to_remove.add(cron)
@@ -266,7 +259,6 @@ class AsyncWorker:
                             disco_file=disco_file,
                             deployment=deployment,
                             disco_host=disco_host,
-                            disco_ip=disco_ip,
                         )
                         self._project_crons.append(cron)
                     except Exception:
@@ -398,9 +390,7 @@ class AsyncWorker:
         with Session() as dbsession:
             with dbsession.begin():
                 disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
-                disco_ip = keyvalues.get_value(dbsession, "DISCO_IP")
                 assert disco_host is not None
-                assert disco_ip is not None
                 projects = get_all_projects(dbsession)
                 for project in projects:
                     deployment = get_live_deployment(dbsession, project)
@@ -416,7 +406,6 @@ class AsyncWorker:
                                 disco_file=disco_file,
                                 deployment=deployment,
                                 disco_host=disco_host,
-                                disco_ip=disco_ip,
                             )
                             crons.append(cron)
                         except Exception:

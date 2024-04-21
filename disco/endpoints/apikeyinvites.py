@@ -39,12 +39,7 @@ def api_keys_post(
     api_key: Annotated[ApiKey, Depends(get_api_key)],
     req_body: NewApiKeyRequestBody,
 ):
-    disco_ip = keyvalues.get_value(dbsession, "DISCO_IP")
     disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
-    if disco_ip == disco_host:
-        raise HTTPException(
-            422, "Must set a domain name for Disco first, see 'disco meta:host'."
-        )
     existing_api_key = get_api_key_by_name(dbsession, req_body.name)
     if existing_api_key is not None:
         raise RequestValidationError(
@@ -138,7 +133,6 @@ def api_key_invite_post(
         },
         "meta": {
             "version": disco.__version__,
-            "ip": keyvalues.get_value(dbsession, "DISCO_IP"),
             "discoHost": keyvalues.get_value(dbsession, "DISCO_HOST"),
             "registryHost": keyvalues.get_value(dbsession, "REGISTRY_HOST"),
         },

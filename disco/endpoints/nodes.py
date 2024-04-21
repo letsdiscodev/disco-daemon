@@ -17,5 +17,5 @@ router = APIRouter(dependencies=[Depends(get_api_key)])
 def join_token_get(dbsession: Annotated[DBSession, Depends(get_db)]):
     return {
         "joinToken": docker.get_swarm_join_token(),
-        "ip": keyvalues.get_value(dbsession, "DISCO_IP"),
+        "ip": keyvalues.get_value(dbsession, "DISCO_ADVERTISE_ADDR"),
     }

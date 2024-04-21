@@ -22,10 +22,12 @@ log = logging.getLogger(__name__)
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
-    disco_ip = os.environ.get("DISCO_IP")
+    disco_host = os.environ.get("DISCO_HOST")
+    disco_advertise_addr = os.environ.get("DISCO_ADVERTISE_ADDR")
     host_home = os.environ.get("HOST_HOME")
     image = os.environ.get("DISCO_IMAGE")
-    assert disco_ip is not None
+    assert disco_host is not None
+    assert disco_advertise_addr is not None
     assert host_home is not None
     assert image is not None
     create_database()
@@ -35,8 +37,12 @@ def main() -> None:
             keyvalues.set_value(
                 dbsession=dbsession, key="DISCO_VERSION", value=disco.__version__
             )
-            keyvalues.set_value(dbsession=dbsession, key="DISCO_IP", value=disco_ip)
-            keyvalues.set_value(dbsession=dbsession, key="DISCO_HOST", value=disco_ip)
+            keyvalues.set_value(
+                dbsession=dbsession,
+                key="DISCO_ADVERTISE_ADDR",
+                value=disco_advertise_addr,
+            )
+            keyvalues.set_value(dbsession=dbsession, key="DISCO_HOST", value=disco_host)
             keyvalues.set_value(dbsession=dbsession, key="HOST_HOME", value=host_home)
             keyvalues.set_value(dbsession=dbsession, key="REGISTRY_HOST", value=None)
             api_key = create_api_key(dbsession=dbsession, name="First API key")
@@ -46,21 +52,14 @@ def main() -> None:
     create_static_site_dir(host_home)
     print("Initializing Docker Swarm")
     create_docker_config(host_home)
-    docker_swarm_init(disco_ip)
+    docker_swarm_init(disco_advertise_addr)
     node_id = get_this_swarm_node_id()
     label_swarm_node(node_id, "disco-role=main")
     docker.create_network("disco-caddy-daemon")
     docker.create_network("disco-logging")
-    public_ca_cert = certificate_stuff(disco_ip)
-    with Session() as dbsession:
-        with dbsession.begin():
-            keyvalues.set_value(
-                dbsession=dbsession, key="PUBLIC_CA_CERT", value=public_ca_cert
-            )
-    print(public_ca_cert)
     docker_swarm_create_disco_encryption_key()
     print("Setting up Caddy web server")
-    write_caddy_init_config(disco_ip)
+    write_caddy_init_config(disco_host)
     start_caddy(host_home)
     print("Setting up Disco")
     start_disco_daemon(host_home, image)
@@ -96,14 +95,14 @@ def create_database():
     command.stamp(config, "head")
 
 
-def docker_swarm_init(disco_ip: str) -> None:
+def docker_swarm_init(advertise_addr: str) -> None:
     _run_cmd(
         [
             "docker",
             "swarm",
             "init",
             "--advertise-addr",
-            disco_ip,
+            advertise_addr,
         ]
     )
 
@@ -156,121 +155,6 @@ def label_swarm_node(node_id: str, label: str) -> None:
     )
 
 
-def certificate_stuff(disco_ip: str) -> str:
-    # TLS certificate for IP without domain
-    # Create CA certificate, in a separate volume to hide from Caddy
-    _run_cmd(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--mount",
-            "source=disco-cacerts,target=/cacerts",
-            f"httpd:{config.HTTPD_VERSION}",
-            "openssl",
-            "req",
-            "-x509",
-            "-newkey",
-            "rsa:4096",
-            "-nodes",
-            "-keyout",
-            "/cacerts/ca.key",
-            "-out",
-            "/cacerts/ca.crt",
-            "-sha256",
-            "-days",
-            "36500",
-            "-subj",
-            f"/CN=Disco CA for {disco_ip}",
-        ]
-    )
-    # Create certificate private key and signing request
-    _run_cmd(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--mount",
-            "source=disco-certs,target=/certs",
-            f"httpd:{config.HTTPD_VERSION}",
-            "openssl",
-            "req",
-            "-new",
-            "-newkey",
-            "rsa:4096",
-            "-keyout",
-            f"/certs/{disco_ip}.key",
-            "-out",
-            f"/certs/{disco_ip}.csr",
-            "-sha256",
-            "-nodes",
-            "-subj",
-            f"/CN={disco_ip}",
-            "-addext",
-            f"subjectAltName=IP:{disco_ip}",
-        ]
-    )
-    # Generate public key using signing request and CA certificate
-    _run_cmd(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--mount",
-            "source=disco-cacerts,target=/cacerts",
-            "--mount",
-            "source=disco-certs,target=/certs",
-            f"httpd:{config.HTTPD_VERSION}",
-            "openssl",
-            "x509",
-            "-req",
-            "-in",
-            f"/certs/{disco_ip}.csr",
-            "-CA",
-            "/cacerts/ca.crt",
-            "-CAkey",
-            "/cacerts/ca.key",
-            "-CAcreateserial",
-            "-out",
-            f"/certs/{disco_ip}.crt",
-            "-days",
-            "36500",
-            "-copy_extensions",
-            "copyall",
-        ]
-    )
-    # Keep copy of CA public key in certs to expose later
-    _run_cmd(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--mount",
-            "source=disco-cacerts,target=/cacerts",
-            "--mount",
-            "source=disco-certs,target=/certs",
-            f"httpd:{config.HTTPD_VERSION}",
-            "cp",
-            "/cacerts/ca.crt",
-            "/certs/ca.crt",
-        ]
-    )
-    # Output CA public key, to be copied by CLI
-    public_ca_cert = _run_cmd(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--mount",
-            "source=disco-cacerts,target=/cacerts",
-            f"httpd:{config.HTTPD_VERSION}",
-            "cat",
-            "/cacerts/ca.crt",
-        ]
-    )
-    return public_ca_cert
-
-
 def create_caddy_socket_dir() -> None:
     os.makedirs("/host/var/run/caddy")
 
@@ -291,8 +175,6 @@ def start_caddy(host_home: str) -> None:
             "published=443,target=443,protocol=tcp",
             "--publish",
             "published=443,target=443,protocol=udp",
-            "--mount",
-            "source=disco-certs,target=/certs",
             "--mount",
             "source=disco-caddy-data,target=/data",
             "--mount",
@@ -357,8 +239,6 @@ def start_disco_daemon(host_home: str, image: str) -> None:
             "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
             "--mount",
             "type=bind,source=/var/run/caddy,target=/var/run/caddy",
-            "--mount",
-            "source=disco-certs,target=/certs",
             "--mount",
             "source=disco-caddy-data,target=/disco/caddy/data",
             "--mount",

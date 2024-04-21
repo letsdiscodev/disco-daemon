@@ -136,63 +136,16 @@ def serve_static_site(project_name: str, deployment_number: int) -> None:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
 
-def set_disco_domain(domain: str) -> None:
-    if _disco_domain_config_exists():
-        _update_disco_domain(domain)
-    else:
-        _add_disco_domain_route(domain)
-
-
-def _add_disco_domain_route(domain: str) -> None:
-    url = f"{BASE_URL}/config/apps/http/servers/disco/routes/0"
-    req_body = {
-        "@id": "disco-domain-handle",
-        "handle": [
-            {
-                "handler": "subroute",
-                "routes": [
-                    {
-                        "match": [{"path": ["/.disco*"]}],
-                        "handle": [
-                            {
-                                "@id": "domain-handle-disco-handle",
-                                "handler": "reverse_proxy",
-                                "rewrite": {"strip_path_prefix": "/.disco"},
-                                "upstreams": [{"dial": "disco:80"}],
-                            }
-                        ],
-                    }
-                ],
-            }
-        ],
-        "match": [{"host": [domain]}],
-        "terminal": True,
-    }
-    session = _get_session()
-    response = session.put(url, json=req_body, headers=HEADERS, timeout=10)
-    if response.status_code != 200:
-        raise Exception(f"Caddy returned {response.status_code}: {response.text}")
-
-
-def _disco_domain_config_exists() -> bool:
-    url = f"{BASE_URL}/id/disco-domain-handle"
-    session = _get_session()
-    response = session.get(url, headers=HEADERS, timeout=10)
-    if response.status_code not in [200, 404]:
-        raise Exception(f"Caddy returned {response.status_code}: {response.text}")
-    return response.status_code == 200
-
-
-def _update_disco_domain(domain: str) -> None:
+def update_disco_host(disco_host: str) -> None:
     url = f"{BASE_URL}/id/disco-domain-handle/match/0/host/0"
-    req_body = domain
+    req_body = disco_host
     session = _get_session()
     response = session.patch(url, json=req_body, headers=HEADERS, timeout=10)
     if response.status_code != 200:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
 
-def write_caddy_init_config(disco_ip: str) -> None:
+def write_caddy_init_config(disco_host: str) -> None:
     # We write the initial config directly to the config file so that Caddy listens
     # to the unix socket instead of a regular port.
     # We use a unix socket because that's the only way at the moment to let only Disco
@@ -211,7 +164,7 @@ def write_caddy_init_config(disco_ip: str) -> None:
                         "listen": [":443"],
                         "routes": [
                             {
-                                "@id": "ip-handle",
+                                "@id": "disco-domain-handle",
                                 "handle": [
                                     {
                                         "handler": "subroute",
@@ -220,7 +173,7 @@ def write_caddy_init_config(disco_ip: str) -> None:
                                                 "match": [{"path": ["/.disco*"]}],
                                                 "handle": [
                                                     {
-                                                        "@id": "ip-handle-disco-handle",
+                                                        "@id": "domain-handle-disco-handle",
                                                         "handler": "reverse_proxy",
                                                         "rewrite": {
                                                             "strip_path_prefix": "/.disco"
@@ -230,45 +183,18 @@ def write_caddy_init_config(disco_ip: str) -> None:
                                                         ],
                                                     }
                                                 ],
-                                            },
-                                            {
-                                                "handle": [
-                                                    {
-                                                        # for registry
-                                                        "@id": "ip-handle-root-handle",
-                                                        "handler": "reverse_proxy",
-                                                        "rewrite": {
-                                                            "strip_path_prefix": "/.disco"
-                                                        },
-                                                        "upstreams": [
-                                                            {"dial": "disco:80"}
-                                                        ],
-                                                    }
-                                                ],
-                                            },
+                                            }
                                         ],
                                     }
                                 ],
-                                "match": [{"host": [disco_ip]}],
+                                "match": [{"host": [disco_host]}],
                                 "terminal": True,
                             }
                         ],
-                        "tls_connection_policies": [{"fallback_sni": disco_ip}],
                         "protocols": ["h1", "h2"],
                     }
                 }
-            },
-            "tls": {
-                "certificates": {
-                    "load_files": [
-                        {
-                            "certificate": f"/certs/{disco_ip}.crt",
-                            "key": f"/certs/{disco_ip}.key",
-                            "tags": ["cert0"],
-                        }
-                    ]
-                }
-            },
+            }
         },
     }
     with open("/initconfig/config.json", "w", encoding="utf-8") as f:
