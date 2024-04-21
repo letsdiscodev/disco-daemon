@@ -2,9 +2,7 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, Request
-from sqlalchemy.orm.session import Session as DBSession
 
-from disco.endpoints.dependencies import get_db
 from disco.utils.mq.tasks import enqueue_task_deprecated
 
 log = logging.getLogger(__name__)
@@ -19,9 +17,8 @@ async def get_body(request: Request):
 @router.post("/webhooks/github/{webhook_token}", status_code=202)
 def github_webhook_service_post(
     webhook_token: str,
-    request: Request,
-    dbsession: Annotated[DBSession, Depends(get_db)],
     x_github_event: Annotated[str | None, Header()],
+    x_hub_signature_256: Annotated[str | None, Header()],
     body: bytes = Depends(get_body),
 ):
     if x_github_event != "push":
@@ -36,7 +33,8 @@ def github_webhook_service_post(
         task_name="PROCESS_GITHUB_WEBHOOK",
         body=dict(
             webhook_token=webhook_token,
-            request_body=body.decode("utf-8"),
+            x_hub_signature_256=x_hub_signature_256,
+            request_body_bytes=body,
         ),
     )
     return {}

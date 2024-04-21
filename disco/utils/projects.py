@@ -21,6 +21,7 @@ def create_project(
     name: str,
     github_repo: str | None,
     github_webhook_token: str | None,
+    github_webhook_secret: str | None,
     domain: str | None,
     ssh_key_pub: str | None,
     ssh_key_private: str | None,
@@ -44,11 +45,14 @@ def create_project(
         else:
             if github_webhook_token is None:
                 github_webhook_token = token_hex(16)
+            if github_webhook_secret is None:
+                github_webhook_secret = token_hex(16)
             if ssh_key_pub is None:
                 ssh_key_pub = create_deploy_key(name)
             github_host = ssh_github_host(name)
             project.github_host = github_host
             project.github_webhook_token = github_webhook_token
+            project.github_webhook_secret = github_webhook_secret
     else:
         ssh_key_pub = None
     dbsession.add(project)

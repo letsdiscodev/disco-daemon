@@ -15,7 +15,8 @@ class Project(Base):
     name = Column(Unicode(255), nullable=False)
     domain = Column(Unicode(255), nullable=True)
     github_repo = Column(Unicode(2048), nullable=True)
-    github_webhook_token = Column(String(32), nullable=True)
+    github_webhook_token = Column(String(32), nullable=True, index=True)
+    github_webhook_secret = Column(String(32), nullable=True)
     github_host = Column(Unicode(2048), nullable=True)
 
     def log(self):

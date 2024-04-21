@@ -62,6 +62,10 @@ class NewProjectRequestBody(BaseModel):
         None,
         alias="githubWebhookToken",
     )
+    github_webhook_secret: str | None = Field(
+        None,
+        alias="githubWebhookSecret",
+    )
     domain: str | None = None
     ssh: Ssh | None = None
     env_variables: list[EnvVariable] = Field([], alias="envVariables")
@@ -161,6 +165,7 @@ def projects_post(
         name=req_body.name,
         github_repo=github_repo,
         github_webhook_token=req_body.github_webhook_token,
+        github_webhook_secret=req_body.github_webhook_secret,
         domain=req_body.domain,
         ssh_key_pub=req_body.ssh.public_key if req_body.ssh is not None else None,
         ssh_key_private=req_body.ssh.private_key if req_body.ssh is not None else None,
@@ -187,6 +192,7 @@ def projects_post(
             "githubRepo": project.github_repo,
             "domain": project.domain,
             "githubWebhookToken": project.github_webhook_token,
+            "githubWebhookSecret": project.github_webhook_secret,
         },
         "sshKeyPub": ssh_key_pub,
         "deployment": {
@@ -207,6 +213,7 @@ def projects_get(dbsession: Annotated[DBSession, Depends(get_db)]):
                 "githubRepo": project.github_repo,
                 "domain": project.domain,
                 "githubWebhookToken": project.github_webhook_token,
+                "githubWebhookSecret": project.github_webhook_secret,
             }
             for project in projects
         ],
@@ -243,6 +250,7 @@ def export_get(
         "domain": project.domain,
         "githubRepo": project.github_repo,
         "githubWebhookToken": project.github_webhook_token,
+        "githubWebhookSecret": project.github_webhook_secret,
         "ssh": {
             "privateKey": sshkeys.get_key_private(project.name),
             "publicKey": sshkeys.get_key_pub(project.name),
