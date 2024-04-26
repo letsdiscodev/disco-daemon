@@ -94,7 +94,7 @@ def volume_get(
 async def volume_set(
     project_name: Annotated[str, Path()],
     volume_name: Annotated[str, Path()],
-    api_key_id: Annotated[ApiKey, Depends(get_api_key_wo_tx)],
+    api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
     request: Request,
 ):
     with Session() as dbsession:

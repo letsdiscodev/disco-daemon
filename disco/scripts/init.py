@@ -11,7 +11,7 @@ from alembic.config import Config
 import disco
 from disco import config
 from disco.models.db import Session, engine
-from disco.models.meta import metadata
+from disco.models.meta import base_metadata
 from disco.utils import docker, keyvalues
 from disco.utils.apikeys import create_api_key
 from disco.utils.caddy import write_caddy_init_config
@@ -90,7 +90,7 @@ def _run_cmd(args: list[str], timeout=600) -> str:
 
 def create_database():
     print("Creating Disco internal database")
-    metadata.create_all(engine)
+    base_metadata.create_all(engine)
     config = Config("/disco/app/alembic.ini")
     command.stamp(config, "head")
 

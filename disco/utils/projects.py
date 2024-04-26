@@ -63,7 +63,7 @@ def create_project(
         by_api_key=by_api_key,
     )
     if domain is not None:
-        add_project_route(project_name=project.name, domain=project.domain)
+        add_project_route(project_name=project.name, domain=domain)
     log.info("%s created project %s", by_api_key.log(), project.log())
     return project, ssh_key_pub
 
@@ -129,12 +129,12 @@ def delete_project(dbsession: DBSession, project: Project, by_api_key: ApiKey) -
             docker.remove_network(network)
         except Exception:
             log.info("Failed to remove network %s", network)
-    for env_var in project.env_variables:
-        dbsession.delete(env_var)
+    for p_env_var in project.env_variables:
+        dbsession.delete(p_env_var)
     for deployment in project.deployments:
         delete_output_for_source(dbsession, f"DEPLOYMENT_{deployment.id}")
-        for env_var in deployment.env_variables:
-            dbsession.delete(env_var)
+        for d_env_var in deployment.env_variables:
+            dbsession.delete(d_env_var)
         dbsession.delete(deployment)
     for keyvalue in project.key_values:
         dbsession.delete(keyvalue)

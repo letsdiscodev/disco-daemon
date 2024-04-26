@@ -1,8 +1,14 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import Column, DateTime, ForeignKey, String, Unicode
-from sqlalchemy.orm import relationship
+from sqlalchemy import DateTime, ForeignKey, String, Unicode
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+if TYPE_CHECKING:
+    from disco.models import Deployment
 
 from disco.models.meta import Base
 
@@ -10,19 +16,25 @@ from disco.models.meta import Base
 class DeploymentEnvironmentVariable(Base):
     __tablename__ = "deployment_env_variables"
 
-    id = Column(String(32), default=lambda: uuid.uuid4().hex, primary_key=True)
-    created = Column(DateTime, default=datetime.utcnow)
-    updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    name = Column(String(255), nullable=False)
-    value = Column(Unicode(4000), nullable=False)
-    deployment_id = Column(
+    id: Mapped[str] = mapped_column(
+        String(32), default=lambda: uuid.uuid4().hex, primary_key=True
+    )
+    created: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    updated: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    value: Mapped[str] = mapped_column(Unicode(4000), nullable=False)
+    deployment_id: Mapped[str] = mapped_column(
         String(32),
         ForeignKey("deployments.id"),
         nullable=False,
         index=True,
     )
 
-    deployment = relationship(
+    deployment: Mapped[Deployment] = relationship(
         "Deployment",
         back_populates="env_variables",
     )

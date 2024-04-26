@@ -1,36 +1,54 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import Column, DateTime, String, Unicode
-from sqlalchemy.orm import relationship
+from sqlalchemy import DateTime, String, Unicode
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+if TYPE_CHECKING:
+    from disco.models import (
+        CommandRun,
+        Deployment,
+        ProjectEnvironmentVariable,
+        ProjectKeyValue,
+    )
 from disco.models.meta import Base
 
 
 class Project(Base):
     __tablename__ = "projects"
 
-    id = Column(String(32), default=lambda: uuid.uuid4().hex, primary_key=True)
-    created = Column(DateTime, default=datetime.utcnow)
-    updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    name = Column(Unicode(255), nullable=False)
-    domain = Column(Unicode(255), nullable=True)
-    github_repo = Column(Unicode(2048), nullable=True)
-    github_webhook_token = Column(String(32), nullable=True, index=True)
-    github_webhook_secret = Column(String(32), nullable=True)
-    github_host = Column(Unicode(2048), nullable=True)
+    id: Mapped[str] = mapped_column(
+        String(32), default=lambda: uuid.uuid4().hex, primary_key=True
+    )
+    created: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    updated: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+    name: Mapped[str] = mapped_column(Unicode(255), nullable=False)
+    domain: Mapped[str | None] = mapped_column(Unicode(255), nullable=True)
+    github_repo: Mapped[str | None] = mapped_column(Unicode(2048), nullable=True)
+    github_webhook_token: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, index=True
+    )
+    github_webhook_secret: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    github_host: Mapped[str | None] = mapped_column(Unicode(2048), nullable=True)
 
-    command_runs = relationship(
+    command_runs: Mapped[list[CommandRun]] = relationship(
         "CommandRun", back_populates="project", order_by="CommandRun.number.desc()"
     )
-    deployments = relationship(
+    deployments: Mapped[list[Deployment]] = relationship(
         "Deployment", back_populates="project", order_by="Deployment.number.desc()"
     )
-    env_variables = relationship(
+    env_variables: Mapped[list[ProjectEnvironmentVariable]] = relationship(
         "ProjectEnvironmentVariable",
         back_populates="project",
     )
-    key_values = relationship(
+    key_values: Mapped[list[ProjectKeyValue]] = relationship(
         "ProjectKeyValue",
         back_populates="project",
     )

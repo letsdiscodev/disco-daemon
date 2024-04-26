@@ -11,7 +11,7 @@ from sqlalchemy.orm.session import Session as DBSession
 import disco
 from disco.auth import get_api_key
 from disco.endpoints.dependencies import get_db
-from disco.models import ApiKey
+from disco.models import ApiKey, ApiKeyInvite
 from disco.utils import keyvalues
 from disco.utils.apikeyinvites import (
     create_api_key_invite,
@@ -120,7 +120,7 @@ def api_key_invite_get(
 @router.post("/api-key-invites/{invite_id}")
 def api_key_invite_post(
     dbsession: Annotated[DBSession, Depends(get_db)],
-    invite: Annotated[ApiKey, Depends(get_api_key_invite_from_url)],
+    invite: Annotated[ApiKeyInvite, Depends(get_api_key_invite_from_url)],
 ):
     if not invite_is_active(invite):
         raise HTTPException(422, "Invite expired")

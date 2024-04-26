@@ -54,12 +54,14 @@ def set_value(
 def delete_value(
     dbsession: DBSession, project: Project, key: str, by_api_key: ApiKey
 ) -> None:
-    key = dbsession.query(ProjectKeyValue).get({"key": key, "project_id": project.id})
-    if key is not None:
+    key_value = dbsession.query(ProjectKeyValue).get(
+        {"key": key, "project_id": project.id}
+    )
+    if key_value is not None:
         log.info(
             "Project key value deleted %s (%s) by %s",
             key,
             project.log(),
             by_api_key.log(),
         )
-        dbsession.delete(key)
+        dbsession.delete(key_value)

@@ -1,62 +1,73 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Unicode
-from sqlalchemy.orm import relationship
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Unicode
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+if TYPE_CHECKING:
+    from disco.models import ApiKey, CommandRun, DeploymentEnvironmentVariable, Project
 from disco.models.meta import Base
 
 
 class Deployment(Base):
     __tablename__ = "deployments"
 
-    id = Column(String(32), default=lambda: uuid.uuid4().hex, primary_key=True)
-    created = Column(DateTime, default=datetime.utcnow)
-    updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    number = Column(Integer, nullable=False, index=True)
-    status = Column(String(32), nullable=False)
-    commit_hash = Column(String(200), nullable=True)
-    disco_file = Column(Unicode(5000), nullable=True)
-    project_name = Column(Unicode(255), nullable=False)
-    github_repo = Column(Unicode(2048), nullable=True)
-    github_host = Column(Unicode(2048), nullable=True)
-    domain = Column(Unicode(255), nullable=True)
-    registry_host = Column(Unicode(2048), nullable=True)
-    project_id = Column(
+    id: Mapped[str] = mapped_column(
+        String(32), default=lambda: uuid.uuid4().hex, primary_key=True
+    )
+    created: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    updated: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+    number: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    commit_hash: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    disco_file: Mapped[str | None] = mapped_column(Unicode(5000), nullable=True)
+    project_name: Mapped[str] = mapped_column(Unicode(255), nullable=False)
+    github_repo: Mapped[str | None] = mapped_column(Unicode(2048), nullable=True)
+    github_host: Mapped[str | None] = mapped_column(Unicode(2048), nullable=True)
+    domain: Mapped[str | None] = mapped_column(Unicode(255), nullable=True)
+    registry_host: Mapped[str | None] = mapped_column(Unicode(2048), nullable=True)
+    project_id: Mapped[str] = mapped_column(
         String(32),
         ForeignKey("projects.id"),
         nullable=False,
         index=True,
     )
-    prev_deployment_id = Column(
+    prev_deployment_id: Mapped[str | None] = mapped_column(
         String(32),
         ForeignKey("deployments.id"),
         nullable=True,
         index=True,
     )
-    by_api_key_id = Column(
+    by_api_key_id: Mapped[str | None] = mapped_column(
         String(32),
         ForeignKey("api_keys.id"),
         nullable=True,
         index=True,
     )
 
-    project = relationship(
+    project: Mapped[Project] = relationship(
         "Project",
         back_populates="deployments",
     )
-    by_api_key = relationship(
+    by_api_key: Mapped[ApiKey | None] = relationship(
         "ApiKey",
         back_populates="deployments",
     )
-    prev_deployment = relationship(
+    prev_deployment: Mapped[Deployment | None] = relationship(
         "Deployment",
     )
-    command_runs = relationship(
+    command_runs: Mapped[list[CommandRun]] = relationship(
         "CommandRun", back_populates="deployment", order_by="CommandRun.number.desc()"
     )
-    env_variables = relationship(
-        "DeploymentEnvironmentVariable", back_polupates="deployment"
+    env_variables: Mapped[list[DeploymentEnvironmentVariable]] = relationship(
+        "DeploymentEnvironmentVariable", back_populates="deployment"
     )
 
     def log(self):
