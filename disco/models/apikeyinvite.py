@@ -2,7 +2,7 @@ from datetime import datetime
 from secrets import token_hex
 
 from sqlalchemy import Column, DateTime, ForeignKey, String, Unicode
-from sqlalchemy.orm import backref, relationship
+from sqlalchemy.orm import relationship
 
 from disco.models.meta import Base
 
@@ -31,12 +31,12 @@ class ApiKeyInvite(Base):
     by_api_key = relationship(
         "ApiKey",
         foreign_keys=by_api_key_id,
-        backref=backref("created_api_key_invites"),
+        back_populates="created_api_key_invites",
     )
     api_key = relationship(
         "ApiKey",
         foreign_keys=api_key_id,
-        backref=backref("from_invite"),
+        back_populates="from_invite",
     )
 
     def log(self):

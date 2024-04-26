@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import Column, DateTime, ForeignKey, String, UnicodeText
-from sqlalchemy.orm import backref, relationship
+from sqlalchemy.orm import relationship
 
 from disco.models.meta import Base
 
@@ -21,8 +21,7 @@ class ProjectKeyValue(Base):
 
     project = relationship(
         "Project",
-        foreign_keys=project_id,
-        backref=backref("key_values"),
+        back_populates="key_values",
     )
 
     def log(self):

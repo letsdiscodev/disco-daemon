@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import Column, DateTime, ForeignKey, String, Unicode
-from sqlalchemy.orm import backref, relationship
+from sqlalchemy.orm import relationship
 
 from disco.models.meta import Base
 
@@ -30,13 +30,11 @@ class ProjectEnvironmentVariable(Base):
 
     project = relationship(
         "Project",
-        foreign_keys=project_id,
-        backref=backref("env_variables"),
+        back_populates="env_variables",
     )
     by_api_key = relationship(
         "ApiKey",
-        foreign_keys=by_api_key_id,
-        backref=backref("env_variables"),
+        back_populates="env_variables",
     )
 
     def log(self):

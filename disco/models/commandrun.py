@@ -10,7 +10,7 @@ from sqlalchemy import (
     Unicode,
     UnicodeText,
 )
-from sqlalchemy.orm import backref, relationship
+from sqlalchemy.orm import relationship
 
 from disco.models.meta import Base
 
@@ -46,17 +46,15 @@ class CommandRun(Base):
 
     project = relationship(
         "Project",
-        foreign_keys=project_id,
-        backref=backref("command_runs", order_by="CommandRun.number.desc()"),
+        back_populates="command_runs",
     )
     by_api_key = relationship(
         "ApiKey",
-        foreign_keys=by_api_key_id,
-        backref=backref("command_runs"),
+        back_populates="command_runs",
     )
     deployment = relationship(
         "Deployment",
-        foreign_keys=deployment_id,
+        back_populates="command_runs",
     )
 
     def log(self):

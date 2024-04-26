@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Unicode
-from sqlalchemy.orm import backref, relationship
+from sqlalchemy.orm import relationship
 
 from disco.models.meta import Base
 
@@ -43,17 +43,20 @@ class Deployment(Base):
 
     project = relationship(
         "Project",
-        foreign_keys=project_id,
-        backref=backref("deployments", order_by="Deployment.number.desc()"),
+        back_populates="deployments",
     )
     by_api_key = relationship(
         "ApiKey",
-        foreign_keys=by_api_key_id,
-        backref=backref("deployments"),
+        back_populates="deployments",
     )
     prev_deployment = relationship(
         "Deployment",
-        foreign_keys=prev_deployment_id,
+    )
+    command_runs = relationship(
+        "CommandRun", back_populates="deployment", order_by="CommandRun.number.desc()"
+    )
+    env_variables = relationship(
+        "DeploymentEnvironmentVariable", back_polupates="deployment"
     )
 
     def log(self):
