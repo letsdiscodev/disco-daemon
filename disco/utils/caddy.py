@@ -42,13 +42,20 @@ def _get_session():
 
 
 def get_config() -> dict[str, Any] | None:
-    # not used by code, but useful to debug
     session = _get_session()
     url = f"{BASE_URL}/config/"
     response = session.get(url, headers=HEADERS, timeout=10)
     if response.status_code != 200:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
     return response.json()
+
+
+def set_config(config: dict[str, Any]) -> None:
+    session = _get_session()
+    url = f"{BASE_URL}/config/"
+    response = session.post(url, json=config, headers=HEADERS, timeout=10)
+    if response.status_code != 200:
+        raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
 
 def add_project_route(project_name: str, domain: str) -> None:
