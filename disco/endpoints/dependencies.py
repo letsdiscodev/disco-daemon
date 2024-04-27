@@ -8,9 +8,8 @@ from disco.utils.projects import get_project_by_name
 
 
 def get_db():
-    with Session() as dbsession:
-        with dbsession.begin():
-            yield dbsession
+    with Session.begin() as dbsession:
+        yield dbsession
 
 
 def get_project_from_url(

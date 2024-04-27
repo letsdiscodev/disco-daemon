@@ -31,11 +31,10 @@ async def logs_project(
     project_name: str,
     background_tasks: BackgroundTasks,
 ):
-    with Session() as dbsession:
-        with dbsession.begin():
-            project = get_project_by_name(dbsession, project_name)
-            if project is None:
-                raise HTTPException(status_code=404)
+    with Session.begin() as dbsession:
+        project = get_project_by_name(dbsession, project_name)
+        if project is None:
+            raise HTTPException(status_code=404)
     return EventSourceResponse(
         read_logs(
             project_name=project_name,
@@ -51,11 +50,10 @@ async def logs_project_service(
     service_name: str,
     background_tasks: BackgroundTasks,
 ):
-    with Session() as dbsession:
-        with dbsession.begin():
-            project = get_project_by_name(dbsession, project_name)
-            if project is None:
-                raise HTTPException(status_code=404)
+    with Session.begin() as dbsession:
+        project = get_project_by_name(dbsession, project_name)
+        if project is None:
+            raise HTTPException(status_code=404)
     return EventSourceResponse(
         read_logs(
             project_name=project_name,

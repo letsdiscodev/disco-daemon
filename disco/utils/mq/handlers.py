@@ -25,16 +25,15 @@ def process_github_webhook(task_body):
         log.info("Branch was not master or main, skipping")
         return
 
-    with Session() as dbsession:
-        with dbsession.begin():
-            project = get_project_by_github_webhook_token(dbsession, webhook_token)
-            if project is None:
-                log.warning(
-                    "Project with Github Webhook Token not found, skipping %s",
-                    webhook_token,
-                )
-                return
-            github_webhook_secret = project.github_webhook_secret
+    with Session.begin() as dbsession:
+        project = get_project_by_github_webhook_token(dbsession, webhook_token)
+        if project is None:
+            log.warning(
+                "Project with Github Webhook Token not found, skipping %s",
+                webhook_token,
+            )
+            return
+        github_webhook_secret = project.github_webhook_secret
     if github_webhook_secret is not None:  # backward compat <= 0.4.1
         if x_hub_signature_256 is None:
             log.warning("X-Hub-Signature-256 not provided, skipping")
@@ -53,18 +52,17 @@ def process_github_webhook(task_body):
         log.info(
             "Legacy pre 0.4.1 project, no Github webhook signature to verify, continuing"
         )
-    with Session() as dbsession:
-        with dbsession.begin():
-            project = get_project_by_github_webhook_token(dbsession, webhook_token)
-            assert project is not None
-            deployment = create_deployment(
-                dbsession=dbsession,
-                project=project,
-                commit_hash=commit_hash,
-                disco_file=None,
-                by_api_key=None,
-            )
-            deployment_id = deployment.id
+    with Session.begin() as dbsession:
+        project = get_project_by_github_webhook_token(dbsession, webhook_token)
+        assert project is not None
+        deployment = create_deployment(
+            dbsession=dbsession,
+            project=project,
+            commit_hash=commit_hash,
+            disco_file=None,
+            by_api_key=None,
+        )
+        deployment_id = deployment.id
     enqueue_task_deprecated(
         task_name="PROCESS_DEPLOYMENT",
         body=dict(
@@ -86,27 +84,26 @@ def process_deployment_if_any(task_body):
     from disco.utils.projects import get_project_by_id
 
     project_id = task_body["project_id"]
-    with Session() as dbsession:
-        with dbsession.begin():
-            project = get_project_by_id(dbsession, project_id)
-            if project is None:
-                log.warning(
-                    "Project %s not found, not processing next deployment", project_id
-                )
-                return
-            deployment = get_oldest_queued_deployment(dbsession, project)
-            if deployment is None or deployment.status != "QUEUED":
-                log.info(
-                    "No more queued deployments for project %s, done for now.",
-                    project.log(),
-                )
-                return
-            enqueue_task_deprecated(
-                task_name="PROCESS_DEPLOYMENT",
-                body=dict(
-                    deployment_id=deployment.id,
-                ),
+    with Session.begin() as dbsession:
+        project = get_project_by_id(dbsession, project_id)
+        if project is None:
+            log.warning(
+                "Project %s not found, not processing next deployment", project_id
             )
+            return
+        deployment = get_oldest_queued_deployment(dbsession, project)
+        if deployment is None or deployment.status != "QUEUED":
+            log.info(
+                "No more queued deployments for project %s, done for now.",
+                project.log(),
+            )
+            return
+        enqueue_task_deprecated(
+            task_name="PROCESS_DEPLOYMENT",
+            body=dict(
+                deployment_id=deployment.id,
+            ),
+        )
 
 
 HANDLERS = dict(

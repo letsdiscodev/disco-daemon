@@ -221,57 +221,54 @@ class AsyncWorker:
         from disco.utils.deployments import get_deployment_by_number
         from disco.utils.projects import get_project_by_name
 
-        with Session() as dbsession:
-            with dbsession.begin():
-                disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
-                assert disco_host is not None
-                project = get_project_by_name(dbsession, project_name)
-                assert project is not None
-                deployment = get_deployment_by_number(
-                    dbsession, project, deployment_number
-                )
-                assert deployment is not None
-                disco_file = get_disco_file_from_str(deployment.disco_file)
-                existing_crons = set()
-                crons_to_remove = set()
-                for cron in self._project_crons:
-                    if cron.project_name != prev_project_name:
-                        continue
-                    existing_crons.add(cron.service_name)
-                    if cron.service_name in disco_file.services:
-                        cron.update_for_deployment(
-                            disco_file=disco_file,
-                            deployment=deployment,
-                            disco_host=disco_host,
-                        )
-                    else:
-                        crons_to_remove.add(cron)
-                for cron_to_remove in crons_to_remove:
-                    self._project_crons.remove(cron_to_remove)
-                for service_name, service in disco_file.services.items():
-                    if service.type != ServiceType.cron:
-                        continue
-                    if service_name in existing_crons:
-                        continue  # already updated above
-                    try:
-                        cron = ProjectCron.from_deployment(
-                            service_name=service_name,
-                            disco_file=disco_file,
-                            deployment=deployment,
-                            disco_host=disco_host,
-                        )
-                        self._project_crons.append(cron)
-                    except Exception:
-                        log.exception(
-                            "Failed to add project cron to list %s %s %s",
-                            project_name,
-                            service_name,
-                            deployment.number,
-                        )
-                for cron in self._project_crons:
-                    if cron.project_name != project_name:
-                        continue
-                    cron.paused = False
+        with Session.begin() as dbsession:
+            disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
+            assert disco_host is not None
+            project = get_project_by_name(dbsession, project_name)
+            assert project is not None
+            deployment = get_deployment_by_number(dbsession, project, deployment_number)
+            assert deployment is not None
+            disco_file = get_disco_file_from_str(deployment.disco_file)
+            existing_crons = set()
+            crons_to_remove = set()
+            for cron in self._project_crons:
+                if cron.project_name != prev_project_name:
+                    continue
+                existing_crons.add(cron.service_name)
+                if cron.service_name in disco_file.services:
+                    cron.update_for_deployment(
+                        disco_file=disco_file,
+                        deployment=deployment,
+                        disco_host=disco_host,
+                    )
+                else:
+                    crons_to_remove.add(cron)
+            for cron_to_remove in crons_to_remove:
+                self._project_crons.remove(cron_to_remove)
+            for service_name, service in disco_file.services.items():
+                if service.type != ServiceType.cron:
+                    continue
+                if service_name in existing_crons:
+                    continue  # already updated above
+                try:
+                    cron = ProjectCron.from_deployment(
+                        service_name=service_name,
+                        disco_file=disco_file,
+                        deployment=deployment,
+                        disco_host=disco_host,
+                    )
+                    self._project_crons.append(cron)
+                except Exception:
+                    log.exception(
+                        "Failed to add project cron to list %s %s %s",
+                        project_name,
+                        service_name,
+                        deployment.number,
+                    )
+            for cron in self._project_crons:
+                if cron.project_name != project_name:
+                    continue
+                cron.paused = False
 
     async def _get_tasks(self) -> AsyncGenerator[asyncio.Task, None]:
         while not self._stopped:
@@ -396,34 +393,33 @@ class AsyncWorker:
         from disco.utils.projects import get_all_projects
 
         crons: list[ProjectCron] = []
-        with Session() as dbsession:
-            with dbsession.begin():
-                disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
-                assert disco_host is not None
-                projects = get_all_projects(dbsession)
-                for project in projects:
-                    deployment = get_live_deployment(dbsession, project)
-                    if deployment is None:
+        with Session.begin() as dbsession:
+            disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
+            assert disco_host is not None
+            projects = get_all_projects(dbsession)
+            for project in projects:
+                deployment = get_live_deployment(dbsession, project)
+                if deployment is None:
+                    continue
+                disco_file = get_disco_file_from_str(deployment.disco_file)
+                for service_name, service in disco_file.services.items():
+                    if service.type != ServiceType.cron:
                         continue
-                    disco_file = get_disco_file_from_str(deployment.disco_file)
-                    for service_name, service in disco_file.services.items():
-                        if service.type != ServiceType.cron:
-                            continue
-                        try:
-                            cron = ProjectCron.from_deployment(
-                                service_name=service_name,
-                                disco_file=disco_file,
-                                deployment=deployment,
-                                disco_host=disco_host,
-                            )
-                            crons.append(cron)
-                        except Exception:
-                            log.exception(
-                                "Failed to add project cron to list %s %s %s",
-                                project.name,
-                                service_name,
-                                deployment.number,
-                            )
+                    try:
+                        cron = ProjectCron.from_deployment(
+                            service_name=service_name,
+                            disco_file=disco_file,
+                            deployment=deployment,
+                            disco_host=disco_host,
+                        )
+                        crons.append(cron)
+                    except Exception:
+                        log.exception(
+                            "Failed to add project cron to list %s %s %s",
+                            project.name,
+                            service_name,
+                            deployment.number,
+                        )
         return crons
 
 

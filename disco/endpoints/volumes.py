@@ -97,34 +97,33 @@ async def volume_set(
     api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
     request: Request,
 ):
-    with Session() as dbsession:
-        with dbsession.begin():
-            project = get_project_by_name(dbsession, project_name)
-            if project is None:
-                raise HTTPException(status_code=404)
-            deployment = get_live_deployment(dbsession, project)
-            volume_names = []
-            if deployment is not None:
-                disco_file = get_disco_file_from_str(deployment.disco_file)
-                for service in disco_file.services.values():
-                    for volume in service.volumes:
-                        volume_names.append(volume.name)
-            if volume_name not in volume_names:
-                raise HTTPException(status_code=404)
-            assert deployment is not None
-            deployment_number = deployment.number
-            domain_name = deployment.domain
-            commit_hash = deployment.commit_hash
-            registry_host = deployment.registry_host
-            env_variables = [
-                (env_var.name, decrypt(env_var.value))
-                for env_var in deployment.env_variables
-            ]
-            disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
-            assert disco_host is not None
-            api_key = get_api_key_by_id(dbsession, api_key_id)
-            assert api_key is not None
-            api_key_log = api_key.log()
+    with Session.begin() as dbsession:
+        project = get_project_by_name(dbsession, project_name)
+        if project is None:
+            raise HTTPException(status_code=404)
+        deployment = get_live_deployment(dbsession, project)
+        volume_names = []
+        if deployment is not None:
+            disco_file = get_disco_file_from_str(deployment.disco_file)
+            for service in disco_file.services.values():
+                for volume in service.volumes:
+                    volume_names.append(volume.name)
+        if volume_name not in volume_names:
+            raise HTTPException(status_code=404)
+        assert deployment is not None
+        deployment_number = deployment.number
+        domain_name = deployment.domain
+        commit_hash = deployment.commit_hash
+        registry_host = deployment.registry_host
+        env_variables = [
+            (env_var.name, decrypt(env_var.value))
+            for env_var in deployment.env_variables
+        ]
+        disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
+        assert disco_host is not None
+        api_key = get_api_key_by_id(dbsession, api_key_id)
+        assert api_key is not None
+        api_key_log = api_key.log()
 
     assert disco_file is not None
     log.info(

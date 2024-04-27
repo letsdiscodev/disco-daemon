@@ -32,21 +32,20 @@ def main() -> None:
     assert image is not None
     create_database()
     print("Setting initial state in internal database")
-    with Session() as dbsession:
-        with dbsession.begin():
-            keyvalues.set_value(
-                dbsession=dbsession, key="DISCO_VERSION", value=disco.__version__
-            )
-            keyvalues.set_value(
-                dbsession=dbsession,
-                key="DISCO_ADVERTISE_ADDR",
-                value=disco_advertise_addr,
-            )
-            keyvalues.set_value(dbsession=dbsession, key="DISCO_HOST", value=disco_host)
-            keyvalues.set_value(dbsession=dbsession, key="HOST_HOME", value=host_home)
-            keyvalues.set_value(dbsession=dbsession, key="REGISTRY_HOST", value=None)
-            api_key = create_api_key(dbsession=dbsession, name="First API key")
-            print("Created API key:", api_key.id)
+    with Session.begin() as dbsession:
+        keyvalues.set_value(
+            dbsession=dbsession, key="DISCO_VERSION", value=disco.__version__
+        )
+        keyvalues.set_value(
+            dbsession=dbsession,
+            key="DISCO_ADVERTISE_ADDR",
+            value=disco_advertise_addr,
+        )
+        keyvalues.set_value(dbsession=dbsession, key="DISCO_HOST", value=disco_host)
+        keyvalues.set_value(dbsession=dbsession, key="HOST_HOME", value=host_home)
+        keyvalues.set_value(dbsession=dbsession, key="REGISTRY_HOST", value=None)
+        api_key = create_api_key(dbsession=dbsession, name="First API key")
+        print("Created API key:", api_key.id)
     create_caddy_socket_dir()
     create_projects_dir(host_home)
     create_static_site_dir(host_home)

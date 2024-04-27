@@ -135,46 +135,44 @@ async def run_output_get(
     run_number: int,
     last_event_id: Annotated[str | None, Header()] = None,
 ):
-    with Session() as dbsession:
-        with dbsession.begin():
-            project = get_project_by_name(dbsession, project_name)
-            if project is None:
-                raise HTTPException(status_code=404)
-            run = get_command_run_by_number(dbsession, project, run_number)
-            if run is None:
-                raise HTTPException(status_code=404)
-            source = f"RUN_{run.id}"
-            after = None
-            if last_event_id is not None:
-                output = commandoutputs.get_by_id(dbsession, last_event_id)
-                if output is not None:
-                    after = output.created
+    with Session.begin() as dbsession:
+        project = get_project_by_name(dbsession, project_name)
+        if project is None:
+            raise HTTPException(status_code=404)
+        run = get_command_run_by_number(dbsession, project, run_number)
+        if run is None:
+            raise HTTPException(status_code=404)
+        source = f"RUN_{run.id}"
+        after = None
+        if last_event_id is not None:
+            output = commandoutputs.get_by_id(dbsession, last_event_id)
+            if output is not None:
+                after = output.created
 
     # TODO refactor, this is copy-pasted from deployment output
     async def get_run_output(source: str, after: datetime | None):
         while True:
-            with Session() as dbsession:
-                with dbsession.begin():
-                    output = commandoutputs.get_next(dbsession, source, after=after)
-                    if output is not None:
-                        if output.text is None:
-                            yield ServerSentEvent(
-                                id=output.id,
-                                event="end",
-                                data="",
-                            )
-                            return
-                        after = output.created
+            with Session.begin() as dbsession:
+                output = commandoutputs.get_next(dbsession, source, after=after)
+                if output is not None:
+                    if output.text is None:
                         yield ServerSentEvent(
                             id=output.id,
-                            event="output",
-                            data=json.dumps(
-                                {
-                                    "timestamp": output.created.isoformat(),
-                                    "text": output.text,
-                                }
-                            ),
+                            event="end",
+                            data="",
                         )
+                        return
+                    after = output.created
+                    yield ServerSentEvent(
+                        id=output.id,
+                        event="output",
+                        data=json.dumps(
+                            {
+                                "timestamp": output.created.isoformat(),
+                                "text": output.text,
+                            }
+                        ),
+                    )
             if output is None:
                 await asyncio.sleep(0.1)
 

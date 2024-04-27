@@ -82,59 +82,55 @@ def process_deployment(deployment_id: str) -> None:
     def log_output(output: str | None) -> None:
         if output is not None:
             log.info("Deployment %s: %s", deployment_id, output)
-        with Session() as dbsession:
-            with dbsession.begin():
-                commandoutputs.save(dbsession, f"DEPLOYMENT_{deployment_id}", output)
+        with Session.begin() as dbsession:
+            commandoutputs.save(dbsession, f"DEPLOYMENT_{deployment_id}", output)
 
     def set_current_deployment_status(status: DEPLOYMENT_STATUS) -> None:
-        with Session() as dbsession:
-            with dbsession.begin():
-                deployment = get_deployment_by_id(dbsession, deployment_id)
-                assert deployment is not None
-                set_deployment_status(deployment, status)
-
-    with Session() as dbsession:
-        with dbsession.begin():
+        with Session.begin() as dbsession:
             deployment = get_deployment_by_id(dbsession, deployment_id)
             assert deployment is not None
-            deployment_in_progress = get_deployment_in_progress(
-                dbsession, deployment.project
+            set_deployment_status(deployment, status)
+
+    with Session.begin() as dbsession:
+        deployment = get_deployment_by_id(dbsession, deployment_id)
+        assert deployment is not None
+        deployment_in_progress = get_deployment_in_progress(
+            dbsession, deployment.project
+        )
+        if deployment_in_progress is not None:
+            log_output(
+                f"Deployment {deployment_in_progress.number} in progress, "
+                "waiting for build to complete "
+                f"before processing deployment {deployment.number}.\n"
             )
-            if deployment_in_progress is not None:
-                log_output(
-                    f"Deployment {deployment_in_progress.number} in progress, "
-                    "waiting for build to complete "
-                    f"before processing deployment {deployment.number}.\n"
-                )
-                return
-            last_deployment = get_last_deployment(dbsession, deployment.project)
-            if last_deployment is not None and last_deployment.id != deployment_id:
-                log_output(
-                    f"Deployment {last_deployment.number} is latest, "
-                    f"skipping deployment {deployment.number}.\n"
-                )
-                set_current_deployment_status("SKIPPED")
-                log_output(None)  # end
-                enqueue_task_deprecated(
-                    task_name="PROCESS_DEPLOYMENT_IF_ANY",
-                    body={
-                        "project_id": deployment.project_id,
-                    },
-                )
-                return
+            return
+        last_deployment = get_last_deployment(dbsession, deployment.project)
+        if last_deployment is not None and last_deployment.id != deployment_id:
+            log_output(
+                f"Deployment {last_deployment.number} is latest, "
+                f"skipping deployment {deployment.number}.\n"
+            )
+            set_current_deployment_status("SKIPPED")
+            log_output(None)  # end
+            enqueue_task_deprecated(
+                task_name="PROCESS_DEPLOYMENT_IF_ANY",
+                body={
+                    "project_id": deployment.project_id,
+                },
+            )
+            return
 
     set_current_deployment_status("IN_PROGRESS")
     log_output("Starting deployment\n")
     try:
-        with Session() as dbsession:
-            with dbsession.begin():
-                log.info("Getting data from database for deployment %s", deployment_id)
-                deployment = get_deployment_by_id(dbsession, deployment_id)
-                assert deployment is not None
-                prev_deployment = get_live_deployment(dbsession, deployment.project)
-                prev_deployment_id = (
-                    prev_deployment.id if prev_deployment is not None else None
-                )
+        with Session.begin() as dbsession:
+            log.info("Getting data from database for deployment %s", deployment_id)
+            deployment = get_deployment_by_id(dbsession, deployment_id)
+            assert deployment is not None
+            prev_deployment = get_live_deployment(dbsession, deployment.project)
+            prev_deployment_id = (
+                prev_deployment.id if prev_deployment is not None else None
+            )
     except Exception:
         log.exception("Deployment %s failed", deployment_id)
         log_output("Deployment failed\n")
@@ -164,16 +160,15 @@ def process_deployment(deployment_id: str) -> None:
         log.info("Finished processing build %s", deployment_id)
         log_output(None)  # end
 
-    with Session() as dbsession:
-        with dbsession.begin():
-            deployment = get_deployment_by_id(dbsession, deployment_id)
-            assert deployment is not None
-            enqueue_task_deprecated(
-                task_name="PROCESS_DEPLOYMENT_IF_ANY",
-                body={
-                    "project_id": deployment.project_id,
-                },
-            )
+    with Session.begin() as dbsession:
+        deployment = get_deployment_by_id(dbsession, deployment_id)
+        assert deployment is not None
+        enqueue_task_deprecated(
+            task_name="PROCESS_DEPLOYMENT_IF_ANY",
+            body={
+                "project_id": deployment.project_id,
+            },
+        )
 
 
 def replace_deployment(
@@ -285,32 +280,31 @@ def replace_deployment(
 def get_deployment_info(
     new_deployment_id: str | None, prev_deployment_id: str | None
 ) -> tuple[DeploymentInfo | None, DeploymentInfo | None]:
-    with Session() as dbsession:
-        with dbsession.begin():
-            disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
-            host_home = keyvalues.get_value(dbsession, "HOST_HOME")
-            assert disco_host is not None
-            assert host_home is not None
-            if new_deployment_id is not None:
-                new_deployment = get_deployment_by_id(dbsession, new_deployment_id)
-                if new_deployment is not None:
-                    new_deployment_info = DeploymentInfo.from_deployment(
-                        deployment=new_deployment,
-                        host_home=host_home,
-                        disco_host=disco_host,
-                    )
-            else:
-                new_deployment_info = None
-            if prev_deployment_id is not None:
-                prev_deployment = get_deployment_by_id(dbsession, prev_deployment_id)
-                assert prev_deployment is not None
-                prev_deployment_info = DeploymentInfo.from_deployment(
-                    prev_deployment,
+    with Session.begin() as dbsession:
+        disco_host = keyvalues.get_value(dbsession, "DISCO_HOST")
+        host_home = keyvalues.get_value(dbsession, "HOST_HOME")
+        assert disco_host is not None
+        assert host_home is not None
+        if new_deployment_id is not None:
+            new_deployment = get_deployment_by_id(dbsession, new_deployment_id)
+            if new_deployment is not None:
+                new_deployment_info = DeploymentInfo.from_deployment(
+                    deployment=new_deployment,
                     host_home=host_home,
                     disco_host=disco_host,
                 )
-            else:
-                prev_deployment_info = None
+        else:
+            new_deployment_info = None
+        if prev_deployment_id is not None:
+            prev_deployment = get_deployment_by_id(dbsession, prev_deployment_id)
+            assert prev_deployment is not None
+            prev_deployment_info = DeploymentInfo.from_deployment(
+                prev_deployment,
+                host_home=host_home,
+                disco_host=disco_host,
+            )
+        else:
+            prev_deployment_info = None
     return new_deployment_info, prev_deployment_info
 
 
@@ -347,11 +341,10 @@ def checkout_commit(
         )
     commit_hash = github.get_head_commit_hash(new_deployment_info.project_name)
     if new_deployment_info.commit_hash != commit_hash:
-        with Session() as dbsession:
-            with dbsession.begin():
-                deployment = get_deployment_by_id(dbsession, new_deployment_info.id)
-                assert deployment is not None
-                set_deployment_commit_hash(deployment, commit_hash)
+        with Session.begin() as dbsession:
+            deployment = get_deployment_by_id(dbsession, new_deployment_info.id)
+            assert deployment is not None
+            set_deployment_commit_hash(deployment, commit_hash)
 
 
 def read_disco_file_for_deployment(
@@ -360,11 +353,10 @@ def read_disco_file_for_deployment(
 ) -> DiscoFile | None:
     disco_file_str = read_disco_file(new_deployment_info.project_name)
     if disco_file_str is not None:
-        with Session() as dbsession:
-            with dbsession.begin():
-                deployment = get_deployment_by_id(dbsession, new_deployment_info.id)
-                assert deployment is not None
-                set_deployment_disco_file(deployment, disco_file_str)
+        with Session.begin() as dbsession:
+            deployment = get_deployment_by_id(dbsession, new_deployment_info.id)
+            assert deployment is not None
+            set_deployment_disco_file(deployment, disco_file_str)
     else:
         log_output("No disco.json found, falling back to default config\n")
     return get_disco_file_from_str(disco_file_str)

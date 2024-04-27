@@ -25,10 +25,9 @@ def get_api_key_wo_tx(
     credentials: Annotated[HTTPBasicCredentials, Depends(security)],
 ):
     api_key_id = None
-    with Session() as dbsession:
-        with dbsession.begin():
-            api_key = get_valid_api_key_by_id(dbsession, credentials.username)
-            if api_key is None:
-                raise HTTPException(status_code=403)
-            api_key_id = api_key.id
+    with Session.begin() as dbsession:
+        api_key = get_valid_api_key_by_id(dbsession, credentials.username)
+        if api_key is None:
+            raise HTTPException(status_code=403)
+        api_key_id = api_key.id
     yield api_key_id

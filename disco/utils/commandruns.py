@@ -78,9 +78,8 @@ def create_command_run(
         def log_output(output: str | None) -> None:
             if output is not None:
                 log.info("Command run %s %s: %s", project_name, run_number, output)
-            with Session() as dbsession_:
-                with dbsession_.begin():
-                    commandoutputs.save(dbsession_, f"RUN_{run_id}", output)
+            with Session.begin() as dbsession_:
+                commandoutputs.save(dbsession_, f"RUN_{run_id}", output)
 
         try:
             docker.run(
