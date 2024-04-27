@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, Awaitable, Callable
 
 from croniter import croniter
@@ -55,7 +55,7 @@ class ProjectCron(Cron):
         disco_host: str,
     ) -> ProjectCron:
         schedule = disco_file.services[service_name].schedule
-        cron = croniter(schedule, datetime.utcnow())
+        cron = croniter(schedule, datetime.now(timezone.utc))
         env_variables = [
             (env_var.name, decrypt(env_var.value))
             for env_var in deployment.env_variables
@@ -151,7 +151,7 @@ class ProjectCron(Cron):
         ]
         self.command = command
         if self.schedule != schedule:
-            self.cron = croniter(schedule, datetime.utcnow())
+            self.cron = croniter(schedule, datetime.now(timezone.utc))
             self.next = self.cron.get_next()
         self.schedule = schedule
 
@@ -169,7 +169,7 @@ class ProjectCron(Cron):
         )
 
     def schedule_next(self) -> None:
-        self.next = self.cron.get_next(datetime, datetime.utcnow())
+        self.next = self.cron.get_next(datetime, datetime.now(timezone.utc))
 
 
 @dataclass
@@ -278,7 +278,9 @@ class AsyncWorker:
             worker_tasks = await self._get_worker_tasks()
             for worker_task in worker_tasks:
                 yield asyncio.create_task(self._process_worker_task(worker_task))
-            next_second_delta = (1000000 - datetime.utcnow().microsecond) / 1000000
+            next_second_delta = (
+                1000000 - datetime.now(timezone.utc).microsecond
+            ) / 1000000
             try:
                 worker_task = await asyncio.wait_for(
                     self.queue.get(), next_second_delta
@@ -290,10 +292,13 @@ class AsyncWorker:
     async def _get_worker_tasks(self) -> list[WorkerTask]:
         worker_tasks: list[WorkerTask] = []
         for disco_cron in self._disco_crons:
-            if disco_cron.next <= datetime.utcnow():
+            if disco_cron.next <= datetime.now(timezone.utc):
                 worker_tasks.append(disco_cron)
         for project_cron in self._project_crons:
-            if project_cron.next <= datetime.utcnow() and not project_cron.paused:
+            if (
+                project_cron.next <= datetime.now(timezone.utc)
+                and not project_cron.paused
+            ):
                 worker_tasks.append(project_cron)
         return worker_tasks
 
@@ -322,7 +327,7 @@ class AsyncWorker:
             log.info("Done runnning QueueTask")
 
     def _load_disco_crons(self) -> list[DiscoCron]:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         return [
             DiscoCron(
                 name="SECOND",
@@ -334,6 +339,7 @@ class AsyncWorker:
                     minute=now.minute,
                     second=now.second,
                     microsecond=0,
+                    tzinfo=timezone.utc,
                 )
                 + timedelta(seconds=1),
                 delta=timedelta(seconds=1),
@@ -348,6 +354,7 @@ class AsyncWorker:
                     minute=now.minute,
                     second=0,
                     microsecond=0,
+                    tzinfo=timezone.utc,
                 )
                 + timedelta(minutes=1),
                 delta=timedelta(minutes=1),
@@ -362,6 +369,7 @@ class AsyncWorker:
                     minute=0,
                     second=0,
                     microsecond=0,
+                    tzinfo=timezone.utc,
                 )
                 + timedelta(hours=1),
                 delta=timedelta(hours=1),
@@ -376,6 +384,7 @@ class AsyncWorker:
                     minute=0,
                     second=0,
                     microsecond=0,
+                    tzinfo=timezone.utc,
                 )
                 + timedelta(days=1),
                 delta=timedelta(days=1),

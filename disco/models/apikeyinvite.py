@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from secrets import token_hex
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String, Unicode
+from sqlalchemy import ForeignKey, String, Unicode
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 if TYPE_CHECKING:
     from disco.models import ApiKey
-from disco.models.meta import Base
+from disco.models.meta import Base, DateTimeTzAware
 
 
 class ApiKeyInvite(Base):
@@ -19,13 +19,18 @@ class ApiKeyInvite(Base):
         String(32), default=lambda: token_hex(16), primary_key=True
     )
     created: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
+        DateTimeTzAware(),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
     )
     updated: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTimeTzAware(),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
     )
     name: Mapped[str] = mapped_column(Unicode(255), nullable=False)
-    expires: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    expires: Mapped[datetime] = mapped_column(DateTimeTzAware(), nullable=False)
     by_api_key_id: Mapped[str] = mapped_column(
         String(32),
         ForeignKey("api_keys.id"),

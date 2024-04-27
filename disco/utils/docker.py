@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from multiprocessing import cpu_count
 from typing import Callable
 
@@ -115,21 +115,21 @@ def start_service(
     )
     assert process.stdout is not None
     timeout_seconds = 900  # 15 minutes, safety net
-    timeout = datetime.utcnow() + timedelta(seconds=timeout_seconds)
-    next_check = datetime.utcnow() + timedelta(seconds=3)
+    timeout = datetime.now(timezone.utc) + timedelta(seconds=timeout_seconds)
+    next_check = datetime.now(timezone.utc) + timedelta(seconds=3)
     for line in process.stdout:
         line_text = line.decode("utf-8")
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
-        if datetime.utcnow() > next_check:
+        if datetime.now(timezone.utc) > next_check:
             states = get_service_nodes_desired_state(name)
             if len([state for state in states if state == "Shutdown"]) >= 3 * replicas:
                 # 3 attempts to start the service failed
                 process.terminate()
                 raise Exception("Starting task failed, too many failed attempts")
             next_check += timedelta(seconds=3)
-        if datetime.utcnow() > timeout:
+        if datetime.now(timezone.utc) > timeout:
             process.terminate()
             raise Exception(
                 f"Starting task failed, timeout after {timeout_seconds} seconds"
@@ -207,21 +207,21 @@ async def start_service_async(
     )
     assert process.stdout is not None
     timeout_seconds = 900  # 15 minutes, safety net
-    timeout = datetime.utcnow() + timedelta(seconds=timeout_seconds)
-    next_check = datetime.utcnow() + timedelta(seconds=3)
+    timeout = datetime.now(timezone.utc) + timedelta(seconds=timeout_seconds)
+    next_check = datetime.now(timezone.utc) + timedelta(seconds=3)
     async for line in process.stdout:
         line_text = line.decode("utf-8")
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
-        if datetime.utcnow() > next_check:
+        if datetime.now(timezone.utc) > next_check:
             states = await get_service_nodes_desired_state_async(name)
             if len([state for state in states if state == "Shutdown"]) >= 3 * replicas:
                 # 3 attempts to start the service failed
                 process.terminate()
                 raise Exception("Starting task failed, too many failed attempts")
             next_check += timedelta(seconds=3)
-        if datetime.utcnow() > timeout:
+        if datetime.now(timezone.utc) > timeout:
             process.terminate()
             raise Exception(
                 f"Starting task failed, timeout after {timeout_seconds} seconds"
@@ -631,14 +631,14 @@ async def _start_syslog_service(disco_host: str, syslog_urls: list[str]) -> None
     )
     assert process.stdout is not None
     timeout_seconds = 900  # 15 minutes, safety net
-    timeout = datetime.utcnow() + timedelta(seconds=timeout_seconds)
-    next_check = datetime.utcnow() + timedelta(seconds=3)
+    timeout = datetime.now(timezone.utc) + timedelta(seconds=timeout_seconds)
+    next_check = datetime.now(timezone.utc) + timedelta(seconds=3)
     async for line in process.stdout:
         line_text = line.decode("utf-8")
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
-        if datetime.utcnow() > next_check:
+        if datetime.now(timezone.utc) > next_check:
             states = await get_service_nodes_desired_state_async("disco-syslog")
             if (
                 len([state for state in states if state == "Shutdown"])
@@ -648,7 +648,7 @@ async def _start_syslog_service(disco_host: str, syslog_urls: list[str]) -> None
                 process.terminate()
                 raise Exception("Starting task failed, too many failed attempts")
             next_check += timedelta(seconds=3)
-        if datetime.utcnow() > timeout:
+        if datetime.now(timezone.utc) > timeout:
             process.terminate()
             raise Exception(
                 f"Starting task failed, timeout after {timeout_seconds} seconds"
@@ -681,14 +681,14 @@ async def _update_syslog_service(disco_host: str, syslog_urls: list[str]) -> Non
     )
     assert process.stdout is not None
     timeout_seconds = 900  # 15 minutes, safety net
-    timeout = datetime.utcnow() + timedelta(seconds=timeout_seconds)
-    next_check = datetime.utcnow() + timedelta(seconds=3)
+    timeout = datetime.now(timezone.utc) + timedelta(seconds=timeout_seconds)
+    next_check = datetime.now(timezone.utc) + timedelta(seconds=3)
     async for line in process.stdout:
         line_text = line.decode("utf-8")
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
-        if datetime.utcnow() > next_check:
+        if datetime.now(timezone.utc) > next_check:
             states = await get_service_nodes_desired_state_async("disco-syslog")
             if (
                 len([state for state in states if state == "Shutdown"])
@@ -698,7 +698,7 @@ async def _update_syslog_service(disco_host: str, syslog_urls: list[str]) -> Non
                 process.terminate()
                 raise Exception("Starting task failed, too many failed attempts")
             next_check += timedelta(seconds=3)
-        if datetime.utcnow() > timeout:
+        if datetime.now(timezone.utc) > timeout:
             process.terminate()
             raise Exception(
                 f"Starting task failed, timeout after {timeout_seconds} seconds"
@@ -1020,13 +1020,13 @@ def run(
             stderr=subprocess.STDOUT,
         )
         assert process.stdout is not None
-        timeout_dt = datetime.utcnow() + timedelta(seconds=timeout)
+        timeout_dt = datetime.now(timezone.utc) + timedelta(seconds=timeout)
         for line in process.stdout:
             line_text = line.decode("utf-8")
             if line_text.endswith("\n"):
                 line_text = line_text[:-1]
             log.info("Output: %s", line_text)
-            if datetime.utcnow() > timeout_dt:
+            if datetime.now(timezone.utc) > timeout_dt:
                 process.terminate()
                 raise Exception(
                     f"Running command failed, timeout after {timeout} seconds"
@@ -1050,10 +1050,10 @@ def run(
             stderr=subprocess.STDOUT,
         )
         assert process.stdout is not None
-        timeout_dt = datetime.utcnow() + timedelta(seconds=timeout)
+        timeout_dt = datetime.now(timezone.utc) + timedelta(seconds=timeout)
         for line in process.stdout:
             log_output(line.decode("utf-8"))
-            if datetime.utcnow() > timeout_dt:
+            if datetime.now(timezone.utc) > timeout_dt:
                 process.terminate()
                 raise Exception(
                     f"Running command failed, timeout after {timeout} seconds"
@@ -1116,13 +1116,13 @@ async def run_async(
             stderr=subprocess.STDOUT,
         )
         assert process.stdout is not None
-        timeout_dt = datetime.utcnow() + timedelta(seconds=timeout)
+        timeout_dt = datetime.now(timezone.utc) + timedelta(seconds=timeout)
         async for line in process.stdout:
             line_text = line.decode("utf-8")
             if line_text.endswith("\n"):
                 line_text = line_text[:-1]
             log.info("Output: %s", line_text)
-            if datetime.utcnow() > timeout_dt:
+            if datetime.now(timezone.utc) > timeout_dt:
                 process.terminate()
                 raise Exception(
                     f"Running command failed, timeout after {timeout} seconds"
@@ -1146,10 +1146,10 @@ async def run_async(
             stderr=subprocess.STDOUT,
         )
         assert process.stdout is not None
-        timeout_dt = datetime.utcnow() + timedelta(seconds=timeout)
+        timeout_dt = datetime.now(timezone.utc) + timedelta(seconds=timeout)
         async for line in process.stdout:
             log_output(line.decode("utf-8"))
-            if datetime.utcnow() > timeout_dt:
+            if datetime.now(timezone.utc) > timeout_dt:
                 process.terminate()
                 raise Exception(
                     f"Running command failed, timeout after {timeout} seconds"

@@ -5,7 +5,7 @@ import logging
 import os
 import re
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from alembic import command
@@ -97,13 +97,13 @@ def _run_cmd(args: list[str], timeout=600) -> str:
         stderr=subprocess.STDOUT,
     )
     assert process.stdout is not None
-    timeout_dt = datetime.utcnow() + timedelta(seconds=timeout)
+    timeout_dt = datetime.now(timezone.utc) + timedelta(seconds=timeout)
     output = ""
     for line in process.stdout:
         decoded_line = line.decode("utf-8")
         output += decoded_line
         print(decoded_line, end="", flush=True)
-        if datetime.utcnow() > timeout_dt:
+        if datetime.now(timezone.utc) > timeout_dt:
             process.terminate()
             raise Exception(f"Running command failed, timeout after {timeout} seconds")
     process.wait()

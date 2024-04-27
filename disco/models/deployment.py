@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Unicode
+from sqlalchemy import ForeignKey, Integer, String, Unicode
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 if TYPE_CHECKING:
     from disco.models import ApiKey, CommandRun, DeploymentEnvironmentVariable, Project
-from disco.models.meta import Base
+from disco.models.meta import Base, DateTimeTzAware
 
 
 class Deployment(Base):
@@ -19,10 +19,15 @@ class Deployment(Base):
         String(32), default=lambda: uuid.uuid4().hex, primary_key=True
     )
     created: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
+        DateTimeTzAware(),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
     )
     updated: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTimeTzAware(),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
     )
     number: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False)

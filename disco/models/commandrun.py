@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
-    DateTime,
     ForeignKey,
     Integer,
     String,
@@ -16,7 +15,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 if TYPE_CHECKING:
     from disco.models import ApiKey, Deployment, Project
-from disco.models.meta import Base
+from disco.models.meta import Base, DateTimeTzAware
 
 
 class CommandRun(Base):
@@ -25,9 +24,13 @@ class CommandRun(Base):
     id: Mapped[str] = mapped_column(
         String(32), default=lambda: uuid.uuid4().hex, primary_key=True
     )
-    created: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created: Mapped[datetime] = mapped_column(
+        DateTimeTzAware(), default=lambda: datetime.now(timezone.utc)
+    )
     updated: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTimeTzAware(),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
     )
     number: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     service: Mapped[str] = mapped_column(Unicode(), nullable=False)

@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from secrets import token_hex
 
 from sqlalchemy.orm.session import Session as DBSession
@@ -16,7 +16,7 @@ def create_api_key_invite(
     invite = ApiKeyInvite(
         id=token_hex(16),
         name=name,
-        expires=datetime.utcnow() + timedelta(days=1),
+        expires=datetime.now(timezone.utc) + timedelta(days=1),
         by_api_key=by_api_key,
     )
     dbsession.add(invite)
@@ -31,21 +31,21 @@ def get_api_key_invite_by_id(
 
 
 def invite_is_active(invite):
-    return invite.expires > datetime.utcnow() and invite.api_key_id is None
+    return invite.expires > datetime.now(timezone.utc) and invite.api_key_id is None
 
 
 def get_api_key_invite_by_name(dbsession: DBSession, name: str) -> ApiKeyInvite | None:
     return (
         dbsession.query(ApiKeyInvite)
         .filter(ApiKeyInvite.name == name)
-        .filter(ApiKeyInvite.expires > datetime.utcnow())
+        .filter(ApiKeyInvite.expires > datetime.now(timezone.utc))
         .filter(ApiKeyInvite.api_key_id.is_(None))
         .first()
     )
 
 
 def use_api_key_invite(dbsession: DBSession, invite: ApiKeyInvite) -> ApiKey:
-    assert invite.expires > datetime.utcnow()
+    assert invite.expires > datetime.now(timezone.utc)
     assert invite.api_key_id is None
     api_key = create_api_key(dbsession, invite.name)
     invite.api_key = api_key

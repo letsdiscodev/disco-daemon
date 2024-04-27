@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from secrets import token_hex
 
 from sqlalchemy.orm.session import Session as DBSession
@@ -63,4 +63,4 @@ def get_api_key_by_name(dbsession: DBSession, name: str) -> ApiKey | None:
 def delete_api_key(api_key: ApiKey, by_api_key: ApiKey) -> None:
     assert api_key.deleted is None
     log.info("Marking API key as deleted %s by %s", api_key.log(), by_api_key.log())
-    api_key.deleted = datetime.utcnow()
+    api_key.deleted = datetime.now(timezone.utc)
