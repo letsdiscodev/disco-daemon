@@ -1,3 +1,4 @@
+aiosqlite==0.20.0
 alembic==1.13.1
 bcrypt==4.1.2
 croniter==2.0.3
