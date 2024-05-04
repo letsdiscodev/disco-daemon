@@ -65,11 +65,11 @@ def start_service(
     for var_name, var_value in env_variables:
         more_args.append("--env")
         more_args.append(f"{var_name}={var_value}")
-    for volume_type, volume, destination in volumes:
+    for volume_type, source, destination in volumes:
         assert volume_type == "volume"
         more_args.append("--mount")
         more_args.append(
-            f"type={volume_type},source=disco-volume-{volume},destination={destination}"
+            f"type={volume_type},source={source},destination={destination}"
         )
     if len(volumes) > 0:
         # volumes are on the main node
@@ -157,11 +157,11 @@ async def start_service_async(
     for var_name, var_value in env_variables:
         more_args.append("--env")
         more_args.append(f"{var_name}={var_value}")
-    for volume_type, volume, destination in volumes:
+    for volume_type, source, destination in volumes:
         assert volume_type == "volume"
         more_args.append("--mount")
         more_args.append(
-            f"type={volume_type},source=disco-volume-{volume},destination={destination}"
+            f"type={volume_type},source={source},destination={destination}"
         )
     if len(volumes) > 0:
         # volumes are on the main node
@@ -987,12 +987,8 @@ def run(
         for var_name, var_value in env_variables:
             more_args.append("--env")
             more_args.append(f"{var_name}={var_value}")
-        for volume_type, volume, destination in volumes:
+        for volume_type, source, destination in volumes:
             assert volume_type in ["bind", "volume"]
-            if volume_type == "volume":
-                source = f"disco-volume-{volume}"
-            else:
-                source = volume
             more_args.append("--mount")
             more_args.append(
                 f"type={volume_type},source={source},destination={destination}"
@@ -1083,12 +1079,8 @@ async def run_async(
         for var_name, var_value in env_variables:
             more_args.append("--env")
             more_args.append(f"{var_name}={var_value}")
-        for volume_type, volume, destination in volumes:
+        for volume_type, source, destination in volumes:
             assert volume_type in ["bind", "volume"]
-            if volume_type == "volume":
-                source = f"disco-volume-{volume}"
-            else:
-                source = volume
             more_args.append("--mount")
             more_args.append(
                 f"type={volume_type},source={source},destination={destination}"

@@ -28,6 +28,7 @@ from disco.utils.filesystem import (
     project_path_on_host,
     read_disco_file,
 )
+from disco.utils.projects import volume_name_for_project
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class DeploymentInfo:
     status: str
     commit_hash: str | None
     disco_file: DiscoFile | None
+    project_id: str
     project_name: str
     github_repo_full_name: str | None
     github_repo_id: str | None
@@ -59,6 +61,7 @@ class DeploymentInfo:
             number=deployment.number,
             status=deployment.status,
             commit_hash=deployment.commit_hash,
+            project_id=deployment.project_id,
             project_name=deployment.project_name,
             github_repo_full_name=deployment.github_repo_full_name,
             github_repo_id=deployment.github_repo_id,
@@ -237,7 +240,11 @@ def replace_deployment(
                     ("DISCO_COMMIT", new_deployment_info.commit_hash),
                 ]
             volumes = [
-                ("volume", v.name, v.destination_path)
+                (
+                    "volume",
+                    volume_name_for_project(v.name, new_deployment_info.project_id),
+                    v.destination_path,
+                )
                 for v in new_deployment_info.disco_file.services[service_name].volumes
             ]
             docker.run(
@@ -509,7 +516,14 @@ def start_services(
                     deployment_number=new_deployment_info.number,
                     env_variables=env_variables,
                     volumes=[
-                        ("volume", v.name, v.destination_path) for v in service.volumes
+                        (
+                            "volume",
+                            volume_name_for_project(
+                                v.name, new_deployment_info.project_id
+                            ),
+                            v.destination_path,
+                        )
+                        for v in service.volumes
                     ],
                     published_ports=[
                         (p.published_as, p.from_container_port, p.protocol)
@@ -736,7 +750,11 @@ def prepare_static_site(
             deployment_number=new_deployment_info.number,
         )
         volumes = [
-            ("volume", v.name, v.destination_path)
+            (
+                "volume",
+                volume_name_for_project(v.name, new_deployment_info.project_id),
+                v.destination_path,
+            )
             for v in new_deployment_info.disco_file.services[service_name].volumes
         ] + [
             ("bind", repo_path, "/repo"),

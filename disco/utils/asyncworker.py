@@ -13,6 +13,7 @@ from disco.models.db import Session
 from disco.utils import docker, keyvalues
 from disco.utils.discofile import DiscoFile, ServiceType, get_disco_file_from_str
 from disco.utils.encryption import decrypt
+from disco.utils.projects import volume_name_for_project
 
 log = logging.getLogger(__name__)
 
@@ -73,7 +74,11 @@ class ProjectCron(Cron):
                 ("DISCO_COMMIT", deployment.commit_hash),
             ]
         volumes = [
-            ("volume", v.name, v.destination_path)
+            (
+                "volume",
+                volume_name_for_project(v.name, deployment.project_id),
+                v.destination_path,
+            )
             for v in disco_file.services[service_name].volumes
         ]
         image = docker.get_image_name_for_service(
@@ -115,7 +120,11 @@ class ProjectCron(Cron):
         assert command is not None
         schedule = disco_file.services[self.service_name].schedule
         volumes = [
-            ("volume", v.name, v.destination_path)
+            (
+                "volume",
+                volume_name_for_project(v.name, deployment.project_id),
+                v.destination_path,
+            )
             for v in disco_file.services[self.service_name].volumes
         ]
         env_variables = [

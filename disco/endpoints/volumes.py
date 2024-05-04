@@ -16,7 +16,7 @@ from disco.utils.apikeys import get_api_key_by_id_sync
 from disco.utils.deployments import get_live_deployment_sync
 from disco.utils.discofile import get_disco_file_from_str
 from disco.utils.encryption import decrypt
-from disco.utils.projects import get_project_by_name_sync
+from disco.utils.projects import get_project_by_name_sync, volume_name_for_project
 
 log = logging.getLogger(__name__)
 
@@ -63,9 +63,9 @@ def volume_get(
         volume_name,
         api_key.log(),
     )
+    source = volume_name_for_project(volume_name, project.id)
 
     def iterfile():
-        source = f"disco-volume-{volume_name}"
         args = [
             "docker",
             "run",
@@ -103,6 +103,7 @@ async def volume_set(
         project = get_project_by_name_sync(dbsession, project_name)
         if project is None:
             raise HTTPException(status_code=404)
+        project_id = project.id
         deployment = get_live_deployment_sync(dbsession, project)
         volume_names = []
         if deployment is not None:
@@ -154,7 +155,7 @@ async def volume_set(
         if process.returncode != 0:
             raise Exception(f"Error stopping service {internal_service_name}")
 
-    source = f"disco-volume-{volume_name}"
+    source = volume_name_for_project(volume_name, project_id)
     attempts = 200
     for i in range(attempts):
         process = await asyncio.create_subprocess_exec(
@@ -242,7 +243,14 @@ async def volume_set(
             project_service_name=service_name,
             deployment_number=deployment_number,
             env_variables=env_variables,
-            volumes=[("volume", v.name, v.destination_path) for v in service.volumes],
+            volumes=[
+                (
+                    "volume",
+                    volume_name_for_project(v.name, project_id),
+                    v.destination_path,
+                )
+                for v in service.volumes
+            ],
             published_ports=[
                 (p.published_as, p.from_container_port, p.protocol)
                 for p in service.published_ports

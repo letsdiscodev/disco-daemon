@@ -153,3 +153,7 @@ def delete_project(dbsession: DBSession, project: Project, by_api_key: ApiKey) -
     for run in project.command_runs:
         dbsession.delete(run)
     dbsession.delete(project)
+
+
+def volume_name_for_project(name: str, project_id: str) -> str:
+    return f"disco-project-{project_id}-{name}"

@@ -9,6 +9,7 @@ from disco.models.db import Session
 from disco.utils import commandoutputs, docker, keyvalues
 from disco.utils.discofile import DiscoFile, ServiceType, get_disco_file_from_str
 from disco.utils.encryption import decrypt
+from disco.utils.projects import volume_name_for_project
 
 log = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ def create_command_run(
 
     network = docker.deployment_network_name(project.name, deployment.number)
     volumes = [
-        ("volume", v.name, v.destination_path)
+        ("volume", volume_name_for_project(v.name, project.id), v.destination_path)
         for v in disco_file.services[service].volumes
     ]
 
