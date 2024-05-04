@@ -24,7 +24,7 @@ router = APIRouter()
 
 
 @router.get(
-    "/projects/{project_name}/volumes", dependencies=[Depends(get_api_key_sync)]
+    "/api/projects/{project_name}/volumes", dependencies=[Depends(get_api_key_sync)]
 )
 def volumes_get(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
@@ -40,7 +40,7 @@ def volumes_get(
     return {"volumes": [{"name": name} for name in volume_names]}
 
 
-@router.get("/projects/{project_name}/volumes/{volume_name}")
+@router.get("/api/projects/{project_name}/volumes/{volume_name}")
 def volume_get(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
     project: Annotated[Project, Depends(get_project_from_url)],
@@ -92,7 +92,7 @@ def volume_get(
     return StreamingResponse(iterfile(), media_type="application/x-tar")
 
 
-@router.put("/projects/{project_name}/volumes/{volume_name}")
+@router.put("/api/projects/{project_name}/volumes/{volume_name}")
 async def volume_set(
     project_name: Annotated[str, Path()],
     volume_name: Annotated[str, Path()],

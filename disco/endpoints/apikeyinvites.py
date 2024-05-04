@@ -33,7 +33,7 @@ class NewApiKeyRequestBody(BaseModel):
     name: str = Field(..., max_length=255)
 
 
-@router.post("/api-key-invites", status_code=201)
+@router.post("/api/api-key-invites", status_code=201)
 def api_keys_post(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
     api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
@@ -85,7 +85,7 @@ def api_keys_post(
     )
     return {
         "apiKeyInvite": {
-            "url": f"https://{disco_host}/.disco/api-key-invites/{invite.id}",
+            "url": f"https://{disco_host}/api-key-invites/{invite.id}",
             "expires": invite.expires.isoformat(),
         },
     }
@@ -104,7 +104,7 @@ def get_api_key_invite_from_url(
 RESP_TXT = (
     "To accept invite, install Disco CLI (https://letsdisco.dev) "
     "and run this command:\n\n    "
-    "disco invite:accept https://{disco_host}/.disco/api-key-invites/{invite_id}"
+    "disco invite:accept https://{disco_host}/api-key-invites/{invite_id}"
 )
 
 

@@ -31,7 +31,7 @@ def process_deployment(deployment_id: str) -> None:
     )
 
 
-@router.get("/projects/{project_name}/env")
+@router.get("/api/projects/{project_name}/env")
 def env_variables_get(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
     project: Annotated[Project, Depends(get_project_from_url)],
@@ -57,7 +57,7 @@ class ReqEnvVariables(BaseModel):
     env_variables: list[EnvVariable] = Field(..., alias="envVariables", min_length=1)
 
 
-@router.post("/projects/{project_name}/env")
+@router.post("/api/projects/{project_name}/env")
 def env_variables_post(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
     project: Annotated[Project, Depends(get_project_from_url)],
@@ -99,7 +99,7 @@ def get_env_variable_from_url(
     yield env_variable
 
 
-@router.get("/projects/{project_name}/env/{env_var_name}")
+@router.get("/api/projects/{project_name}/env/{env_var_name}")
 def env_variable_get(
     env_variable: Annotated[
         ProjectEnvironmentVariable, Depends(get_env_variable_from_url)
@@ -113,7 +113,7 @@ def env_variable_get(
     }
 
 
-@router.delete("/projects/{project_name}/env/{env_var_name}")
+@router.delete("/api/projects/{project_name}/env/{env_var_name}")
 def env_variable_delete(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
     env_variable: Annotated[

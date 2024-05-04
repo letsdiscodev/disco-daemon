@@ -165,7 +165,7 @@ async def validate_create_project(
             )
 
 
-@router.post("/projects", status_code=201)
+@router.post("/api/projects", status_code=201)
 async def projects_post(
     dbsession: Annotated[AsyncDBSession, Depends(get_db)],
     api_key: Annotated[ApiKey, Depends(get_api_key)],
@@ -230,7 +230,7 @@ async def projects_post(
     }
 
 
-@router.get("/projects")
+@router.get("/api/projects")
 def projects_get(dbsession: Annotated[DBSession, Depends(get_sync_db)]):
     projects = get_all_projects(dbsession)
     return {
@@ -243,7 +243,7 @@ def projects_get(dbsession: Annotated[DBSession, Depends(get_sync_db)]):
     }
 
 
-@router.delete("/projects/{project_name}", status_code=200)
+@router.delete("/api/projects/{project_name}", status_code=200)
 def projects_delete(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
     project: Annotated[Project, Depends(get_project_from_url)],
@@ -253,7 +253,7 @@ def projects_delete(
     return {"deleted": True}
 
 
-@router.get("/projects/{project_name}/export")
+@router.get("/api/projects/{project_name}/export")
 def export_get(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
     project: Annotated[Project, Depends(get_project_from_url)],

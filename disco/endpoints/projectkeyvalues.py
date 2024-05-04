@@ -23,7 +23,7 @@ log = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(get_api_key_sync)])
 
 
-@router.get("/projects/{project_name}/keyvalues")
+@router.get("/api/projects/{project_name}/keyvalues")
 def key_values_get(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
     project: Annotated[Project, Depends(get_project_from_url)],
@@ -51,7 +51,7 @@ def get_value_from_key_in_url(
     yield value
 
 
-@router.get("/projects/{project_name}/keyvalues/{key}")
+@router.get("/api/projects/{project_name}/keyvalues/{key}")
 def key_value_get(
     value: Annotated[str, Depends(get_value_from_key_in_url)],
 ):
@@ -65,7 +65,7 @@ class SetKeyValueRequestBody(BaseModel):
     previous_value: str | None = Field(None, alias="previousValue", max_length=2097152)
 
 
-@router.put("/projects/{project_name}/keyvalues/{key}")
+@router.put("/api/projects/{project_name}/keyvalues/{key}")
 def key_value_put(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
     key: Annotated[str, Path(max_length=255)],
@@ -102,7 +102,7 @@ def key_value_put(
     return {"value": req_body.value}
 
 
-@router.delete("/projects/{project_name}/keyvalues/{key}")
+@router.delete("/api/projects/{project_name}/keyvalues/{key}")
 def key_value_delete(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
     project: Annotated[Project, Depends(get_project_from_url)],

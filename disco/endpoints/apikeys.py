@@ -30,7 +30,7 @@ def get_api_key_from_url(
     yield api_key
 
 
-@router.get("/api-keys")
+@router.get("/api/api-keys")
 def api_keys_get(dbsession: Annotated[DBSession, Depends(get_sync_db)]):
     api_keys = get_all_api_keys(dbsession)
     return {
@@ -49,7 +49,7 @@ class NewApiKeyRequestBody(BaseModel):
     name: str = Field(..., max_length=255)
 
 
-@router.delete("/api-keys/{public_key}", status_code=200)
+@router.delete("/api/api-keys/{public_key}", status_code=200)
 def api_key_delete(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
     api_key: Annotated[ApiKey, Depends(get_api_key_from_url)],

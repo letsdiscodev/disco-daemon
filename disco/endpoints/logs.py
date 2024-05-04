@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 
 
-@router.get("/logs")
+@router.get("/api/logs")
 async def logs_all(background_tasks: BackgroundTasks):
     return EventSourceResponse(
         read_logs(
@@ -26,7 +26,7 @@ async def logs_all(background_tasks: BackgroundTasks):
     )
 
 
-@router.get("/logs/{project_name}")
+@router.get("/api/logs/{project_name}")
 async def logs_project(
     project_name: str,
     background_tasks: BackgroundTasks,
@@ -44,7 +44,7 @@ async def logs_project(
     )
 
 
-@router.get("/logs/{project_name}/{service_name}")
+@router.get("/api/logs/{project_name}/{service_name}")
 async def logs_project_service(
     project_name: str,
     service_name: str,

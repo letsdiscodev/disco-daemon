@@ -34,7 +34,7 @@ class RunReqBody(BaseModel):
 
 
 @router.post(
-    "/projects/{project_name}/runs",
+    "/api/projects/{project_name}/runs",
     status_code=202,
     dependencies=[Depends(get_api_key_sync)],
 )
@@ -127,7 +127,7 @@ def run_post(
 
 
 @router.get(
-    "/projects/{project_name}/runs/{run_number}/output",
+    "/api/projects/{project_name}/runs/{run_number}/output",
     dependencies=[Depends(get_api_key_wo_tx)],
 )
 async def run_output_get(

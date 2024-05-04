@@ -27,7 +27,7 @@ class AddRemoveSyslogReqBody(BaseModel):
     url: str = Field(..., pattern=r"^syslog(\+tls)?://\S+:\d+$")
 
 
-@router.post("/syslog")
+@router.post("/api/syslog")
 def syslog_post(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
     api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
@@ -47,7 +47,7 @@ def syslog_post(
     }
 
 
-@router.get("/syslog")
+@router.get("/api/syslog")
 def syslog_get(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
 ):

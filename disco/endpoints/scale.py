@@ -23,7 +23,7 @@ class ScaleRequestBody(BaseModel):
     services: dict[str, int]
 
 
-@router.post("/projects/{project_name}/scale")
+@router.post("/api/projects/{project_name}/scale")
 def scale_post(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
     project: Annotated[Project, Depends(get_project_from_url)],

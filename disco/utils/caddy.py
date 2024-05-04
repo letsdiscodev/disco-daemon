@@ -68,16 +68,6 @@ async def add_project_route(project_name: str, domain: str) -> None:
                 "handler": "subroute",
                 "routes": [
                     {
-                        "match": [{"path": ["/.disco*"]}],
-                        "handle": [
-                            {
-                                "handler": "reverse_proxy",
-                                "rewrite": {"strip_path_prefix": "/.disco"},
-                                "upstreams": [{"dial": "disco:80"}],
-                            }
-                        ],
-                    },
-                    {
                         "handle": [
                             {
                                 "@id": f"disco-project-handler-{project_name}",
@@ -182,14 +172,10 @@ def write_caddy_init_config(disco_host: str) -> None:
                                         "handler": "subroute",
                                         "routes": [
                                             {
-                                                "match": [{"path": ["/.disco*"]}],
                                                 "handle": [
                                                     {
                                                         "@id": "domain-handle-disco-handle",
                                                         "handler": "reverse_proxy",
-                                                        "rewrite": {
-                                                            "strip_path_prefix": "/.disco"
-                                                        },
                                                         "upstreams": [
                                                             {"dial": "disco:80"}
                                                         ],

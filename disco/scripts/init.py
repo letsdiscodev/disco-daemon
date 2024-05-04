@@ -252,7 +252,5 @@ def start_disco_daemon(host_home: str, image: str) -> None:
             "80",
             "--host",
             "0.0.0.0",
-            "--root-path",
-            "/.disco",
         ]
     )

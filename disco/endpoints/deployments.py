@@ -30,7 +30,7 @@ router = APIRouter()
 
 
 @router.get(
-    "/projects/{project_name}/deployments",
+    "/api/projects/{project_name}/deployments",
     dependencies=[Depends(get_api_key_sync)],
 )
 def deployments_get(
@@ -76,7 +76,7 @@ def process_deployment(deployment_id: str) -> None:
 
 
 @router.post(
-    "/projects/{project_name}/deployments",
+    "/api/projects/{project_name}/deployments",
     status_code=201,
     dependencies=[Depends(get_api_key_sync)],
 )
@@ -103,7 +103,7 @@ def deployments_post(
 
 
 @router.get(
-    "/projects/{project_name}/deployments/{deployment_number}/output",
+    "/api/projects/{project_name}/deployments/{deployment_number}/output",
     dependencies=[Depends(get_api_key_wo_tx)],
 )
 async def deployment_output_get(

@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(get_api_key_sync)])
 
 
-@router.get("/disco/meta")
+@router.get("/api/disco/meta")
 def meta_get(dbsession: Annotated[DBSession, Depends(get_sync_db)]):
     return {
         "version": disco.__version__,
@@ -36,7 +36,7 @@ class UpdateRequestBody(BaseModel):
     pull: bool = True
 
 
-@router.post("/disco/upgrade")
+@router.post("/api/disco/upgrade")
 def upgrade_post(
     dbsession: Annotated[DBSession, Depends(get_sync_db)], req_body: UpdateRequestBody
 ):
@@ -55,7 +55,7 @@ class SetRegistryRequestBody(BaseModel):
     password: str
 
 
-@router.post("/disco/registry")
+@router.post("/api/disco/registry")
 def registry_post(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
     req_body: SetRegistryRequestBody,
@@ -80,7 +80,7 @@ class SetDiscoHostRequestBody(BaseModel):
     host: str
 
 
-@router.post("/disco/host")
+@router.post("/api/disco/host")
 def host_post(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
     req_body: SetDiscoHostRequestBody,

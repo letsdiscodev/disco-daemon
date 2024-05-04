@@ -68,7 +68,7 @@ class NewGithubAppRequestBody(BaseModel):
     organization: str | None = Field(None, pattern=r"^\S+$", max_length=255)
 
 
-@router.post("/github-apps/create", status_code=201)
+@router.post("/api/github-apps/create", status_code=201)
 def github_app_create_post(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
     api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
@@ -83,7 +83,7 @@ def github_app_create_post(
         "pendingApp": {
             "id": pending_app.id,
             "expires": pending_app.expires.isoformat(),
-            "url": f"https://{disco_host}/.disco/github-apps/{pending_app.id}/create",
+            "url": f"https://{disco_host}/github-apps/{pending_app.id}/create",
         }
     }
 
@@ -122,11 +122,11 @@ def github_app_create_get(
         github_url = f"https://github.com/settings/apps/new?state={pending_app.state}"
     manifest = {
         "name": f"Disco {randomname.get_name()}",
-        "url": f"https://{disco_host}/.disco/github-app/home",
-        "redirect_url": f"https://{disco_host}/.disco/github-apps/{pending_app.id}/created",
+        "url": f"https://{disco_host}/github-apps/home",
+        "redirect_url": f"https://{disco_host}/github-apps/{pending_app.id}/created",
         "callback_urls": [],
         "hook_attributes": {
-            "url": f"https://{disco_host}/.disco/webhooks/github-apps",
+            "url": f"https://{disco_host}/.webhooks/github-apps",
         },
         "public": False,
         "default_permissions": {
@@ -157,7 +157,7 @@ async def get_body(request: Request):
     return await request.body()
 
 
-@router.post("/webhooks/github-apps", status_code=202)
+@router.post("/.webhooks/github-apps", status_code=202)
 def github_webhook_service_post(
     x_github_event: Annotated[str | None, Header()],
     x_hub_signature_256: Annotated[str | None, Header()],
@@ -181,7 +181,7 @@ def github_webhook_service_post(
     return {}
 
 
-@router.get("/github-app-repos", dependencies=[Depends(get_api_key_sync)])
+@router.get("/api/github-app-repos", dependencies=[Depends(get_api_key_sync)])
 def list_github_repos(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
 ):
