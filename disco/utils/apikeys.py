@@ -5,7 +5,7 @@ from secrets import token_hex
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
-from disco.models import ApiKey
+from disco.models import ApiKey, ApiKeyUsage
 
 log = logging.getLogger(__name__)
 
@@ -84,3 +84,11 @@ def delete_api_key(api_key: ApiKey, by_api_key: ApiKey) -> None:
     assert api_key.deleted is None
     log.info("Marking API key as deleted %s by %s", api_key.log(), by_api_key.log())
     api_key.deleted = datetime.now(timezone.utc)
+
+
+def record_api_key_usage_sync(dbsession: DBSession, api_key: ApiKey) -> None:
+    dbsession.add(ApiKeyUsage(created=datetime.now(timezone.utc), api_key=api_key))
+
+
+async def record_api_key_usage(dbsession: AsyncDBSession, api_key: ApiKey) -> None:
+    dbsession.add(ApiKeyUsage(created=datetime.now(timezone.utc), api_key=api_key))

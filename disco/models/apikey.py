@@ -10,6 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 if TYPE_CHECKING:
     from disco.models import (
         ApiKeyInvite,
+        ApiKeyUsage,
         CommandRun,
         Deployment,
         ProjectEnvironmentVariable,
@@ -57,6 +58,9 @@ class ApiKey(Base):
     )
     env_variables: Mapped[list[ProjectEnvironmentVariable]] = relationship(
         "ProjectEnvironmentVariable", back_populates="by_api_key"
+    )
+    usages: Mapped[list[ApiKeyUsage]] = relationship(
+        "ApiKeyUsage", order_by="desc(ApiKeyUsage.created)", back_populates="api_key"
     )
 
     def log(self):

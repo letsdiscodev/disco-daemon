@@ -39,6 +39,9 @@ def api_keys_get(dbsession: Annotated[DBSession, Depends(get_sync_db)]):
                 "name": api_key.name,
                 "publicKey": api_key.public_key,
                 "privateKey": obfuscate(api_key.id),
+                "lastUsed": api_key.usages[0].created.isoformat()
+                if len(api_key.usages) > 0
+                else None,
             }
             for api_key in api_keys
         ],
