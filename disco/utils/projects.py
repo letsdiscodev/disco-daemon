@@ -1,5 +1,6 @@
 import logging
 import uuid
+from typing import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
@@ -92,15 +93,15 @@ async def get_project_by_domain(
     return result.scalars().first()
 
 
-def get_project_by_github_app_repo(
+def get_projects_by_github_app_repo(
     dbsession: DBSession, full_name: str
-) -> Project | None:
+) -> Sequence[Project]:
     return (
         dbsession.query(Project)
         .join(ProjectGithubRepo)
         .join(GithubAppRepo)
         .filter(GithubAppRepo.full_name == full_name)
-        .first()
+        .all()
     )
 
 

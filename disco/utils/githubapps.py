@@ -176,7 +176,7 @@ def process_github_app_webhook(
         from disco.utils.deployments import create_deployment_sync
         from disco.utils.github import get_commit_info_from_webhook_push
         from disco.utils.mq.tasks import enqueue_task_deprecated
-        from disco.utils.projects import get_project_by_github_app_repo
+        from disco.utils.projects import get_projects_by_github_app_repo
 
         try:
             full_name = body["repository"]["full_name"]
@@ -184,26 +184,25 @@ def process_github_app_webhook(
             if branch not in ["master", "main"]:
                 log.info("Branch was not master or main, skipping")
                 return
+            deployment_ids = []
             with Session.begin() as dbsession:
-                # TODO support multiple projects using same repo
-                project = get_project_by_github_app_repo(dbsession, full_name)
-                if project is None:
-                    log.info("REPO NOT FOUND TODO")
-                    return
-                deployment = create_deployment_sync(
-                    dbsession=dbsession,
-                    project=project,
-                    commit_hash=commit_hash,
-                    disco_file=None,
-                    by_api_key=None,
+                projects = get_projects_by_github_app_repo(dbsession, full_name)
+                for project in projects:
+                    deployment = create_deployment_sync(
+                        dbsession=dbsession,
+                        project=project,
+                        commit_hash=commit_hash,
+                        disco_file=None,
+                        by_api_key=None,
+                    )
+                    deployment_ids.append(deployment.id)
+            for deployment_id in deployment_ids:
+                enqueue_task_deprecated(
+                    task_name="PROCESS_DEPLOYMENT",
+                    body=dict(
+                        deployment_id=deployment_id,
+                    ),
                 )
-                deployment_id = deployment.id
-            enqueue_task_deprecated(
-                task_name="PROCESS_DEPLOYMENT",
-                body=dict(
-                    deployment_id=deployment_id,
-                ),
-            )
 
         except KeyError:
             log.info("Not able to extract key info from Github webook, skipping")
