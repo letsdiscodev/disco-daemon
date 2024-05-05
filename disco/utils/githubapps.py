@@ -5,7 +5,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from secrets import token_hex
-from typing import Sequence
+from typing import Literal, Sequence
 
 import requests
 from sqlalchemy import select
@@ -64,6 +64,9 @@ def handle_app_created_on_github(pending_app_id: str, code: str) -> str:
             id=resp_body["id"],
             slug=resp_body["slug"],
             name=resp_body["name"],
+            owner_id=resp_body["owner"]["id"],
+            owner_login=resp_body["owner"]["login"],
+            owner_type=resp_body["owner"]["type"],
             webhook_secret=resp_body["webhook_secret"],
             pem=resp_body["pem"],
             client_secret=resp_body["client_secret"],
@@ -83,6 +86,9 @@ def create_github_app(
     id: int,
     slug: str,
     name: str,
+    owner_id: int,
+    owner_login: str,
+    owner_type: Literal["User", "Organization"],
     webhook_secret: str,
     pem: str,
     client_secret: str,
@@ -93,6 +99,9 @@ def create_github_app(
         id=id,
         slug=slug,
         name=name,
+        owner_id=owner_id,
+        owner_login=owner_login,
+        owner_type=owner_type,
         webhook_secret=webhook_secret,
         pem=pem,
         client_secret=client_secret,
@@ -101,6 +110,12 @@ def create_github_app(
     )
     dbsession.add(github_app)
     return github_app
+
+
+async def get_all_github_apps(dbsession: AsyncDBSession) -> Sequence[GithubApp]:
+    stmt = select(GithubApp).order_by(GithubApp.owner_login)
+    result = await dbsession.execute(stmt)
+    return result.scalars().all()
 
 
 def get_github_app_by_id(dbsession: DBSession, app_id: int) -> GithubApp | None:

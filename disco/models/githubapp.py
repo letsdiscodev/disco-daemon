@@ -33,6 +33,9 @@ class GithubApp(Base):
     pem: Mapped[str] = mapped_column(UnicodeText, nullable=False)
     client_secret: Mapped[str] = mapped_column(String(32), nullable=False)
     html_url: Mapped[str] = mapped_column(Unicode(2000), nullable=False)
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    owner_login: Mapped[str] = mapped_column(Unicode(255), nullable=False)
+    owner_type: Mapped[str] = mapped_column(Unicode(255), nullable=False)
     app_info: Mapped[str] = mapped_column(UnicodeText, nullable=False)
 
     installations: Mapped[list[GithubAppInstallation]] = relationship(

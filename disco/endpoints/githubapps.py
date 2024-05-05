@@ -16,16 +16,18 @@ from fastapi import (
 )
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
-from disco.auth import get_api_key_sync
-from disco.endpoints.dependencies import get_sync_db
+from disco.auth import get_api_key, get_api_key_sync
+from disco.endpoints.dependencies import get_db, get_sync_db
 from disco.models import ApiKey, PendingGithubApp
 from disco.models.db import Session
 from disco.utils import keyvalues
 from disco.utils.githubapps import (
     create_pending_github_app,
     generate_new_pending_app_state,
+    get_all_github_apps,
     get_all_repos_sync,
     get_github_pending_app_by_id,
     handle_app_created_on_github,
@@ -155,6 +157,39 @@ def github_app_created_get(
 
 async def get_body(request: Request):
     return await request.body()
+
+
+@router.get("/api/github-apps", dependencies=[Depends(get_api_key)])
+async def list_github_apps(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+):
+    github_apps = await get_all_github_apps(dbsession)
+    return {
+        "githubApps": [
+            {
+                "id": github_app.id,
+                "owner": {
+                    "id": github_app.owner_id,
+                    "login": github_app.owner_login,
+                    "type": github_app.owner_type,
+                },
+                "appUrl": github_app.html_url,
+                "installUrl": f"{github_app.html_url}/installations"
+                f"/new/permissions?target_id={github_app.owner_id}",
+                "installation": {
+                    "id": (await github_app.awaitable_attrs.installations)[0].id,
+                    "manageUrl": "https://github.com/settings/installations"
+                    f"/{(await github_app.awaitable_attrs.installations)[0].id}"
+                    if github_app.owner_type == "User"
+                    else f"https://github.com/organizations/{github_app.owner_login}"
+                    f"/settings/installations/{(await github_app.awaitable_attrs.installations)[0].id}",
+                }
+                if len((await github_app.awaitable_attrs.installations)) > 0
+                else None,
+            }
+            for github_app in github_apps
+        ],
+    }
 
 
 @router.post("/.webhooks/github-apps", status_code=202)
