@@ -134,6 +134,13 @@ def alembic_upgrade(version_hash: str) -> None:
     command.upgrade(config, version_hash)
 
 
+def task_0_5_x(image: str) -> None:
+    print("Upating from 0.5.x to 0.6.x")
+    alembic_upgrade("5540c20f9acd")
+    with Session.begin() as dbsession:
+        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.6.0")
+
+
 def task_0_4_x(image: str) -> None:
     print("Upating from 0.4.x to 0.5.x")
     alembic_upgrade("87c62632dfd1")
@@ -237,6 +244,8 @@ def get_update_function_for_version(version: str) -> Callable[[str], None]:
     if version.startswith("0.4."):
         return task_0_4_x
     if version.startswith("0.5."):
-        assert disco.__version__.startswith("0.5.")
+        return task_0_5_x
+    if version.startswith("0.6."):
+        assert disco.__version__.startswith("0.6.")
         return task_patch
     raise NotImplementedError(f"Update missing for version {version}")
