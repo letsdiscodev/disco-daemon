@@ -13,6 +13,7 @@ from disco.endpoints import (
     logs,
     meta,
     nodes,
+    projectdomains,
     projectkeyvalues,
     projects,
     run,
@@ -47,6 +48,7 @@ app.include_router(volumes.router)
 app.include_router(deployments.router)
 app.include_router(run.router)
 app.include_router(envvariables.router)
+app.include_router(projectdomains.router)
 app.include_router(projectkeyvalues.router)
 app.include_router(logs.router)
 app.include_router(nodes.router)

@@ -59,7 +59,7 @@ def set_config(config: dict[str, Any]) -> None:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
 
-async def add_project_route(project_name: str, domain: str) -> None:
+async def _add_project_route(project_name: str, domains: list[str]) -> None:
     url = f"{BASE_URL}/config/apps/http/servers/disco/routes/0"
     req_body = {
         "@id": f"disco-project-{project_name}",
@@ -79,7 +79,7 @@ async def add_project_route(project_name: str, domain: str) -> None:
                 ],
             }
         ],
-        "match": [{"@id": f"disco-project-hosts-{project_name}", "host": [domain]}],
+        "match": [{"@id": f"disco-project-hosts-{project_name}", "host": domains}],
         "terminal": True,
     }
     session = _get_session()
@@ -92,15 +92,59 @@ async def add_project_route(project_name: str, domain: str) -> None:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
 
-def remove_project_route(project_name: str) -> None:
+async def set_domains_for_project(project_name: str, domains: list[str]) -> None:
+    if len(domains) == 0:
+        if await _project_route_exists(project_name):
+            await _remove_project_route(project_name)
+    else:
+        if await _project_route_exists(project_name):
+            await _update_project_domains(project_name, domains)
+        else:
+            await _add_project_route(project_name, domains)
+
+
+async def _remove_project_route(project_name: str) -> None:
     url = f"{BASE_URL}/id/disco-project-{project_name}"
     session = _get_session()
-    response = session.delete(url, headers=HEADERS, timeout=10)
+
+    def query() -> requests.Response:
+        return session.delete(url, headers=HEADERS, timeout=10)
+
+    response = await asyncio.get_event_loop().run_in_executor(None, query)
     if response.status_code != 200:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
 
-def serve_service(project_name: str, container_name: str, port: int) -> None:
+async def _project_route_exists(project_name) -> bool:
+    url = f"{BASE_URL}/id/disco-project-{project_name}"
+    session = _get_session()
+
+    def query() -> requests.Response:
+        return session.get(url, headers=HEADERS, timeout=10)
+
+    response = await asyncio.get_event_loop().run_in_executor(None, query)
+    if response.status_code == 200:
+        return True
+    elif response.status_code == 404:
+        return False
+    else:
+        raise Exception(f"Caddy returned {response.status_code}: {response.text}")
+
+
+async def _update_project_domains(project_name: str, domains: list[str]) -> None:
+    url = f"{BASE_URL}/id/disco-project-hosts-{project_name}"
+    req_body = {"@id": f"disco-project-hosts-{project_name}", "host": domains}
+    session = _get_session()
+
+    def query() -> requests.Response:
+        return session.patch(url, json=req_body, headers=HEADERS, timeout=10)
+
+    response = await asyncio.get_event_loop().run_in_executor(None, query)
+    if response.status_code != 200:
+        raise Exception(f"Caddy returned {response.status_code}: {response.text}")
+
+
+def serve_service_sync(project_name: str, container_name: str, port: int) -> None:
     url = f"{BASE_URL}/id/disco-project-handler-{project_name}"
     req_body = {
         "@id": f"disco-project-handler-{project_name}",
@@ -109,6 +153,76 @@ def serve_service(project_name: str, container_name: str, port: int) -> None:
     }
     session = _get_session()
     response = session.patch(url, json=req_body, headers=HEADERS, timeout=10)
+    # TODO also accept 404? (when deploying project that has a web service and no domains set)
+    if response.status_code != 200:
+        raise Exception(f"Caddy returned {response.status_code}: {response.text}")
+
+
+async def serve_service(project_name: str, container_name: str, port: int) -> None:
+    url = f"{BASE_URL}/id/disco-project-handler-{project_name}"
+    req_body = {
+        "@id": f"disco-project-handler-{project_name}",
+        "handler": "reverse_proxy",
+        "upstreams": [{"dial": f"{container_name}:{port}"}],
+    }
+    session = _get_session()
+
+    def query() -> requests.Response:
+        return session.patch(url, json=req_body, headers=HEADERS, timeout=10)
+
+    response = await asyncio.get_event_loop().run_in_executor(None, query)
+    # TODO also accept 404? (when deploying project that has a web service and no domains set)
+    if response.status_code != 200:
+        raise Exception(f"Caddy returned {response.status_code}: {response.text}")
+
+
+async def add_apex_www_redirects(
+    domain_id: str, from_domain: str, to_domain: str
+) -> None:
+    url = f"{BASE_URL}/config/apps/http/servers/disco/routes/0"
+    req_body = {
+        "@id": f"apex-www-redirect-{domain_id}",
+        "handle": [
+            {
+                "handler": "subroute",
+                "routes": [
+                    {
+                        "handle": [
+                            {
+                                "handler": "static_response",
+                                "headers": {
+                                    "Location": [
+                                        f"https://{to_domain}{{http.request.uri}}"
+                                    ]
+                                },
+                                "status_code": 301,
+                            }
+                        ]
+                    }
+                ],
+            }
+        ],
+        "match": [{"host": [from_domain]}],
+        "terminal": True,
+    }
+    session = _get_session()
+
+    def query() -> requests.Response:
+        return session.put(url, json=req_body, headers=HEADERS, timeout=10)
+
+    response = await asyncio.get_event_loop().run_in_executor(None, query)
+    if response.status_code != 200:
+        raise Exception(f"Caddy returned {response.status_code}: {response.text}")
+
+
+async def remove_apex_www_redirects(domain_id: str) -> None:
+    url = f"{BASE_URL}/id/apex-www-redirect-{domain_id}"
+    session = _get_session()
+
+    def query() -> requests.Response:
+        return session.delete(url, headers=HEADERS, timeout=10)
+
+    response = await asyncio.get_event_loop().run_in_executor(None, query)
     if response.status_code != 200:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
@@ -125,7 +239,7 @@ def get_served_service_for_project(project_name: str) -> str | None:
         return None
 
 
-def serve_static_site(project_name: str, deployment_number: int) -> None:
+def serve_static_site_sync(project_name: str, deployment_number: int) -> None:
     url = f"{BASE_URL}/id/disco-project-handler-{project_name}"
     req_body = {
         "@id": f"disco-project-handler-{project_name}",
@@ -134,6 +248,23 @@ def serve_static_site(project_name: str, deployment_number: int) -> None:
     }
     session = _get_session()
     response = session.patch(url, json=req_body, headers=HEADERS, timeout=10)
+    if response.status_code != 200:
+        raise Exception(f"Caddy returned {response.status_code}: {response.text}")
+
+
+async def serve_static_site(project_name: str, deployment_number: int) -> None:
+    url = f"{BASE_URL}/id/disco-project-handler-{project_name}"
+    req_body = {
+        "@id": f"disco-project-handler-{project_name}",
+        "handler": "file_server",
+        "root": static_site_deployment_path(project_name, deployment_number),
+    }
+    session = _get_session()
+
+    def query() -> requests.Response:
+        return session.patch(url, json=req_body, headers=HEADERS, timeout=10)
+
+    response = await asyncio.get_event_loop().run_in_executor(None, query)
     if response.status_code != 200:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 

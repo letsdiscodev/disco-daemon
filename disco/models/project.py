@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from disco.models import (
         CommandRun,
         Deployment,
+        ProjectDomain,
         ProjectEnvironmentVariable,
         ProjectGithubRepo,
         ProjectKeyValue,
@@ -36,7 +37,6 @@ class Project(Base):
         nullable=False,
     )
     name: Mapped[str] = mapped_column(Unicode(255), nullable=False)
-    domain: Mapped[str | None] = mapped_column(Unicode(255), nullable=True)
     deployment_type: Mapped[str | None] = mapped_column(Unicode(255), nullable=True)
 
     command_runs: Mapped[list[CommandRun]] = relationship(
@@ -57,6 +57,9 @@ class Project(Base):
         "ProjectGithubRepo",
         back_populates="project",
         uselist=False,
+    )
+    domains: Mapped[list[ProjectDomain]] = relationship(
+        "ProjectDomain", back_populates="project", order_by="ProjectDomain.name"
     )
 
     def log(self):

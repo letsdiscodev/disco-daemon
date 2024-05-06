@@ -61,7 +61,6 @@ async def create_deployment(
         prev_deployment_id=prev_deployment.id if prev_deployment is not None else None,
         project_name=project.name,
         project=project,
-        domain=project.domain,
         github_repo_full_name=github_repo.full_name
         if github_repo is not None
         else None,
@@ -124,7 +123,6 @@ def create_deployment_sync(
         number=number,
         prev_deployment_id=prev_deployment.id if prev_deployment is not None else None,
         project_name=project.name,
-        domain=project.domain,
         github_repo_full_name=github_repo.full_name
         if github_repo is not None
         else None,

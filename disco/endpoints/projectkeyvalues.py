@@ -8,7 +8,7 @@ from pydantic_core import InitErrorDetails, PydanticCustomError
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.auth import get_api_key_sync
-from disco.endpoints.dependencies import get_project_from_url, get_sync_db
+from disco.endpoints.dependencies import get_project_from_url_sync, get_sync_db
 from disco.models import ApiKey, Project
 from disco.utils.encryption import decrypt
 from disco.utils.projectkeyvalues import (
@@ -26,7 +26,7 @@ router = APIRouter(dependencies=[Depends(get_api_key_sync)])
 @router.get("/api/projects/{project_name}/keyvalues")
 def key_values_get(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
-    project: Annotated[Project, Depends(get_project_from_url)],
+    project: Annotated[Project, Depends(get_project_from_url_sync)],
 ):
     key_values = get_all_key_values_for_project(dbsession, project)
     return {
@@ -38,7 +38,7 @@ def key_values_get(
 
 def get_value_from_key_in_url(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
-    project: Annotated[Project, Depends(get_project_from_url)],
+    project: Annotated[Project, Depends(get_project_from_url_sync)],
     key: Annotated[str, Path(max_length=255)],
 ):
     value = get_value(
@@ -70,7 +70,7 @@ def key_value_put(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
     key: Annotated[str, Path(max_length=255)],
     req_body: SetKeyValueRequestBody,
-    project: Annotated[Project, Depends(get_project_from_url)],
+    project: Annotated[Project, Depends(get_project_from_url_sync)],
     api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
 ):
     prev_value = get_value(dbsession=dbsession, project=project, key=key)
@@ -105,7 +105,7 @@ def key_value_put(
 @router.delete("/api/projects/{project_name}/keyvalues/{key}")
 def key_value_delete(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
-    project: Annotated[Project, Depends(get_project_from_url)],
+    project: Annotated[Project, Depends(get_project_from_url_sync)],
     key: Annotated[str, Path(max_length=255)],
     api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
 ):

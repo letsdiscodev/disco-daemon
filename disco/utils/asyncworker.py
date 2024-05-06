@@ -65,10 +65,6 @@ class ProjectCron(Cron):
             ("DISCO_SERVICE_NAME", service_name),
             ("DISCO_HOST", disco_host),
         ]
-        if deployment.domain is not None:
-            env_variables += [
-                ("DISCO_PROJECT_DOMAIN", deployment.domain),
-            ]
         if deployment.commit_hash is not None:
             env_variables += [
                 ("DISCO_COMMIT", deployment.commit_hash),
@@ -135,10 +131,6 @@ class ProjectCron(Cron):
             ("DISCO_SERVICE_NAME", self.service_name),
             ("DISCO_HOST", disco_host),
         ]
-        if deployment.domain is not None:
-            env_variables += [
-                ("DISCO_PROJECT_DOMAIN", deployment.domain),
-            ]
         if deployment.commit_hash is not None:
             env_variables += [
                 ("DISCO_COMMIT", deployment.commit_hash),

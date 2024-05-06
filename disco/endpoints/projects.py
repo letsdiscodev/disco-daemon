@@ -10,10 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.auth import get_api_key, get_api_key_sync
-from disco.endpoints.dependencies import get_db, get_project_from_url, get_sync_db
+from disco.endpoints.dependencies import get_db, get_project_from_url_sync, get_sync_db
 from disco.endpoints.envvariables import EnvVariable
 from disco.models import ApiKey, Project
-from disco.utils.caddy import add_project_route
 from disco.utils.deployments import (
     create_deployment,
     get_live_deployment_sync,
@@ -32,13 +31,13 @@ from disco.utils.filesystem import (
 )
 from disco.utils.githubapps import get_all_repos
 from disco.utils.mq.tasks import enqueue_task_deprecated
+from disco.utils.projectdomains import add_domain
 from disco.utils.projects import (
     create_project,
     delete_project,
     get_all_projects,
     get_project_by_domain,
     get_project_by_name,
-    set_project_domain,
     set_project_github_repo,
 )
 
@@ -203,8 +202,12 @@ async def projects_post(
         by_api_key=api_key,
     )
     if req_body.domain is not None:
-        set_project_domain(project=project, domain=req_body.domain, by_api_key=api_key)
-        await add_project_route(project_name=project.name, domain=req_body.domain)
+        await add_domain(
+            dbsession=dbsession,
+            project=project,
+            domain_name=req_body.domain,
+            by_api_key=api_key,
+        )
 
     if req_body.github_repo is not None:
         deployment = await create_deployment(
@@ -246,7 +249,7 @@ def projects_get(dbsession: Annotated[DBSession, Depends(get_sync_db)]):
 @router.delete("/api/projects/{project_name}", status_code=200)
 def projects_delete(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
-    project: Annotated[Project, Depends(get_project_from_url)],
+    project: Annotated[Project, Depends(get_project_from_url_sync)],
     api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
 ):
     delete_project(dbsession, project, api_key)
@@ -256,7 +259,7 @@ def projects_delete(
 @router.get("/api/projects/{project_name}/export")
 def export_get(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
-    project: Annotated[Project, Depends(get_project_from_url)],
+    project: Annotated[Project, Depends(get_project_from_url_sync)],
     api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
 ):
     log.info("Exporting project %s by %s", project.log(), api_key.log())
@@ -270,7 +273,7 @@ def export_get(
                 volume_names.append(volume.name)
     return {
         "name": project.name,
-        "domain": project.domain,
+        "domains": [domain.name for domain in project.domains],
         "envVariables": [
             {
                 "name": env_variable.name,
@@ -278,13 +281,15 @@ def export_get(
             }
             for env_variable in env_variables
         ],
-        "caddy": {
-            "crt": get_caddy_key_crt(project.domain),
-            "key": get_caddy_key_key(project.domain),
-            "meta": get_caddy_key_meta(project.domain),
-        }
-        if project.domain is not None
-        else None,
+        "caddy": [
+            {
+                "name": domain.name,
+                "crt": get_caddy_key_crt(domain.name),
+                "key": get_caddy_key_key(domain.name),
+                "meta": get_caddy_key_meta(domain.name),
+            }
+            for domain in project.domains
+        ],
         "deployment": {
             "number": deployment.number,
             "commit": deployment.commit_hash,

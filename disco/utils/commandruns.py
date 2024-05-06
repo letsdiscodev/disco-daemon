@@ -60,10 +60,6 @@ def create_command_run(
         ("DISCO_HOST", keyvalues.get_value_str(dbsession, "DISCO_HOST")),
         ("DISCO_API_KEY", by_api_key.id),
     ]
-    if deployment.domain is not None:
-        env_variables += [
-            ("DISCO_PROJECT_DOMAIN", deployment.domain),
-        ]
     if deployment.commit_hash is not None:
         env_variables += [
             ("DISCO_COMMIT", deployment.commit_hash),

@@ -47,7 +47,6 @@ class DeploymentInfo:
     registry_host: str | None
     host_home: str
     disco_host: str
-    domain_name: str | None
     env_variables: list[tuple[str, str]]
 
     @staticmethod
@@ -68,7 +67,6 @@ class DeploymentInfo:
             registry_host=deployment.registry_host,
             host_home=host_home,
             disco_host=disco_host,
-            domain_name=deployment.domain,
             disco_file=get_disco_file_from_str(deployment.disco_file)
             if deployment.disco_file is not None
             else None,
@@ -231,10 +229,6 @@ def replace_deployment(
                 ("DISCO_SERVICE_NAME", service_name),
                 ("DISCO_HOST", new_deployment_info.disco_host),
             ]
-            if new_deployment_info.domain_name is not None:
-                env_variables += [
-                    ("DISCO_PROJECT_DOMAIN", new_deployment_info.domain_name),
-                ]
             if new_deployment_info.commit_hash is not None:
                 env_variables += [
                     ("DISCO_COMMIT", new_deployment_info.commit_hash),
@@ -267,10 +261,7 @@ def replace_deployment(
             new_deployment_info, prev_deployment_info, recovery, log_output
         )
         start_services(new_deployment_info, recovery, log_output)
-        if (
-            "web" in new_deployment_info.disco_file.services
-            and new_deployment_info.domain_name is not None
-        ):
+        if "web" in new_deployment_info.disco_file.services:
             serve_new_deployment(new_deployment_info, recovery, log_output)
         async_worker.reload_and_resume_project_crons(
             prev_project_name=prev_deployment_info.project_name
@@ -489,10 +480,6 @@ def start_services(
             ("DISCO_SERVICE_NAME", service_name),
             ("DISCO_HOST", new_deployment_info.disco_host),
         ]
-        if new_deployment_info.domain_name is not None:
-            env_variables += [
-                ("DISCO_PROJECT_DOMAIN", new_deployment_info.domain_name),
-            ]
         if new_deployment_info.commit_hash is not None:
             env_variables += [
                 ("DISCO_COMMIT", new_deployment_info.commit_hash),
@@ -609,7 +596,7 @@ def serve_new_deployment(
                 != internal_service_name
             ):
                 log_output(f"Sending HTTP traffic to {internal_service_name}\n")
-                caddy.serve_service(
+                caddy.serve_service_sync(
                     new_deployment_info.project_name,
                     internal_service_name,
                     port=new_deployment_info.disco_file.services["web"].port or 8000,
@@ -623,7 +610,7 @@ def serve_new_deployment(
                 raise
     else:  # static
         try:
-            caddy.serve_static_site(
+            caddy.serve_static_site_sync(
                 new_deployment_info.project_name, new_deployment_info.number
             )
         except Exception:
@@ -732,10 +719,6 @@ def prepare_static_site(
             ("DISCO_REPO_PATH", "/repo"),
             ("DISCO_DIST_PATH", service.public_path),
         ]
-        if new_deployment_info.domain_name is not None:
-            env_variables += [
-                ("DISCO_PROJECT_DOMAIN", new_deployment_info.domain_name),
-            ]
         if new_deployment_info.commit_hash is not None:
             env_variables += [
                 ("DISCO_COMMIT", new_deployment_info.commit_hash),

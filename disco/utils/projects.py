@@ -6,11 +6,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
-from disco.models import ApiKey, GithubAppRepo, Project, ProjectGithubRepo
-from disco.utils import caddy, docker, github
+from disco.models import (
+    ApiKey,
+    GithubAppRepo,
+    Project,
+    ProjectDomain,
+    ProjectGithubRepo,
+)
+from disco.utils import docker, github
 from disco.utils.commandoutputs import delete_output_for_source
 from disco.utils.filesystem import remove_project_static_deployments_if_any
 from disco.utils.githubapps import get_repo_by_full_name
+from disco.utils.projectdomains import remove_domain_sync
 
 log = logging.getLogger(__name__)
 
@@ -27,17 +34,6 @@ def create_project(
     dbsession.add(project)
     log.info("%s created project %s", by_api_key.log(), project.log())
     return project
-
-
-def set_project_domain(
-    project: Project,
-    domain: str,
-    by_api_key: ApiKey,
-):
-    log.info(
-        "%s is setting project domain %s %s", by_api_key.log(), project.log(), domain
-    )
-    project.domain = domain
 
 
 async def set_project_github_repo(
@@ -82,13 +78,20 @@ async def get_project_by_name(dbsession: AsyncDBSession, name: str) -> Project |
 
 
 def get_project_by_domain_sync(dbsession: DBSession, domain: str) -> Project | None:
-    return dbsession.query(Project).filter(Project.domain == domain).first()
+    return (
+        dbsession.query(Project)
+        .join(ProjectDomain)
+        .filter(ProjectDomain.name == domain)
+        .first()
+    )
 
 
 async def get_project_by_domain(
     dbsession: AsyncDBSession, domain: str
 ) -> Project | None:
-    stmt = select(Project).where(Project.domain == domain).limit(1)
+    stmt = (
+        select(Project).join(ProjectDomain).where(ProjectDomain.name == domain).limit(1)
+    )
     result = await dbsession.execute(stmt)
     return result.scalars().first()
 
@@ -117,10 +120,8 @@ def delete_project(dbsession: DBSession, project: Project, by_api_key: ApiKey) -
         except Exception:
             log.info("Failed to remove Github repo for project %s", project.name)
     remove_project_static_deployments_if_any(project.name)
-    try:
-        caddy.remove_project_route(project.name)
-    except Exception:
-        log.info("Failed to remove reverse proxy route for project %s", project.name)
+    for domain in project.domains:
+        remove_domain_sync(dbsession=dbsession, domain=domain, by_api_key=by_api_key)
     services = docker.list_services_for_project(project.name)
     for service_name in services:
         try:

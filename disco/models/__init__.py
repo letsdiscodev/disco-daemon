@@ -17,6 +17,7 @@ from disco.models.githubapprepo import GithubAppRepo  # noqa: F401
 from disco.models.keyvalue import KeyValue  # noqa: F401
 from disco.models.pendinggithubapp import PendingGithubApp  # noqa: F401
 from disco.models.project import Project  # noqa: F401
+from disco.models.projectdomain import ProjectDomain  # noqa: F401
 from disco.models.projectenvironmentvariable import (
     ProjectEnvironmentVariable,  # noqa: F401
 )

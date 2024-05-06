@@ -49,7 +49,6 @@ class Deployment(Base):
         nullable=True,
         index=True,
     )
-    domain: Mapped[str | None] = mapped_column(Unicode(255), nullable=True)
     registry_host: Mapped[str | None] = mapped_column(Unicode(2048), nullable=True)
     project_id: Mapped[str] = mapped_column(
         String(32),

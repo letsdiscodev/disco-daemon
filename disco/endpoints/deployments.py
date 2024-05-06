@@ -11,7 +11,7 @@ from sse_starlette import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
 from disco.auth import get_api_key_sync, get_api_key_wo_tx
-from disco.endpoints.dependencies import get_project_from_url, get_sync_db
+from disco.endpoints.dependencies import get_project_from_url_sync, get_sync_db
 from disco.models import ApiKey, Project
 from disco.models.db import AsyncSession, Session
 from disco.utils import commandoutputs
@@ -34,7 +34,7 @@ router = APIRouter()
     dependencies=[Depends(get_api_key_sync)],
 )
 def deployments_get(
-    project: Annotated[Project, Depends(get_project_from_url)],
+    project: Annotated[Project, Depends(get_project_from_url_sync)],
 ):
     return {
         "deployments": [
@@ -82,7 +82,7 @@ def process_deployment(deployment_id: str) -> None:
 )
 def deployments_post(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
-    project: Annotated[Project, Depends(get_project_from_url)],
+    project: Annotated[Project, Depends(get_project_from_url_sync)],
     api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
     req_body: DeploymentRequestBody,
     background_tasks: BackgroundTasks,

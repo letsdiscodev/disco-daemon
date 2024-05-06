@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.auth import get_api_key_sync, get_api_key_wo_tx
-from disco.endpoints.dependencies import get_project_from_url, get_sync_db
+from disco.endpoints.dependencies import get_project_from_url_sync, get_sync_db
 from disco.models import ApiKey, Project
 from disco.models.db import Session
 from disco.utils import docker, keyvalues
@@ -28,7 +28,7 @@ router = APIRouter()
 )
 def volumes_get(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
-    project: Annotated[Project, Depends(get_project_from_url)],
+    project: Annotated[Project, Depends(get_project_from_url_sync)],
 ):
     deployment = get_live_deployment_sync(dbsession, project)
     volume_names = []
@@ -43,7 +43,7 @@ def volumes_get(
 @router.get("/api/projects/{project_name}/volumes/{volume_name}")
 def volume_get(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
-    project: Annotated[Project, Depends(get_project_from_url)],
+    project: Annotated[Project, Depends(get_project_from_url_sync)],
     volume_name: str,
     api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
 ):
@@ -115,7 +115,6 @@ async def volume_set(
             raise HTTPException(status_code=404)
         assert deployment is not None
         deployment_number = deployment.number
-        domain_name = deployment.domain
         commit_hash = deployment.commit_hash
         registry_host = deployment.registry_host
         env_variables = [
@@ -219,10 +218,6 @@ async def volume_set(
             ("DISCO_SERVICE_NAME", service_name),
             ("DISCO_HOST", disco_host),
         ]
-        if domain_name is not None:
-            env_variables += [
-                ("DISCO_PROJECT_DOMAIN", domain_name),
-            ]
         if commit_hash is not None:
             env_variables += [
                 ("DISCO_COMMIT", commit_hash),
