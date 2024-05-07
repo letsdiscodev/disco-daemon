@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from html import escape
 from typing import Annotated
@@ -152,6 +153,8 @@ def github_app_created_get(
     app_install_url = handle_app_created_on_github(
         pending_app_id=pending_app_id, code=code
     )
+    # the app_install_url sometimes return 404 if we're too fast
+    time.sleep(1)
     return RedirectResponse(url=app_install_url, status_code=302)
 
 
