@@ -1,15 +1,18 @@
 """Script that runs when updating Disco to the latest version"""
 
+import asyncio
 import json
 import logging
 import os
 import re
 import subprocess
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from alembic import command
 from alembic.config import Config
+from sqlalchemy import select, text
 
 import disco
 from disco.models.db import Session
@@ -134,6 +137,75 @@ def alembic_upgrade(version_hash: str) -> None:
     command.upgrade(config, version_hash)
 
 
+def task_0_6_x(image: str) -> None:
+    from disco.models import GithubApp, ProjectDomain
+    from disco.utils.projectdomains import _get_apex_www_redirect_for_domain
+
+    print("Upating from 0.6.x to 0.7.x")
+    alembic_upgrade("97e98737cba8")
+    with Session.begin() as dbsession:
+        rows = dbsession.execute(text("SELECT id, domain FROM projects;")).all()
+        all_domains = set([row.domain for row in rows if row.domain is not None])
+        for row in rows:
+            if row.domain is not None:
+                project_domain = ProjectDomain(
+                    id=uuid.uuid4().hex,
+                    project_id=row.id,
+                    name=row.domain,
+                )
+                dbsession.add(project_domain)
+                apex_www_redirect = _get_apex_www_redirect_for_domain(row.domain)
+                if (
+                    apex_www_redirect is not None
+                    and apex_www_redirect not in all_domains
+                ):
+                    add_redirect_cmd = (
+                        "from disco.scripts.update import _add_apex_www_redirects; "
+                        "_add_apex_www_redirects("
+                        f"'{project_domain.id}', '{apex_www_redirect}', "
+                        f"'{project_domain.name}')"
+                    )
+                    _run_cmd(
+                        [
+                            "docker",
+                            "run",
+                            "--rm",
+                            "--mount",
+                            "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+                            "--mount",
+                            "type=bind,source=/var/run/caddy,target=/var/run/caddy",
+                            image,
+                            "python",
+                            "-c",
+                            add_redirect_cmd,
+                        ]
+                    )
+
+        stmt = select(GithubApp).order_by(GithubApp.owner_login)
+        github_apps = dbsession.execute(stmt).scalars().all()
+        for github_app in github_apps:
+            app_meta = json.loads(github_app.app_info)
+            github_app.owner_id = app_meta["owner"]["id"]
+            github_app.owner_login = app_meta["owner"]["login"]
+            github_app.owner_type = app_meta["owner"]["type"]
+    alembic_upgrade("47da35039f6f")
+    with Session.begin() as dbsession:
+        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.7.0")
+
+
+def _add_apex_www_redirects(domain_id: str, from_domain: str, to_domain: str) -> None:
+    from disco.utils import caddy
+
+    async def update_caddy_async():
+        await caddy.add_apex_www_redirects(
+            domain_id=domain_id,
+            from_domain=from_domain,
+            to_domain=to_domain,
+        )
+
+    asyncio.run(update_caddy_async())
+
+
 def task_0_5_x(image: str) -> None:
     print("Upating from 0.5.x to 0.6.x")
     alembic_upgrade("5540c20f9acd")
@@ -246,6 +318,8 @@ def get_update_function_for_version(version: str) -> Callable[[str], None]:
     if version.startswith("0.5."):
         return task_0_5_x
     if version.startswith("0.6."):
-        assert disco.__version__.startswith("0.6.")
+        return task_0_6_x
+    if version.startswith("0.7."):
+        assert disco.__version__.startswith("0.7.")
         return task_patch
     raise NotImplementedError(f"Update missing for version {version}")
