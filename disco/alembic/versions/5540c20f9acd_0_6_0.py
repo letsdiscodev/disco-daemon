@@ -1,8 +1,8 @@
 """0.6.0
 
-Revision ID: 5540c20f9acd
+Revision ID: 89ebfedc4580
 Revises: 87c62632dfd1
-Create Date: 2024-05-04 22:54:34.928878
+Create Date: 2024-05-07 19:24:47.609128
 
 """
 
@@ -52,12 +52,11 @@ def upgrade():
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_api_key_usages")),
     )
-    op.create_index(
-        op.f("ix_api_key_usages_api_key_id"),
-        "api_key_usages",
-        ["api_key_id"],
-        unique=False,
-    )
+    with op.batch_alter_table("api_key_usages", schema=None) as batch_op:
+        batch_op.create_index(
+            batch_op.f("ix_api_key_usages_api_key_id"), ["api_key_id"], unique=False
+        )
+
     op.create_table(
         "github_app_installations",
         sa.Column("id", sa.Integer(), nullable=False),
@@ -73,12 +72,13 @@ def upgrade():
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_github_app_installations")),
     )
-    op.create_index(
-        op.f("ix_github_app_installations_github_app_id"),
-        "github_app_installations",
-        ["github_app_id"],
-        unique=False,
-    )
+    with op.batch_alter_table("github_app_installations", schema=None) as batch_op:
+        batch_op.create_index(
+            batch_op.f("ix_github_app_installations_github_app_id"),
+            ["github_app_id"],
+            unique=False,
+        )
+
     op.create_table(
         "github_app_repos",
         sa.Column("id", sa.String(length=32), nullable=False),
@@ -93,18 +93,16 @@ def upgrade():
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_github_app_repos")),
     )
-    op.create_index(
-        op.f("ix_github_app_repos_full_name"),
-        "github_app_repos",
-        ["full_name"],
-        unique=False,
-    )
-    op.create_index(
-        op.f("ix_github_app_repos_installation_id"),
-        "github_app_repos",
-        ["installation_id"],
-        unique=False,
-    )
+    with op.batch_alter_table("github_app_repos", schema=None) as batch_op:
+        batch_op.create_index(
+            batch_op.f("ix_github_app_repos_full_name"), ["full_name"], unique=False
+        )
+        batch_op.create_index(
+            batch_op.f("ix_github_app_repos_installation_id"),
+            ["installation_id"],
+            unique=False,
+        )
+
     op.create_table(
         "project_github_repos",
         sa.Column("id", sa.String(length=32), nullable=False),
@@ -124,211 +122,171 @@ def upgrade():
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_project_github_repos")),
     )
-    op.create_index(
-        op.f("ix_project_github_repos_github_app_repo_id"),
-        "project_github_repos",
-        ["github_app_repo_id"],
-        unique=False,
-    )
-    op.create_index(
-        op.f("ix_project_github_repos_project_id"),
-        "project_github_repos",
-        ["project_id"],
-        unique=False,
-    )
-    op.alter_column(
-        "api_key_invites", "created", existing_type=sa.DATETIME(), nullable=False
-    )
-    op.alter_column(
-        "api_key_invites", "updated", existing_type=sa.DATETIME(), nullable=False
-    )
-    op.alter_column("api_keys", "created", existing_type=sa.DATETIME(), nullable=False)
-    op.alter_column("api_keys", "updated", existing_type=sa.DATETIME(), nullable=False)
-    op.alter_column(
-        "command_outputs", "created", existing_type=sa.DATETIME(), nullable=False
-    )
-    op.alter_column(
-        "command_runs", "created", existing_type=sa.DATETIME(), nullable=False
-    )
-    op.alter_column(
-        "command_runs", "updated", existing_type=sa.DATETIME(), nullable=False
-    )
-    op.alter_column(
-        "deployment_env_variables",
-        "created",
-        existing_type=sa.DATETIME(),
-        nullable=False,
-    )
-    op.alter_column(
-        "deployment_env_variables",
-        "updated",
-        existing_type=sa.DATETIME(),
-        nullable=False,
-    )
-    op.add_column(
-        "deployments",
-        sa.Column("github_repo_full_name", sa.Unicode(length=2048), nullable=True),
-    )
-    op.add_column(
-        "deployments", sa.Column("github_repo_id", sa.String(length=32), nullable=True)
-    )
-    op.alter_column(
-        "deployments", "created", existing_type=sa.DATETIME(), nullable=False
-    )
-    op.alter_column(
-        "deployments", "updated", existing_type=sa.DATETIME(), nullable=False
-    )
-    op.create_index(
-        op.f("ix_deployments_github_repo_id"),
-        "deployments",
-        ["github_repo_id"],
-        unique=False,
-    )
-    op.create_foreign_key(
-        op.f("fk_deployments_github_repo_id_github_app_repos"),
-        "deployments",
-        "github_app_repos",
-        ["github_repo_id"],
-        ["id"],
-    )
-    op.drop_column("deployments", "github_host")
-    op.drop_column("deployments", "github_repo")
-    op.alter_column(
-        "key_values", "created", existing_type=sa.DATETIME(), nullable=False
-    )
-    op.alter_column(
-        "key_values", "updated", existing_type=sa.DATETIME(), nullable=False
-    )
-    op.alter_column(
-        "project_env_variables", "created", existing_type=sa.DATETIME(), nullable=False
-    )
-    op.alter_column(
-        "project_env_variables", "updated", existing_type=sa.DATETIME(), nullable=False
-    )
-    op.alter_column(
-        "project_key_values", "created", existing_type=sa.DATETIME(), nullable=False
-    )
-    op.alter_column(
-        "project_key_values", "updated", existing_type=sa.DATETIME(), nullable=False
-    )
-    op.add_column(
-        "projects", sa.Column("deployment_type", sa.Unicode(length=255), nullable=True)
-    )
-    op.alter_column("projects", "created", existing_type=sa.DATETIME(), nullable=False)
-    op.alter_column("projects", "updated", existing_type=sa.DATETIME(), nullable=False)
-    op.drop_index("ix_projects_github_webhook_token", table_name="projects")
-    op.drop_column("projects", "github_webhook_secret")
-    op.drop_column("projects", "github_host")
-    op.drop_column("projects", "github_repo")
-    op.drop_column("projects", "github_webhook_token")
+    with op.batch_alter_table("project_github_repos", schema=None) as batch_op:
+        batch_op.create_index(
+            batch_op.f("ix_project_github_repos_github_app_repo_id"),
+            ["github_app_repo_id"],
+            unique=False,
+        )
+        batch_op.create_index(
+            batch_op.f("ix_project_github_repos_project_id"),
+            ["project_id"],
+            unique=False,
+        )
+
+    with op.batch_alter_table("api_key_invites", schema=None) as batch_op:
+        batch_op.alter_column("created", existing_type=sa.DATETIME(), nullable=False)
+        batch_op.alter_column("updated", existing_type=sa.DATETIME(), nullable=False)
+
+    with op.batch_alter_table("api_keys", schema=None) as batch_op:
+        batch_op.alter_column("created", existing_type=sa.DATETIME(), nullable=False)
+        batch_op.alter_column("updated", existing_type=sa.DATETIME(), nullable=False)
+
+    with op.batch_alter_table("command_outputs", schema=None) as batch_op:
+        batch_op.alter_column("created", existing_type=sa.DATETIME(), nullable=False)
+
+    with op.batch_alter_table("command_runs", schema=None) as batch_op:
+        batch_op.alter_column("created", existing_type=sa.DATETIME(), nullable=False)
+        batch_op.alter_column("updated", existing_type=sa.DATETIME(), nullable=False)
+
+    with op.batch_alter_table("deployment_env_variables", schema=None) as batch_op:
+        batch_op.alter_column("created", existing_type=sa.DATETIME(), nullable=False)
+        batch_op.alter_column("updated", existing_type=sa.DATETIME(), nullable=False)
+
+    with op.batch_alter_table("deployments", schema=None) as batch_op:
+        batch_op.add_column(
+            sa.Column("github_repo_full_name", sa.Unicode(length=2048), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("github_repo_id", sa.String(length=32), nullable=True)
+        )
+        batch_op.alter_column("created", existing_type=sa.DATETIME(), nullable=False)
+        batch_op.alter_column("updated", existing_type=sa.DATETIME(), nullable=False)
+        batch_op.create_index(
+            batch_op.f("ix_deployments_github_repo_id"),
+            ["github_repo_id"],
+            unique=False,
+        )
+        batch_op.create_foreign_key(
+            batch_op.f("fk_deployments_github_repo_id_github_app_repos"),
+            "github_app_repos",
+            ["github_repo_id"],
+            ["id"],
+        )
+        batch_op.drop_column("github_host")
+        batch_op.drop_column("github_repo")
+
+    with op.batch_alter_table("key_values", schema=None) as batch_op:
+        batch_op.alter_column("created", existing_type=sa.DATETIME(), nullable=False)
+        batch_op.alter_column("updated", existing_type=sa.DATETIME(), nullable=False)
+
+    with op.batch_alter_table("project_env_variables", schema=None) as batch_op:
+        batch_op.alter_column("created", existing_type=sa.DATETIME(), nullable=False)
+        batch_op.alter_column("updated", existing_type=sa.DATETIME(), nullable=False)
+
+    with op.batch_alter_table("project_key_values", schema=None) as batch_op:
+        batch_op.alter_column("created", existing_type=sa.DATETIME(), nullable=False)
+        batch_op.alter_column("updated", existing_type=sa.DATETIME(), nullable=False)
+
+    with op.batch_alter_table("projects", schema=None) as batch_op:
+        batch_op.add_column(
+            sa.Column("deployment_type", sa.Unicode(length=255), nullable=True)
+        )
+        batch_op.alter_column("created", existing_type=sa.DATETIME(), nullable=False)
+        batch_op.alter_column("updated", existing_type=sa.DATETIME(), nullable=False)
+        batch_op.drop_index("ix_projects_github_webhook_token")
+        batch_op.drop_column("github_webhook_token")
+        batch_op.drop_column("github_webhook_secret")
+        batch_op.drop_column("github_repo")
+        batch_op.drop_column("github_host")
 
 
 def downgrade():
-    op.add_column(
-        "projects",
-        sa.Column("github_webhook_token", sa.VARCHAR(length=32), nullable=True),
-    )
-    op.add_column(
-        "projects", sa.Column("github_repo", sa.VARCHAR(length=2048), nullable=True)
-    )
-    op.add_column(
-        "projects", sa.Column("github_host", sa.VARCHAR(length=2048), nullable=True)
-    )
-    op.add_column(
-        "projects",
-        sa.Column("github_webhook_secret", sa.VARCHAR(length=32), nullable=True),
-    )
-    op.create_index(
-        "ix_projects_github_webhook_token",
-        "projects",
-        ["github_webhook_token"],
-        unique=False,
-    )
-    op.alter_column("projects", "updated", existing_type=sa.DATETIME(), nullable=True)
-    op.alter_column("projects", "created", existing_type=sa.DATETIME(), nullable=True)
-    op.drop_column("projects", "deployment_type")
-    op.alter_column(
-        "project_key_values", "updated", existing_type=sa.DATETIME(), nullable=True
-    )
-    op.alter_column(
-        "project_key_values", "created", existing_type=sa.DATETIME(), nullable=True
-    )
-    op.alter_column(
-        "project_env_variables", "updated", existing_type=sa.DATETIME(), nullable=True
-    )
-    op.alter_column(
-        "project_env_variables", "created", existing_type=sa.DATETIME(), nullable=True
-    )
-    op.alter_column("key_values", "updated", existing_type=sa.DATETIME(), nullable=True)
-    op.alter_column("key_values", "created", existing_type=sa.DATETIME(), nullable=True)
-    op.add_column(
-        "deployments", sa.Column("github_repo", sa.VARCHAR(length=2048), nullable=True)
-    )
-    op.add_column(
-        "deployments", sa.Column("github_host", sa.VARCHAR(length=2048), nullable=True)
-    )
-    op.drop_constraint(
-        op.f("fk_deployments_github_repo_id_github_app_repos"),
-        "deployments",
-        type_="foreignkey",
-    )
-    op.drop_index(op.f("ix_deployments_github_repo_id"), table_name="deployments")
-    op.alter_column(
-        "deployments", "updated", existing_type=sa.DATETIME(), nullable=True
-    )
-    op.alter_column(
-        "deployments", "created", existing_type=sa.DATETIME(), nullable=True
-    )
-    op.drop_column("deployments", "github_repo_id")
-    op.drop_column("deployments", "github_repo_full_name")
-    op.alter_column(
-        "deployment_env_variables",
-        "updated",
-        existing_type=sa.DATETIME(),
-        nullable=True,
-    )
-    op.alter_column(
-        "deployment_env_variables",
-        "created",
-        existing_type=sa.DATETIME(),
-        nullable=True,
-    )
-    op.alter_column(
-        "command_runs", "updated", existing_type=sa.DATETIME(), nullable=True
-    )
-    op.alter_column(
-        "command_runs", "created", existing_type=sa.DATETIME(), nullable=True
-    )
-    op.alter_column(
-        "command_outputs", "created", existing_type=sa.DATETIME(), nullable=True
-    )
-    op.alter_column("api_keys", "updated", existing_type=sa.DATETIME(), nullable=True)
-    op.alter_column("api_keys", "created", existing_type=sa.DATETIME(), nullable=True)
-    op.alter_column(
-        "api_key_invites", "updated", existing_type=sa.DATETIME(), nullable=True
-    )
-    op.alter_column(
-        "api_key_invites", "created", existing_type=sa.DATETIME(), nullable=True
-    )
-    op.drop_index(
-        op.f("ix_project_github_repos_project_id"), table_name="project_github_repos"
-    )
-    op.drop_index(
-        op.f("ix_project_github_repos_github_app_repo_id"),
-        table_name="project_github_repos",
-    )
+    with op.batch_alter_table("projects", schema=None) as batch_op:
+        batch_op.add_column(
+            sa.Column("github_host", sa.VARCHAR(length=2048), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("github_repo", sa.VARCHAR(length=2048), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("github_webhook_secret", sa.VARCHAR(length=32), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("github_webhook_token", sa.VARCHAR(length=32), nullable=True)
+        )
+        batch_op.create_index(
+            "ix_projects_github_webhook_token", ["github_webhook_token"], unique=False
+        )
+        batch_op.alter_column("updated", existing_type=sa.DATETIME(), nullable=True)
+        batch_op.alter_column("created", existing_type=sa.DATETIME(), nullable=True)
+        batch_op.drop_column("deployment_type")
+
+    with op.batch_alter_table("project_key_values", schema=None) as batch_op:
+        batch_op.alter_column("updated", existing_type=sa.DATETIME(), nullable=True)
+        batch_op.alter_column("created", existing_type=sa.DATETIME(), nullable=True)
+
+    with op.batch_alter_table("project_env_variables", schema=None) as batch_op:
+        batch_op.alter_column("updated", existing_type=sa.DATETIME(), nullable=True)
+        batch_op.alter_column("created", existing_type=sa.DATETIME(), nullable=True)
+
+    with op.batch_alter_table("key_values", schema=None) as batch_op:
+        batch_op.alter_column("updated", existing_type=sa.DATETIME(), nullable=True)
+        batch_op.alter_column("created", existing_type=sa.DATETIME(), nullable=True)
+
+    with op.batch_alter_table("deployments", schema=None) as batch_op:
+        batch_op.add_column(
+            sa.Column("github_repo", sa.VARCHAR(length=2048), nullable=True)
+        )
+        batch_op.add_column(
+            sa.Column("github_host", sa.VARCHAR(length=2048), nullable=True)
+        )
+        batch_op.drop_constraint(
+            batch_op.f("fk_deployments_github_repo_id_github_app_repos"),
+            type_="foreignkey",
+        )
+        batch_op.drop_index(batch_op.f("ix_deployments_github_repo_id"))
+        batch_op.alter_column("updated", existing_type=sa.DATETIME(), nullable=True)
+        batch_op.alter_column("created", existing_type=sa.DATETIME(), nullable=True)
+        batch_op.drop_column("github_repo_id")
+        batch_op.drop_column("github_repo_full_name")
+
+    with op.batch_alter_table("deployment_env_variables", schema=None) as batch_op:
+        batch_op.alter_column("updated", existing_type=sa.DATETIME(), nullable=True)
+        batch_op.alter_column("created", existing_type=sa.DATETIME(), nullable=True)
+
+    with op.batch_alter_table("command_runs", schema=None) as batch_op:
+        batch_op.alter_column("updated", existing_type=sa.DATETIME(), nullable=True)
+        batch_op.alter_column("created", existing_type=sa.DATETIME(), nullable=True)
+
+    with op.batch_alter_table("command_outputs", schema=None) as batch_op:
+        batch_op.alter_column("created", existing_type=sa.DATETIME(), nullable=True)
+
+    with op.batch_alter_table("api_keys", schema=None) as batch_op:
+        batch_op.alter_column("updated", existing_type=sa.DATETIME(), nullable=True)
+        batch_op.alter_column("created", existing_type=sa.DATETIME(), nullable=True)
+
+    with op.batch_alter_table("api_key_invites", schema=None) as batch_op:
+        batch_op.alter_column("updated", existing_type=sa.DATETIME(), nullable=True)
+        batch_op.alter_column("created", existing_type=sa.DATETIME(), nullable=True)
+
+    with op.batch_alter_table("project_github_repos", schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f("ix_project_github_repos_project_id"))
+        batch_op.drop_index(batch_op.f("ix_project_github_repos_github_app_repo_id"))
+
     op.drop_table("project_github_repos")
-    op.drop_index(
-        op.f("ix_github_app_repos_installation_id"), table_name="github_app_repos"
-    )
-    op.drop_index(op.f("ix_github_app_repos_full_name"), table_name="github_app_repos")
+    with op.batch_alter_table("github_app_repos", schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f("ix_github_app_repos_installation_id"))
+        batch_op.drop_index(batch_op.f("ix_github_app_repos_full_name"))
+
     op.drop_table("github_app_repos")
-    op.drop_index(
-        op.f("ix_github_app_installations_github_app_id"),
-        table_name="github_app_installations",
-    )
+    with op.batch_alter_table("github_app_installations", schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f("ix_github_app_installations_github_app_id"))
+
     op.drop_table("github_app_installations")
-    op.drop_index(op.f("ix_api_key_usages_api_key_id"), table_name="api_key_usages")
+    with op.batch_alter_table("api_key_usages", schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f("ix_api_key_usages_api_key_id"))
+
     op.drop_table("api_key_usages")
     op.drop_table("pending_github_apps")
     op.drop_table("github_apps")
