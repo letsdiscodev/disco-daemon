@@ -26,7 +26,6 @@ def build_image(
         "--cpu-quota",
         # use half of the CPU time
         str(int(100000 * cpu_count() / 2)),
-        "--no-cache",
         "--tag",
         image,
         "--file",
