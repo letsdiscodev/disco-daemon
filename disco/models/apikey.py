@@ -42,7 +42,7 @@ class ApiKey(Base):
     )
     deleted: Mapped[datetime | None] = mapped_column(DateTimeTzAware())
 
-    created_api_key_invites: Mapped[ApiKeyInvite | None] = relationship(
+    created_api_key_invites: Mapped[list[ApiKeyInvite]] = relationship(
         "ApiKeyInvite",
         foreign_keys="ApiKeyInvite.by_api_key_id",
         back_populates="by_api_key",
