@@ -28,7 +28,7 @@ from disco.utils.filesystem import (
     project_path_on_host,
     read_disco_file,
 )
-from disco.utils.projects import volume_name_for_project
+from disco.utils.projects import get_project_by_id, volume_name_for_project
 
 log = logging.getLogger(__name__)
 
@@ -262,7 +262,12 @@ def replace_deployment(
         )
         start_services(new_deployment_info, recovery, log_output)
         if "web" in new_deployment_info.disco_file.services:
-            serve_new_deployment(new_deployment_info, recovery, log_output)
+            with Session.begin() as dbsession:
+                project = get_project_by_id(dbsession, new_deployment_info.project_id)
+                assert project is not None
+                has_domains = len(project.domains) > 0
+            if has_domains:
+                serve_new_deployment(new_deployment_info, recovery, log_output)
         async_worker.reload_and_resume_project_crons(
             prev_project_name=prev_deployment_info.project_name
             if prev_deployment_info is not None
