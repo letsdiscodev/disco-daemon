@@ -4,12 +4,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import ForeignKey, String, Unicode
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 if TYPE_CHECKING:
     from disco.models import (
-        GithubAppRepo,
         Project,
     )
 from disco.models.meta import Base, DateTimeTzAware
@@ -38,17 +37,9 @@ class ProjectGithubRepo(Base):
         nullable=False,
         index=True,
     )
-    github_app_repo_id: Mapped[str] = mapped_column(
-        String(32),
-        ForeignKey("github_app_repos.id"),
-        nullable=False,
-        index=True,
-    )
+    full_name: Mapped[str] = mapped_column(Unicode(255), nullable=False, index=True)
 
     project: Mapped[Project] = relationship("Project", back_populates="github_repo")
-    github_app_repo: Mapped[GithubAppRepo] = relationship(
-        "GithubAppRepo", back_populates="project_github_repos"
-    )
 
     def log(self):
         return f"PROJECT_GITHUB_REPO_{self.id} ({self.name})"

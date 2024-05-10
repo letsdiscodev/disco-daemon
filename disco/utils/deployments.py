@@ -10,7 +10,6 @@ from disco.models import (
     ApiKey,
     Deployment,
     DeploymentEnvironmentVariable,
-    GithubAppRepo,
     Project,
 )
 from disco.utils import commandoutputs, keyvalues
@@ -54,17 +53,16 @@ async def create_deployment(
     else:
         number = await get_next_deployment_number(dbsession, project)
     prev_deployment = await get_live_deployment(dbsession, project)
-    github_repo = await _github_repo_for_project(project)
+    project_github_repo = await project.awaitable_attrs.github_repo
     deployment = Deployment(
         id=uuid.uuid4().hex,
         number=number,
         prev_deployment_id=prev_deployment.id if prev_deployment is not None else None,
         project_name=project.name,
         project=project,
-        github_repo_full_name=github_repo.full_name
-        if github_repo is not None
+        github_repo_full_name=project_github_repo.full_name
+        if project_github_repo is not None
         else None,
-        github_repo=github_repo,
         status="QUEUED",
         commit_hash=commit_hash,
         disco_file=disco_file.model_dump_json(indent=2, by_alias=True)
@@ -91,14 +89,6 @@ async def create_deployment(
     return deployment
 
 
-async def _github_repo_for_project(project: Project) -> GithubAppRepo | None:
-    project_repo = await project.awaitable_attrs.github_repo
-    if project_repo is None:
-        return None
-    github_repo = await project_repo.awaitable_attrs.github_app_repo
-    return github_repo
-
-
 def create_deployment_sync(
     dbsession: DBSession,
     project: Project,
@@ -115,18 +105,15 @@ def create_deployment_sync(
     else:
         number = get_next_deployment_number_sync(dbsession, project)
     prev_deployment = get_live_deployment_sync(dbsession, project)
-    github_repo = None
-    if project.github_repo is not None:
-        github_repo = project.github_repo.github_app_repo
+    project_github_repo = project.github_repo
     deployment = Deployment(
         id=uuid.uuid4().hex,
         number=number,
         prev_deployment_id=prev_deployment.id if prev_deployment is not None else None,
         project_name=project.name,
-        github_repo_full_name=github_repo.full_name
-        if github_repo is not None
+        github_repo_full_name=project_github_repo.full_name
+        if project_github_repo is not None
         else None,
-        github_repo=github_repo,
         project=project,
         status="QUEUED",
         commit_hash=commit_hash,

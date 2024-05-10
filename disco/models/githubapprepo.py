@@ -15,7 +15,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from disco.models.meta import Base, DateTimeTzAware
 
 if TYPE_CHECKING:
-    from disco.models import Deployment, GithubAppInstallation, ProjectGithubRepo
+    from disco.models import Deployment, GithubAppInstallation
 
 
 class GithubAppRepo(Base):
@@ -46,9 +46,6 @@ class GithubAppRepo(Base):
     installation: Mapped[GithubAppInstallation] = relationship(
         "GithubAppInstallation",
         back_populates="github_app_repos",
-    )
-    project_github_repos: Mapped[list[ProjectGithubRepo]] = relationship(
-        "ProjectGithubRepo", back_populates="github_app_repo"
     )
     deployments: Mapped[list[Deployment]] = relationship(
         "Deployment", back_populates="github_repo"

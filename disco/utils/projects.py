@@ -8,7 +8,6 @@ from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import (
     ApiKey,
-    GithubAppRepo,
     Project,
     ProjectDomain,
     ProjectGithubRepo,
@@ -16,7 +15,6 @@ from disco.models import (
 from disco.utils import docker, github
 from disco.utils.commandoutputs import delete_output_for_source
 from disco.utils.filesystem import remove_project_static_deployments_if_any
-from disco.utils.githubapps import get_repo_by_full_name
 from disco.utils.projectdomains import remove_domain_sync
 
 log = logging.getLogger(__name__)
@@ -55,11 +53,9 @@ async def set_project_github_repo(
             raise NotImplementedError(f"{project.deployment_type} not handled")
 
     project.deployment_type = "GITHUB"
-    app_repo = await get_repo_by_full_name(dbsession, github_repo)
-    assert app_repo is not None
     project.github_repo = ProjectGithubRepo(
         id=uuid.uuid4().hex,
-        github_app_repo=app_repo,
+        full_name=github_repo,
     )
 
 
@@ -99,13 +95,7 @@ async def get_project_by_domain(
 def get_projects_by_github_app_repo(
     dbsession: DBSession, full_name: str
 ) -> Sequence[Project]:
-    return (
-        dbsession.query(Project)
-        .join(ProjectGithubRepo)
-        .join(GithubAppRepo)
-        .filter(GithubAppRepo.full_name == full_name)
-        .all()
-    )
+    return dbsession.query(Project).join(ProjectGithubRepo.full_name == full_name).all()
 
 
 def get_all_projects(dbsession: DBSession) -> list[Project]:

@@ -43,7 +43,6 @@ class DeploymentInfo:
     project_id: str
     project_name: str
     github_repo_full_name: str | None
-    github_repo_id: str | None
     registry_host: str | None
     host_home: str
     disco_host: str
@@ -63,7 +62,6 @@ class DeploymentInfo:
             project_id=deployment.project_id,
             project_name=deployment.project_name,
             github_repo_full_name=deployment.github_repo_full_name,
-            github_repo_id=deployment.github_repo_id,
             registry_host=deployment.registry_host,
             host_home=host_home,
             disco_host=disco_host,
@@ -319,22 +317,28 @@ def checkout_commit(
     assert new_deployment_info.github_repo_full_name is not None
     if not project_folder_exists(new_deployment_info.project_name):
         log_output(f"Cloning github.com/{new_deployment_info.github_repo_full_name}\n")
-        github.clone(
-            project_name=new_deployment_info.project_name,
-            repo_full_name=new_deployment_info.github_repo_full_name,
-            github_repo_id=new_deployment_info.github_repo_id,
-        )
+        try:
+            github.clone(
+                project_name=new_deployment_info.project_name,
+                repo_full_name=new_deployment_info.github_repo_full_name,
+            )
+        except github.GithubException:
+            log_output("Failed to clone repository. Is the repository accessible?\n")
+            raise
         # TODO if project doesn't have branch configured,
         #      save if origin/main exists, otherwise, origin/master
     else:
         log_output(
             f"Fetching from github.com/{new_deployment_info.github_repo_full_name}\n"
         )
-        github.fetch(
-            project_name=new_deployment_info.project_name,
-            repo_full_name=new_deployment_info.github_repo_full_name,
-            github_repo_id=new_deployment_info.github_repo_id,
-        )
+        try:
+            github.fetch(
+                project_name=new_deployment_info.project_name,
+                repo_full_name=new_deployment_info.github_repo_full_name,
+            )
+        except github.GithubException:
+            log_output("Failed to fetch repository. Is the repository accessible?\n")
+            raise
     if new_deployment_info.commit_hash == "_DEPLOY_LATEST_":
         # TODO use project branch
         log_output("Checking out latest commit\n")

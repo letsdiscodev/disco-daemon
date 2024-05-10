@@ -14,6 +14,7 @@ from disco.utils.filesystem import project_path, projects_root
 from disco.utils.githubapps import (
     get_github_app_installation_by_id,
     get_repo_by_id_sync,
+    get_repos_by_full_name_sync,
 )
 
 log = logging.getLogger(__name__)
@@ -142,14 +143,14 @@ def remove_repo(project_name: str) -> None:
     shutil.rmtree(project_path(project_name))
 
 
-def fetch(project_name: str, repo_full_name: str, github_repo_id: str | None) -> None:
+def fetch(project_name: str, repo_full_name: str) -> None:
     log.info("Fetching from Github project %s", project_name)
-    if github_repo_id is not None:
-        access_token = get_access_token_for_github_app_repo(
-            full_name=repo_full_name, github_repo_id=github_repo_id
-        )
+    access_token = get_access_token_for_github_app_repo(full_name=repo_full_name)
+    if access_token is not None:
+        log.info("Using access token to fetch repo %s", repo_full_name)
         url = f"https://x-access-token:{access_token}@github.com/{repo_full_name}"
     else:
+        log.info("Not using access token to fetch repo %s", repo_full_name)
         url = f"https://github.com/{repo_full_name}"
     args = ["git", "remote", "set-url", "origin", url]
     process = subprocess.Popen(
@@ -182,21 +183,20 @@ def fetch(project_name: str, repo_full_name: str, github_repo_id: str | None) ->
         log.info("Output: %s", line_text)
     process.wait()
     if process.returncode != 0:
-        raise Exception(f"Git returned status {process.returncode}")
+        raise GithubException(f"Git returned status {process.returncode}")
 
 
 def clone(
     project_name: str,
     repo_full_name: str,
-    github_repo_id: str | None,
 ) -> None:
     log.info("Cloning from Github project %s (%s)", project_name, repo_full_name)
-    if github_repo_id is not None:
-        access_token = get_access_token_for_github_app_repo(
-            full_name=repo_full_name, github_repo_id=github_repo_id
-        )
+    access_token = get_access_token_for_github_app_repo(full_name=repo_full_name)
+    if access_token is not None:
+        log.info("Using access token to clone repo %s", repo_full_name)
         url = f"https://x-access-token:{access_token}@github.com/{repo_full_name}"
     else:
+        log.info("Not using access token to clone repo %s", repo_full_name)
         url = f"https://github.com/{repo_full_name}"
     args = ["git", "clone", url, project_path(project_name)]
     process = subprocess.Popen(
@@ -214,58 +214,99 @@ def clone(
 
     process.wait()
     if process.returncode != 0:
-        raise Exception(f"Git returned status {process.returncode}")
+        raise GithubException(f"Git returned status {process.returncode}")
 
 
 class GithubException(Exception):
     pass
 
 
-class GithubRepoPermissionException(Exception):
-    pass
-
-
-def get_access_token_for_github_app_repo(full_name: str, github_repo_id: str) -> str:
+def get_access_token_for_github_app_repo(full_name: str) -> str | None:
     with Session.begin() as dbsession:
-        repo = get_repo_by_id_sync(dbsession, github_repo_id)
-        if repo is None:
-            raise GithubRepoPermissionException(
-                f"Github Repository {full_name} not accessible"
-            )
-        access_token = repo.installation.access_token
-        access_token_expires = repo.installation.access_token_expires
-        installation_id = repo.installation.id
-        pem = repo.installation.github_app.pem
-        app_id = repo.installation.github_app.id
-    if access_token_expires is None or access_token_expires < datetime.now(
-        timezone.utc
-    ) - timedelta(minutes=10):
-        signing_key = jwk_from_pem(pem.encode("utf-8"))
-        payload = {"iat": int(time.time()), "exp": int(time.time()) + 30, "iss": app_id}
-        jwt_instance = JWT()
-        encoded_jwt = jwt_instance.encode(payload, signing_key, alg="RS256")
-        url = (
-            f"https://api.github.com/app/installations/{installation_id}/access_tokens"
-        )
+        repos = get_repos_by_full_name_sync(dbsession, full_name)
+        if len(repos) == 0:
+            log.info("No Github app for repo %s, using anonymous access", full_name)
+            return None
+        repo_ids = [repo.id for repo in repos]
+    for repo_id in repo_ids:
+        with Session.begin() as dbsession:
+            repo = get_repo_by_id_sync(dbsession, repo_id)
+            if repo is None:  # in case it's been removed since fetching above
+                continue
+            access_token = repo.installation.access_token
+            access_token_expires = repo.installation.access_token_expires
+            installation_id = repo.installation.id
+            pem = repo.installation.github_app.pem
+            app_id = repo.installation.github_app.id
+        if access_token_expires is None or access_token_expires < datetime.now(
+            timezone.utc
+        ) - timedelta(minutes=10):
+            # renew access token
+            signing_key = jwk_from_pem(pem.encode("utf-8"))
+            payload = {
+                "iat": int(time.time()),
+                "exp": int(time.time()) + 30,
+                "iss": app_id,
+            }
+            jwt_instance = JWT()
+            encoded_jwt = jwt_instance.encode(payload, signing_key, alg="RS256")
+            url = f"https://api.github.com/app/installations/{installation_id}/access_tokens"
+            headers = {
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {encoded_jwt}",
+                "X-GitHub-Api-Version": "2022-11-28",
+            }
+            response = requests.post(url=url, headers=headers, timeout=20)
+            if response.status_code != 201:
+                log.info(
+                    "Github returned status code %d when creating "
+                    "access token for %s with installation %s",
+                    response.status_code,
+                    full_name,
+                    installation_id,
+                )
+                continue
+            resp_body = response.json()
+            access_token = resp_body["token"]
+            assert isinstance(access_token, str)
+            expires_iso8601 = resp_body["expires_at"]
+            expires = datetime.fromisoformat(expires_iso8601)
+            with Session.begin() as dbsession:
+                installation = get_github_app_installation_by_id(
+                    dbsession, installation_id
+                )
+                assert installation is not None
+                installation.access_token = access_token
+                installation.access_token_expires = expires
+        assert access_token is not None
+        # we have a token, make sure it still has access to the repo
+        url = "https://api.github.com/installation/repositories"
         headers = {
             "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {encoded_jwt}",
+            "Authorization": f"Bearer {access_token}",
             "X-GitHub-Api-Version": "2022-11-28",
         }
-        response = requests.post(url=url, headers=headers, timeout=20)
-        # TODO check status code
-        # TODO if unable to get token,
-        #      see if other installations have the repo, try with them, update DB
-        #      and try again
+        response = requests.get(url=url, headers=headers, timeout=20)
+        if response.status_code != 200:
+            log.info(
+                "Github returned status code %d when fetching installation %d's repos, can't use for repo %s",
+                response.status_code,
+                installation_id,
+                full_name,
+            )
+            continue
         resp_body = response.json()
-        access_token = resp_body["token"]
-        assert isinstance(access_token, str)
-        expires_iso8601 = resp_body["expires_at"]
-        expires = datetime.fromisoformat(expires_iso8601)
-        with Session.begin() as dbsession:
-            installation = get_github_app_installation_by_id(dbsession, installation_id)
-            assert installation is not None
-            installation.access_token = access_token
-            installation.access_token_expires = expires
-    assert access_token is not None
-    return access_token
+        repo_full_names = [repo["full_name"] for repo in resp_body["repositories"]]
+        if full_name not in repo_full_names:
+            log.info(
+                "Repository %s not accessible with app installation %d",
+                full_name,
+                installation_id,
+            )
+            continue
+        return access_token
+    log.info(
+        "All Github apps were unable to provide an access token for %s, using anonymous access",
+        full_name,
+    )
+    return None

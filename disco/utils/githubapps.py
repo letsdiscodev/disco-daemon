@@ -8,7 +8,7 @@ from secrets import token_hex
 from typing import Literal, Sequence
 
 import requests
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
@@ -330,6 +330,19 @@ def get_repo_by_full_name_sync(
         .filter(GithubAppRepo.full_name == full_name)
         .first()
     )
+
+
+def get_repos_by_full_name_sync(
+    dbsession: DBSession, full_name: str
+) -> Sequence[GithubAppRepo]:
+    stmt = (
+        select(GithubAppRepo)
+        .join(GithubAppInstallation)
+        .where(GithubAppRepo.full_name == full_name)
+        .order_by(desc(GithubAppInstallation.access_token_expires))
+    )
+    result = dbsession.execute(stmt)
+    return result.scalars().all()
 
 
 async def get_repo_by_full_name(
