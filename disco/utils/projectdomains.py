@@ -151,7 +151,7 @@ def remove_domain_sync(dbsession: DBSession, domain: ProjectDomain, by_api_key: 
                     to_domain=www_apex_domain.name,
                 )
 
-    asyncio.run_coroutine_threadsafe(update_caddy_async(), asyncio.get_running_loop())
+    asyncio.run(update_caddy_async())
 
 
 async def _update_caddy_domains_for_project(project: Project) -> None:
