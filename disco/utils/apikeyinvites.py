@@ -34,16 +34,6 @@ def invite_is_active(invite):
     return invite.expires > datetime.now(timezone.utc) and invite.api_key_id is None
 
 
-def get_api_key_invite_by_name(dbsession: DBSession, name: str) -> ApiKeyInvite | None:
-    return (
-        dbsession.query(ApiKeyInvite)
-        .filter(ApiKeyInvite.name == name)
-        .filter(ApiKeyInvite.expires > datetime.now(timezone.utc))
-        .filter(ApiKeyInvite.api_key_id.is_(None))
-        .first()
-    )
-
-
 def use_api_key_invite(dbsession: DBSession, invite: ApiKeyInvite) -> ApiKey:
     assert invite.expires > datetime.now(timezone.utc)
     assert invite.api_key_id is None

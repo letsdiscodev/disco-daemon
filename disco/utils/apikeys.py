@@ -71,15 +71,6 @@ def get_api_key_by_public_key(dbsession: DBSession, public_key: str) -> ApiKey |
     )
 
 
-def get_api_key_by_name(dbsession: DBSession, name: str) -> ApiKey | None:
-    return (
-        dbsession.query(ApiKey)
-        .filter(ApiKey.name == name)
-        .filter(ApiKey.deleted.is_(None))
-        .first()
-    )
-
-
 def delete_api_key(api_key: ApiKey, by_api_key: ApiKey) -> None:
     assert api_key.deleted is None
     log.info("Marking API key as deleted %s by %s", api_key.log(), by_api_key.log())

@@ -2,10 +2,8 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path
-from fastapi.exceptions import RequestValidationError
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel, Field, ValidationError
-from pydantic_core import InitErrorDetails, PydanticCustomError
+from pydantic import BaseModel, Field
 from sqlalchemy.orm.session import Session as DBSession
 
 import disco
@@ -16,12 +14,8 @@ from disco.utils import keyvalues
 from disco.utils.apikeyinvites import (
     create_api_key_invite,
     get_api_key_invite_by_id,
-    get_api_key_invite_by_name,
     invite_is_active,
     use_api_key_invite,
-)
-from disco.utils.apikeys import (
-    get_api_key_by_name,
 )
 
 log = logging.getLogger(__name__)
@@ -40,44 +34,6 @@ def api_keys_post(
     req_body: NewApiKeyRequestBody,
 ):
     disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
-    existing_api_key = get_api_key_by_name(dbsession, req_body.name)
-    if existing_api_key is not None:
-        raise RequestValidationError(
-            errors=(
-                ValidationError.from_exception_data(
-                    "ValueError",
-                    [
-                        InitErrorDetails(
-                            type=PydanticCustomError(
-                                "value_error", "API Key name already exists"
-                            ),
-                            loc=("body", "name"),
-                            input=req_body.name,
-                        )
-                    ],
-                )
-            ).errors()
-        )
-
-    existing_invite = get_api_key_invite_by_name(dbsession, req_body.name)
-    if existing_invite is not None:
-        raise RequestValidationError(
-            errors=(
-                ValidationError.from_exception_data(
-                    "ValueError",
-                    [
-                        InitErrorDetails(
-                            type=PydanticCustomError(
-                                "value_error",
-                                "API Key name already used in other invite",
-                            ),
-                            loc=("body", "name"),
-                            input=req_body.name,
-                        )
-                    ],
-                )
-            ).errors()
-        )
     invite = create_api_key_invite(
         dbsession=dbsession,
         name=req_body.name,
