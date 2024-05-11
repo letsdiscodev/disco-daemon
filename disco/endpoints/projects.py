@@ -29,7 +29,7 @@ from disco.utils.filesystem import (
     get_caddy_key_key,
     get_caddy_key_meta,
 )
-from disco.utils.githubapps import get_all_repos
+from disco.utils.github import get_all_repos
 from disco.utils.mq.tasks import enqueue_task_deprecated
 from disco.utils.projectdomains import add_domain
 from disco.utils.projects import (

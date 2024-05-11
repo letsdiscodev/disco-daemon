@@ -25,7 +25,7 @@ from disco.endpoints.dependencies import get_db, get_sync_db
 from disco.models import ApiKey, PendingGithubApp
 from disco.models.db import Session
 from disco.utils import keyvalues
-from disco.utils.githubapps import (
+from disco.utils.github import (
     create_pending_github_app,
     generate_new_pending_app_state,
     get_all_github_apps,
@@ -33,6 +33,7 @@ from disco.utils.githubapps import (
     get_github_pending_app_by_id,
     handle_app_created_on_github,
     process_github_app_webhook,
+    prune,
 )
 
 log = logging.getLogger(__name__)
@@ -72,7 +73,7 @@ class NewGithubAppRequestBody(BaseModel):
 
 
 @router.post("/api/github-apps/create", status_code=201)
-def github_app_create_post(
+def github_app_prune_post(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
     api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
     req_body: NewGithubAppRequestBody,
@@ -193,6 +194,14 @@ async def list_github_apps(
             for github_app in github_apps
         ],
     }
+
+
+@router.post(
+    "/api/github-apps/prune", status_code=200, dependencies=[Depends(get_api_key)]
+)
+async def github_app_create_post():
+    await prune()
+    return {}
 
 
 @router.post("/.webhooks/github-apps", status_code=202)
