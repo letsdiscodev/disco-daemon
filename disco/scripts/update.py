@@ -1,6 +1,5 @@
 """Script that runs when updating Disco to the latest version"""
 
-import asyncio
 import json
 import logging
 import os
@@ -137,6 +136,31 @@ def alembic_upgrade(version_hash: str) -> None:
     command.upgrade(config, version_hash)
 
 
+def task_0_7_x(image: str) -> None:
+    from disco.models import ProjectGithubRepo
+
+    print("Upating from 0.7.x to 0.8.x")
+    alembic_upgrade("3fe4af6efa33")
+    with Session.begin() as dbsession:
+        sql = """
+            SELECT pgr.id, gar.full_name 
+                FROM project_github_repos AS pgr 
+                JOIN github_app_repos AS gar ON pgr.github_app_repo_id = gar.id;
+        """
+        rows = dbsession.execute(text(sql)).all()
+        for row in rows:
+            repo = dbsession.get(ProjectGithubRepo, row.id)
+            assert repo is not None
+            repo.full_name = row.full_name
+    with Session.begin() as dbsession:
+        dbsession.execute(
+            text("DELETE FROM project_github_repos WHERE full_name IS NULL")
+        )
+    alembic_upgrade("7867432539d9")
+    with Session.begin() as dbsession:
+        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.8.0")
+
+
 def task_0_6_x(image: str) -> None:
     from disco.models import GithubApp, ProjectDomain
     from disco.utils.projectdomains import _get_apex_www_redirect_for_domain
@@ -191,19 +215,6 @@ def task_0_6_x(image: str) -> None:
     alembic_upgrade("47da35039f6f")
     with Session.begin() as dbsession:
         keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.7.0")
-
-
-def _add_apex_www_redirects(domain_id: str, from_domain: str, to_domain: str) -> None:
-    from disco.utils import caddy
-
-    async def update_caddy_async():
-        await caddy.add_apex_www_redirects(
-            domain_id=domain_id,
-            from_domain=from_domain,
-            to_domain=to_domain,
-        )
-
-    asyncio.run(update_caddy_async())
 
 
 def task_0_5_x(image: str) -> None:
@@ -320,6 +331,8 @@ def get_update_function_for_version(version: str) -> Callable[[str], None]:
     if version.startswith("0.6."):
         return task_0_6_x
     if version.startswith("0.7."):
-        assert disco.__version__.startswith("0.7.")
+        return task_0_7_x
+    if version.startswith("0.8."):
+        assert disco.__version__.startswith("0.8.")
         return task_patch
     raise NotImplementedError(f"Update missing for version {version}")
