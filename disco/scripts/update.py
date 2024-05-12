@@ -196,7 +196,6 @@ def task_0_6_x(image: str) -> None:
                             "--rm",
                             "--mount",
                             "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
-                            "--mount",
                             "type=bind,source=/var/run/caddy,target=/var/run/caddy",
                             image,
                             "python",

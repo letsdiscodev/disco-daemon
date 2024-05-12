@@ -20,7 +20,7 @@ class CaddyConnection(HTTPConnection):
 
     def connect(self):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.connect("/var/run/caddy/caddy.sock")
+        self.sock.connect("/disco/caddy-socket/caddy.sock")
 
 
 class CaddyConnectionPool(HTTPConnectionPool):
@@ -287,7 +287,7 @@ def write_caddy_init_config(disco_host: str) -> None:
     init_config = {
         "admin": {
             "enforce_origin": False,
-            "listen": "unix//var/run/caddy/caddy.sock",
+            "listen": "unix//disco/caddy-socket/caddy.sock",
             "origins": ["disco-caddy"],
         },
         "apps": {

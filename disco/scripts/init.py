@@ -46,7 +46,7 @@ def main() -> None:
         keyvalues.set_value(dbsession=dbsession, key="REGISTRY_HOST", value=None)
         api_key = create_api_key(dbsession=dbsession, name="First API key")
         print("Created API key:", api_key.id)
-    create_caddy_socket_dir()
+    create_caddy_socket_dir(host_home)
     create_projects_dir(host_home)
     create_static_site_dir(host_home)
     print("Initializing Docker Swarm")
@@ -153,8 +153,8 @@ def label_swarm_node(node_id: str, label: str) -> None:
     )
 
 
-def create_caddy_socket_dir() -> None:
-    os.makedirs("/host/var/run/caddy")
+def create_caddy_socket_dir(host_home: str) -> None:
+    os.makedirs(f"/host{host_home}/disco/caddy-socket")
 
 
 def start_caddy(host_home: str) -> None:
@@ -180,7 +180,7 @@ def start_caddy(host_home: str) -> None:
             "--network",
             "disco-caddy-daemon",
             "--mount",
-            "type=bind,source=/var/run/caddy,target=/var/run/caddy",
+            f"type=bind,source={host_home}/disco/caddy-socket,target=/disco/caddy-socket",
             "--mount",
             "source=disco-caddy-init-config,target=/initconfig",
             "--mount",
@@ -195,15 +195,15 @@ def start_caddy(host_home: str) -> None:
     )
 
 
-def create_projects_dir(host_home) -> None:
+def create_projects_dir(host_home: str) -> None:
     os.makedirs(f"/host{host_home}/disco/projects")
 
 
-def create_static_site_dir(host_home) -> None:
+def create_static_site_dir(host_home: str) -> None:
     os.makedirs(f"/host{host_home}/disco/srv")
 
 
-def create_docker_config(host_home) -> None:
+def create_docker_config(host_home: str) -> None:
     # If the file doesn't exist, we create it so that we can mount it.
     # It's needed when we authenticate to a Docker Registry.
     path = f"/host{host_home}/.docker"
@@ -234,9 +234,9 @@ def start_disco_daemon(host_home: str, image: str) -> None:
             "--mount",
             f"type=bind,source={host_home}/disco/srv,target=/disco/srv",
             "--mount",
-            "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+            f"type=bind,source={host_home}/disco/caddy-socket,target=/disco/caddy-socket",
             "--mount",
-            "type=bind,source=/var/run/caddy,target=/var/run/caddy",
+            "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
             "--mount",
             "source=disco-caddy-data,target=/disco/caddy/data",
             "--mount",
