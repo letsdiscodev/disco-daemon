@@ -136,6 +136,60 @@ def alembic_upgrade(version_hash: str) -> None:
     command.upgrade(config, version_hash)
 
 
+def task_0_8_x(image: str) -> None:
+    print("Upating from 0.8.x to 0.9.x")
+    from disco.scripts.init import start_caddy
+
+    with Session.begin() as dbsession:
+        host_home = keyvalues.get_value_sync(dbsession=dbsession, key="HOST_HOME")
+    assert host_home is not None
+    _run_cmd(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--mount",
+            f"type=bind,source={host_home},target=/host-home",
+            image,
+            "mkdir",
+            "/host-home/disco/caddy-socket",
+        ]
+    )
+    _run_cmd(
+        [
+            "docker",
+            "container",
+            "stop",
+            "disco-caddy",
+        ]
+    )
+    _run_cmd(
+        [
+            "docker",
+            "container",
+            "rm",
+            "disco-caddy",
+        ]
+    )
+    _run_cmd(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--mount",
+            "source=disco-caddy-config,target=/disco/caddy/config",
+            image,
+            "sed",
+            "-i",
+            "s,var/run/caddy,disco/caddy-socket,g",
+            "/disco/caddy/config/caddy/autosave.json",
+        ]
+    )
+    start_caddy(host_home=host_home)
+    with Session.begin() as dbsession:
+        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.9.0")
+
+
 def task_0_7_x(image: str) -> None:
     from disco.models import ProjectGithubRepo
 
@@ -332,6 +386,8 @@ def get_update_function_for_version(version: str) -> Callable[[str], None]:
     if version.startswith("0.7."):
         return task_0_7_x
     if version.startswith("0.8."):
-        assert disco.__version__.startswith("0.8.")
+        return task_0_8_x
+    if version.startswith("0.9."):
+        assert disco.__version__.startswith("0.9.")
         return task_patch
     raise NotImplementedError(f"Update missing for version {version}")
