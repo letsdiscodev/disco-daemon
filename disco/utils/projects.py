@@ -95,7 +95,12 @@ async def get_project_by_domain(
 def get_projects_by_github_app_repo(
     dbsession: DBSession, full_name: str
 ) -> Sequence[Project]:
-    return dbsession.query(Project).join(ProjectGithubRepo.full_name == full_name).all()
+    return (
+        dbsession.query(Project)
+        .join(ProjectGithubRepo)
+        .filter(ProjectGithubRepo.full_name == full_name)
+        .all()
+    )
 
 
 def get_all_projects(dbsession: DBSession) -> list[Project]:
