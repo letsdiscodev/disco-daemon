@@ -104,7 +104,7 @@ def get_projects_by_github_app_repo(
 
 
 def get_all_projects(dbsession: DBSession) -> list[Project]:
-    return dbsession.query(Project).all()
+    return dbsession.query(Project).order_by(Project.name).all()
 
 
 def delete_project(dbsession: DBSession, project: Project, by_api_key: ApiKey) -> None:

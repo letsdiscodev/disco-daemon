@@ -240,6 +240,7 @@ def projects_get(dbsession: Annotated[DBSession, Depends(get_sync_db)]):
         "projects": [
             {
                 "name": project.name,
+                "github": {"fullName": project.github_repo.full_name},
             }
             for project in projects
         ],
