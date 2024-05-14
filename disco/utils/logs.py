@@ -89,6 +89,7 @@ class JsonLogServer(asyncio.DatagramProtocol):
 
 async def monitor_syslog(service_name: str) -> None:
     global _active_syslogs
+    log.info("Adding %s to the list of monitored syslogs", service_name)
     async with syslog_list_lock:
         _active_syslogs.append(
             ActiveSyslog(
@@ -134,4 +135,5 @@ async def clean_up_syslogs() -> None:
     running_syslogs = await get_running_syslogs()
     for running_syslog in running_syslogs:
         if running_syslog not in active_syslogs:
+            log.warning("Killing rogue syslog %s", running_syslog)
             await docker.stop_service(running_syslog)
