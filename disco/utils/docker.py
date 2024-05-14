@@ -299,7 +299,7 @@ def push_image(image: str) -> None:
         raise Exception(f"Docker returned status {process.returncode}")
 
 
-def stop_service(name: str) -> None:
+def stop_service_sync(name: str) -> None:
     log.info("Stopping service %s", name)
     args = [
         "docker",
@@ -324,7 +324,7 @@ def stop_service(name: str) -> None:
         raise Exception(f"Docker returned status {process.returncode}")
 
 
-async def stop_service_async(name: str) -> None:
+async def stop_service(name: str) -> None:
     log.info("Stopping service %s", name)
     args = [
         "docker",
@@ -595,7 +595,7 @@ def service_name(project_name: str, service: str, deployment_number: int) -> str
 async def set_syslog_service(disco_host: str, syslog_urls: list[str]) -> None:
     if len(syslog_urls) == 0:
         if await service_exists_async("disco-syslog"):
-            await stop_service_async("disco-syslog")
+            await stop_service("disco-syslog")
         else:
             log.info("Syslog service already stopped")
     else:

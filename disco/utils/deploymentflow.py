@@ -577,7 +577,7 @@ def stop_conflicting_port_services(
         )
         try:
             if not recovery or docker.service_exists(internal_service_name):
-                docker.stop_service(internal_service_name)
+                docker.stop_service_sync(internal_service_name)
         except Exception:
             log_output(f"Failed to stop service {internal_service_name}\n")
             if not recovery:
@@ -668,7 +668,7 @@ def stop_prev_services(
     for service in all_services - current_services:
         try:
             log_output(f"Stopping service {service}\n")
-            docker.stop_service(service)
+            docker.stop_service_sync(service)
         except Exception:
             log_output(f"Failed to stop service {service}\n")
             if not recovery:

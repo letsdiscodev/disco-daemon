@@ -18,6 +18,10 @@ from disco.utils.projects import volume_name_for_project
 log = logging.getLogger(__name__)
 
 
+async def no_op() -> None:
+    return None
+
+
 class WorkerTask:
     pass
 
@@ -31,6 +35,13 @@ class Cron(WorkerTask):
 class DiscoCron(Cron):
     name: str
     delta: timedelta
+    run: Callable[[], Awaitable[None]] = no_op
+
+
+async def cron_day() -> None:
+    from disco.utils.logs import clean_up_syslogs
+
+    await clean_up_syslogs()
 
 
 @dataclass
@@ -304,15 +315,7 @@ class AsyncWorker:
         if isinstance(worker_task, DiscoCron):
             # TODO refac to also use `.schedule_next()`
             worker_task.next += worker_task.delta
-            # TODO refac to also use `.run()`
-            if worker_task.name == "SECOND":
-                pass
-            elif worker_task.name == "MINUTE":
-                pass
-            elif worker_task.name == "HOUR":
-                pass
-            elif worker_task.name == "DAY":
-                pass
+            await worker_task.run()
         elif isinstance(worker_task, ProjectCron):
             worker_task.schedule_next()
             log.info(
@@ -386,6 +389,7 @@ class AsyncWorker:
                 )
                 + timedelta(days=1),
                 delta=timedelta(days=1),
+                run=cron_day,
             ),
         ]
 
