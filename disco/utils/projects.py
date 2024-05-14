@@ -120,7 +120,7 @@ def delete_project(dbsession: DBSession, project: Project, by_api_key: ApiKey) -
     services = docker.list_services_for_project(project.name)
     for service_name in services:
         try:
-            docker.stop_service(service_name)
+            docker.stop_service_sync(service_name)
         except Exception:
             log.info("Failed to stop service %s", service_name)
     containers = docker.list_containers_for_project(project.name)
