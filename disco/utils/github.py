@@ -821,23 +821,36 @@ async def fetch_access_token(
 async def fetch_repository_list_for_github_app_installation(
     access_token: str,
 ) -> list[str]:
-    url = "https://api.github.com/installation/repositories"
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "Authorization": f"Bearer {access_token}",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
+    all_repos = []
+    url = "https://api.github.com/installation/repositories?per_page=100"
+    has_more = True
+    while has_more:
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {access_token}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
 
-    def query() -> requests.Response:
-        return requests.get(url=url, headers=headers, timeout=20)
+        def query() -> requests.Response:
+            return requests.get(url=url, headers=headers, timeout=20)
 
-    response = await asyncio.get_event_loop().run_in_executor(None, query)
-    if response.status_code != 200:
-        raise GithubException(
-            f"Github returned status code {response.status_code} when fetching repositories"
-        )
-    resp_body = response.json()
-    return [repo["full_name"] for repo in resp_body["repositories"]]
+        response = await asyncio.get_event_loop().run_in_executor(None, query)
+        if response.status_code != 200:
+            raise GithubException(
+                f"Github returned status code {response.status_code} when fetching repositories"
+            )
+        resp_body = response.json()
+        all_repos += [repo["full_name"] for repo in resp_body["repositories"]]
+        has_more = False
+        link_header = response.headers.get("link")
+        # <https://api.github.com/installation/repositories?page=2>; rel="next", ...
+        if link_header is not None:
+            for link in link_header.split(","):
+                link_part, rel_part = link.split(";")
+                if rel_part.strip() == 'rel="next"':
+                    url = link_part.strip()[1:-1]
+                    has_more = True
+    return all_repos
 
 
 def handle_app_created_on_github(pending_app_id: str, code: str) -> str:
