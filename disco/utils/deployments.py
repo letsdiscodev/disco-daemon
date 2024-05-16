@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from typing import Literal
@@ -81,9 +82,9 @@ async def create_deployment(
         )
         dbsession.add(deploy_env_var)
     log.info("Created deployment %s", deployment.log())
-    await commandoutputs.save(
-        dbsession,
-        f"DEPLOYMENT_{deployment.id}",
+    await commandoutputs.init(commandoutputs.deployment_source(deployment.id))
+    await commandoutputs.log(
+        commandoutputs.deployment_source(deployment.id),
         f"Deployment {deployment.number} enqueued\n",
     )
     return deployment
@@ -133,11 +134,15 @@ def create_deployment_sync(
         )
         dbsession.add(deploy_env_var)
     log.info("Created deployment %s", deployment.log())
-    commandoutputs.save_sync(
-        dbsession,
-        f"DEPLOYMENT_{deployment.id}",
-        f"Deployment {deployment.number} enqueued\n",
-    )
+
+    async def create_cmd_output() -> None:
+        await commandoutputs.init(commandoutputs.deployment_source(deployment.id))
+        await commandoutputs.log(
+            commandoutputs.deployment_source(deployment.id),
+            f"Deployment {deployment.number} enqueued\n",
+        )
+
+    asyncio.run(create_cmd_output())
     return deployment
 
 

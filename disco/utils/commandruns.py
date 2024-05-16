@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from typing import Callable
@@ -5,7 +6,6 @@ from typing import Callable
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import ApiKey, CommandRun, Deployment, Project
-from disco.models.db import Session
 from disco.utils import commandoutputs, docker, keyvalues
 from disco.utils.discofile import DiscoFile, ServiceType, get_disco_file_from_str
 from disco.utils.encryption import decrypt
@@ -72,11 +72,21 @@ def create_command_run(
     ]
 
     def func() -> None:
-        def log_output(output: str | None) -> None:
-            if output is not None:
-                log.info("Command run %s %s: %s", project_name, run_number, output)
-            with Session.begin() as dbsession_:
-                commandoutputs.save_sync(dbsession_, f"RUN_{run_id}", output)
+        asyncio.run(commandoutputs.init(commandoutputs.run_source(run_id)))
+
+        def log_output(output: str) -> None:
+            log.info("Command run %s %s: %s", project_name, run_number, output)
+
+            async def async_log_output():
+                await commandoutputs.log(commandoutputs.run_source(run_id), output)
+
+            asyncio.run(async_log_output())
+
+        def log_output_terminate():
+            async def async_log_output():
+                await commandoutputs.terminate(commandoutputs.run_source(run_id))
+
+            asyncio.run(async_log_output())
 
         try:
             docker.run(
@@ -93,7 +103,7 @@ def create_command_run(
         except Exception:
             log_output("Failed")
         finally:
-            log_output(None)
+            log_output_terminate()
 
     return command_run, func
 

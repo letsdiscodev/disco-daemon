@@ -3,7 +3,6 @@ from sqlalchemy.orm import configure_mappers
 from disco.models.apikey import ApiKey  # noqa: F401
 from disco.models.apikeyinvite import ApiKeyInvite  # noqa: F401
 from disco.models.apikeyusage import ApiKeyUsage  # noqa: F401
-from disco.models.commandoutput import CommandOutput  # noqa: F401
 from disco.models.commandrun import (
     CommandRun,  # noqa: F401
 )

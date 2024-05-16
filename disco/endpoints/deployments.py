@@ -13,7 +13,7 @@ from sse_starlette.sse import EventSourceResponse
 from disco.auth import get_api_key_sync, get_api_key_wo_tx
 from disco.endpoints.dependencies import get_project_from_url_sync, get_sync_db
 from disco.models import ApiKey, Project
-from disco.models.db import AsyncSession, Session
+from disco.models.db import Session
 from disco.utils import commandoutputs
 from disco.utils.deployments import (
     create_deployment_sync,
@@ -121,36 +121,35 @@ async def deployment_output_get(
             deployment = get_deployment_by_number(dbsession, project, deployment_number)
         if deployment is None:
             raise HTTPException(status_code=404)
-        source = f"DEPLOYMENT_{deployment.id}"
+        source = commandoutputs.deployment_source(deployment.id)
         after = None
         if last_event_id is not None:
-            output = commandoutputs.get_by_id(dbsession, last_event_id)
+            output = await commandoutputs.get_by_id(source, last_event_id)
             if output is not None:
                 after = output.created
 
     async def get_build_output(source: str, after: datetime | None):
         while True:
-            async with AsyncSession.begin() as dbsession:
-                output = await commandoutputs.get_next(dbsession, source, after=after)
-                if output is not None:
-                    if output.text is None:
-                        yield ServerSentEvent(
-                            id=output.id,
-                            event="end",
-                            data="",
-                        )
-                        return
-                    after = output.created
+            output = await commandoutputs.get_next(source, after=after)
+            if output is not None:
+                if output.text is None:
                     yield ServerSentEvent(
                         id=output.id,
-                        event="output",
-                        data=json.dumps(
-                            {
-                                "timestamp": output.created.isoformat(),
-                                "text": output.text,
-                            }
-                        ),
+                        event="end",
+                        data="",
                     )
+                    return
+                after = output.created
+                yield ServerSentEvent(
+                    id=output.id,
+                    event="output",
+                    data=json.dumps(
+                        {
+                            "timestamp": output.created.isoformat(),
+                            "text": output.text,
+                        }
+                    ),
+                )
             if output is None:
                 await asyncio.sleep(0.1)
 

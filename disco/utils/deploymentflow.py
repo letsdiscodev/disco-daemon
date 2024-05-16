@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 from dataclasses import dataclass
@@ -78,11 +79,23 @@ class DeploymentInfo:
 def process_deployment(deployment_id: str) -> None:
     from disco.utils.mq.tasks import enqueue_task_deprecated
 
-    def log_output(output: str | None) -> None:
-        if output is not None:
-            log.info("Deployment %s: %s", deployment_id, output)
-        with Session.begin() as dbsession:
-            commandoutputs.save_sync(dbsession, f"DEPLOYMENT_{deployment_id}", output)
+    def log_output(output: str) -> None:
+        log.info("Deployment %s: %s", deployment_id, output)
+
+        async def async_log_output():
+            await commandoutputs.log(
+                commandoutputs.deployment_source(deployment_id), output
+            )
+
+        asyncio.run(async_log_output())
+
+    def log_output_terminate():
+        async def async_log_output():
+            await commandoutputs.terminate(
+                commandoutputs.deployment_source(deployment_id)
+            )
+
+        asyncio.run(async_log_output())
 
     def set_current_deployment_status(status: DEPLOYMENT_STATUS) -> None:
         with Session.begin() as dbsession:
@@ -110,7 +123,7 @@ def process_deployment(deployment_id: str) -> None:
                 f"skipping deployment {deployment.number}.\n"
             )
             set_current_deployment_status("SKIPPED")
-            log_output(None)  # end
+            log_output_terminate()
             enqueue_task_deprecated(
                 task_name="PROCESS_DEPLOYMENT_IF_ANY",
                 body={
@@ -157,7 +170,7 @@ def process_deployment(deployment_id: str) -> None:
         )
     finally:
         log.info("Finished processing build %s", deployment_id)
-        log_output(None)  # end
+        log_output_terminate()
 
     with Session.begin() as dbsession:
         deployment = get_deployment_by_id(dbsession, deployment_id)

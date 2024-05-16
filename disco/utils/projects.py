@@ -13,7 +13,7 @@ from disco.models import (
     ProjectGithubRepo,
 )
 from disco.utils import docker, github
-from disco.utils.commandoutputs import delete_output_for_source
+from disco.utils.commandoutputs import delete_output_for_source, deployment_source
 from disco.utils.filesystem import remove_project_static_deployments_if_any
 from disco.utils.projectdomains import remove_domain_sync
 
@@ -141,7 +141,7 @@ def delete_project(dbsession: DBSession, project: Project, by_api_key: ApiKey) -
     for p_env_var in project.env_variables:
         dbsession.delete(p_env_var)
     for deployment in project.deployments:
-        delete_output_for_source(dbsession, f"DEPLOYMENT_{deployment.id}")
+        delete_output_for_source(deployment_source(deployment.id))
         for d_env_var in deployment.env_variables:
             dbsession.delete(d_env_var)
         dbsession.delete(deployment)
