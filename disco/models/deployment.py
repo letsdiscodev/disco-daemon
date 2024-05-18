@@ -12,7 +12,6 @@ if TYPE_CHECKING:
         ApiKey,
         CommandRun,
         DeploymentEnvironmentVariable,
-        GithubAppRepo,
         Project,
     )
 from disco.models.meta import Base, DateTimeTzAware
@@ -43,12 +42,6 @@ class Deployment(Base):
     github_repo_full_name: Mapped[str | None] = mapped_column(
         Unicode(2048), nullable=True
     )
-    github_repo_id: Mapped[str] = mapped_column(
-        String(32),
-        ForeignKey("github_app_repos.id"),
-        nullable=True,
-        index=True,
-    )
     registry_host: Mapped[str | None] = mapped_column(Unicode(2048), nullable=True)
     project_id: Mapped[str] = mapped_column(
         String(32),
@@ -71,10 +64,6 @@ class Deployment(Base):
 
     project: Mapped[Project] = relationship(
         "Project",
-        back_populates="deployments",
-    )
-    github_repo: Mapped[GithubAppRepo | None] = relationship(
-        "GithubAppRepo",
         back_populates="deployments",
     )
     by_api_key: Mapped[ApiKey | None] = relationship(
