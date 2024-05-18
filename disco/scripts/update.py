@@ -11,7 +11,8 @@ from typing import Callable
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import select, text
+from sqlalchemy import create_engine, select, text
+from sqlalchemy.orm import sessionmaker
 
 import disco
 from disco.models.db import Session
@@ -134,6 +135,59 @@ def stop_disco_worker() -> None:
 def alembic_upgrade(version_hash: str) -> None:
     config = Config("/disco/app/alembic.ini")
     command.upgrade(config, version_hash)
+
+
+def task_0_10_x(image: str) -> None:
+    print("Upating from 0.10.x to 0.11.x")
+    directory = "/disco/data/commandoutputs"
+    if not os.path.isdir(directory):
+        os.makedirs(directory)
+    with Session.begin() as dbsession:
+        sql = """
+            SELECT source
+                FROM command_outputs
+                GROUP BY source;
+        """
+        rows = dbsession.execute(text(sql)).all()
+        sources = [row.source for row in rows]
+    for source in sources:
+        with Session.begin() as dbsession:
+            db_url = f"sqlite:////disco/data/commandoutputs/{source.lower()}.sqlite3"
+            engine = create_engine(db_url, connect_args={"check_same_thread": False})
+            session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+            with session.begin() as output_dbsession:
+                output_dbsession.execute(
+                    text("""
+                    CREATE TABLE "command_outputs" (
+                        id VARCHAR(32) NOT NULL, 
+                        created DATETIME NOT NULL, 
+                        text TEXT, 
+                        CONSTRAINT pk_command_outputs PRIMARY KEY (id)
+                    );
+                    """)
+                )
+                output_dbsession.execute(
+                    text(
+                        "CREATE INDEX ix_command_outputs_created ON command_outputs (created);"
+                    )
+                )
+                rows = dbsession.execute(
+                    text("""
+                    SELECT id, created, text
+                        FROM command_outputs
+                        WHERE source = :source"""),
+                    params={"source": source},
+                ).all()
+                for row in rows:
+                    output_dbsession.execute(
+                        text("""
+                    INSERT INTO command_outputs
+                    (id, created, text) VALUES (:id, :created, :text)"""),
+                        params={"id": row.id, "created": row.created, "text": row.text},
+                    )
+    alembic_upgrade("41a2f999a3e9")
+    with Session.begin() as dbsession:
+        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.11.0")
 
 
 def task_0_9_x(image: str) -> None:
@@ -396,6 +450,8 @@ def get_update_function_for_version(version: str) -> Callable[[str], None]:
     if version.startswith("0.9."):
         return task_0_9_x
     if version.startswith("0.10."):
-        assert disco.__version__.startswith("0.10.")
+        return task_0_10_x
+    if version.startswith("0.11."):
+        assert disco.__version__.startswith("0.11.")
         return task_patch
     raise NotImplementedError(f"Update missing for version {version}")
