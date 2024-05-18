@@ -78,7 +78,9 @@ def create_command_run(
             log.info("Command run %s %s: %s", project_name, run_number, output)
 
             async def async_log_output():
-                await commandoutputs.log(commandoutputs.run_source(run_id), output)
+                await commandoutputs.store_output(
+                    commandoutputs.run_source(run_id), output
+                )
 
             asyncio.run(async_log_output())
 

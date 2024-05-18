@@ -1,8 +1,9 @@
 import asyncio
+import logging
 import os
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import String, UnicodeText, select
@@ -17,6 +18,8 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.schema import MetaData
 
 from disco.models.meta import NAMING_CONVENTION, DateTimeTzAware
+
+log = logging.getLogger(__name__)
 
 base_metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
@@ -37,9 +40,8 @@ class CommandOutput(Base):
         index=True,
         nullable=False,
     )
-    text: Mapped[str | None] = mapped_column(
-        UnicodeText()
-    )  # None means no more content
+    # None means no more content
+    text: Mapped[str | None] = mapped_column(UnicodeText())
 
 
 @dataclass
@@ -84,7 +86,7 @@ async def _db_connection(source: str) -> OutputDbConnection:
                     session=session,
                     last_used=datetime.now(timezone.utc),
                 )
-
+    _dbs[source].last_used = datetime.now(timezone.utc)
     return _dbs[source]
 
 
@@ -100,11 +102,12 @@ async def init(source: str) -> None:
 async def _dispose(source: str) -> None:
     async with _dbs_lock:
         if source in _dbs:
+            log.info("Disposing of DB connection for command output %s", source)
             await _dbs[source].engine.dispose()
             del _dbs[source]
 
 
-async def log(source: str, text: str) -> None:
+async def store_output(source: str, text: str) -> None:
     AsyncSession = (await _db_connection(source)).session
     async with AsyncSession.begin() as dbsession:
         _log(dbsession=dbsession, source=source, text=text)
@@ -151,8 +154,21 @@ async def get_by_id(source: str, output_id: str) -> Output | None:
         if cmd_output is None:
             return None
         return Output(
-            id=cmd_output.id, created=cmd_output.created, text=cmd_output.text
+            id=cmd_output.id,
+            created=cmd_output.created,
+            text=cmd_output.text,
         )
+
+
+async def clean_up_db_connections() -> None:
+    global _dbs
+    six_hours_ago = datetime.now(timezone.utc) - timedelta(hours=6)
+    old_db_sources = set()
+    for source, db in _dbs.items():
+        if db.last_used < six_hours_ago:
+            old_db_sources.add(source)
+    for source in old_db_sources:
+        await _dispose(source)
 
 
 def deployment_source(deployment_id: str) -> str:

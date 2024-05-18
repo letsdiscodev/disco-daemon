@@ -38,6 +38,12 @@ class DiscoCron(Cron):
     run: Callable[[], Awaitable[None]] = no_op
 
 
+async def cron_hour() -> None:
+    from disco.utils.commandoutputs import clean_up_db_connections
+
+    await clean_up_db_connections()
+
+
 async def cron_day() -> None:
     from disco.utils.logs import clean_up_syslogs
 
@@ -374,6 +380,7 @@ class AsyncWorker:
                 )
                 + timedelta(hours=1),
                 delta=timedelta(hours=1),
+                run=cron_hour,
             ),
             DiscoCron(
                 name="DAY",

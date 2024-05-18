@@ -83,7 +83,7 @@ async def create_deployment(
         dbsession.add(deploy_env_var)
     log.info("Created deployment %s", deployment.log())
     await commandoutputs.init(commandoutputs.deployment_source(deployment.id))
-    await commandoutputs.log(
+    await commandoutputs.store_output(
         commandoutputs.deployment_source(deployment.id),
         f"Deployment {deployment.number} enqueued\n",
     )
@@ -137,7 +137,7 @@ def create_deployment_sync(
 
     async def create_cmd_output() -> None:
         await commandoutputs.init(commandoutputs.deployment_source(deployment.id))
-        await commandoutputs.log(
+        await commandoutputs.store_output(
             commandoutputs.deployment_source(deployment.id),
             f"Deployment {deployment.number} enqueued\n",
         )

@@ -83,7 +83,7 @@ def process_deployment(deployment_id: str) -> None:
         log.info("Deployment %s: %s", deployment_id, output)
 
         async def async_log_output():
-            await commandoutputs.log(
+            await commandoutputs.store_output(
                 commandoutputs.deployment_source(deployment_id), output
             )
 
