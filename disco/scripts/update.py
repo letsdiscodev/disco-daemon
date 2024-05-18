@@ -168,7 +168,8 @@ def task_0_10_x(image: str) -> None:
                 )
                 output_dbsession.execute(
                     text(
-                        "CREATE INDEX ix_command_outputs_created ON command_outputs (created);"
+                        "CREATE INDEX ix_command_outputs_created "
+                        "ON command_outputs (created);"
                     )
                 )
                 rows = dbsession.execute(

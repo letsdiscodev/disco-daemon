@@ -60,7 +60,7 @@ def checkout_commit(project_name: str, commit_hash: str) -> None:
 
 def checkout_latest(project_name: str) -> None:
     log.info("Checking out latest commit from Github project %s", project_name)
-    branch = main_or_master(project_name)  # TODO receive branch as arg
+    branch = main_or_master(project_name)
     args = ["git", "checkout", f"origin/{branch}"]
     process = subprocess.Popen(
         args=args,
@@ -154,7 +154,7 @@ def _branch_from_refs(refs: str) -> str:
 
 
 def remove_repo(project_name: str) -> None:
-    log.info("Removing Github repo %s", project_name)
+    log.info("Removing Github repo of project %s from filesystem", project_name)
     shutil.rmtree(project_path(project_name))
 
 
@@ -233,6 +233,7 @@ def clone(
 
 
 def get_access_token_for_github_app_repo(full_name: str) -> str | None:
+    log.info("Getting Github access token for repo %s", full_name)
     with Session.begin() as dbsession:
         repos = get_repos_by_full_name_sync(dbsession, full_name)
         if len(repos) == 0:
@@ -246,6 +247,9 @@ def get_access_token_for_github_app_repo(full_name: str) -> str | None:
                 continue
             installation_id = repo.installation.id
         try:
+            log.info(
+                "Using Github installation %d for repo %s", installation_id, full_name
+            )
             access_token = asyncio.run(
                 get_access_token_for_installation_id(installation_id)
             )
@@ -278,7 +282,8 @@ def get_access_token_for_github_app_repo(full_name: str) -> str | None:
             continue
         return access_token
     log.info(
-        "All Github apps were unable to provide an access token for %s, using anonymous access",
+        "All Github apps were unable to provide an access token "
+        "for %s, using anonymous access",
         full_name,
     )
     return None
@@ -310,6 +315,9 @@ def create_pending_github_app(
 
 
 def generate_new_pending_app_state(pending_app: PendingGithubApp) -> None:
+    log.info(
+        "Generating new Github pending app state for pending app %s", pending_app.id
+    )
     pending_app.state = token_hex(16)
 
 
@@ -320,12 +328,13 @@ def get_github_pending_app_by_id(
 
 
 def delete_pending_github_app(dbsession, pending_app: PendingGithubApp) -> None:
+    log.info("Deleting Github pending app %s", pending_app.id)
     dbsession.delete(pending_app)
 
 
 def create_github_app(
     dbsession: DBSession,
-    id: int,
+    app_id: int,
     slug: str,
     name: str,
     owner_id: int,
@@ -337,8 +346,9 @@ def create_github_app(
     html_url: str,
     app_info: str,
 ) -> GithubApp:
+    log.info("Creating Github app %d for %s (%s)", app_id, owner_login, owner_type)
     github_app = GithubApp(
-        id=id,
+        id=app_id,
         slug=slug,
         name=name,
         owner_id=owner_id,
@@ -420,6 +430,7 @@ def process_github_app_webhook(
         log.warning("X-Hub-Signature-256 does not match, skipping")
         return
     log.info("X-Hub-Signature-256 signature matched, continuing")
+    log.info("Github event: %s", x_github_event)
     if x_github_event == "push":
         from disco.utils.deployments import create_deployment_sync
         from disco.utils.github import get_commit_info_from_webhook_push
@@ -451,26 +462,49 @@ def process_github_app_webhook(
                         deployment_id=deployment_id,
                     ),
                 )
-
         except KeyError:
-            log.info("Not able to extract key info from Github webook, skipping")
+            log.info("Not able to extract key info from Github webhook, skipping")
             return
-    else:
-        log.info(
-            "THIS IS THE EVENT: %s. We should be specific about it", x_github_event
-        )
+    elif x_github_event == "installation_repositories":
+        # user added/removed repos from the app installation
+        try:
+            app_id = body["installation"]["app_id"]
+            installation_id = body["installation"]["id"]
+        except KeyError:
+            log.info("Not able to extract key info from Github webhook, skipping")
+            return
+        with Session.begin() as dbsession:
+            github_app = get_github_app_by_id_sync(dbsession, app_id)
+            if github_app is None:
+                log.warning("Couldn't find Github app %d", app_id)
+                return
+            installation = get_github_app_installation_by_id_sync(
+                dbsession, installation_id
+            )
+            if installation is None:
+                log.warning("Couldn't find Github app installation %d", installation_id)
+                return
+            for repo in body["repositories_added"]:
+                add_repository_to_installation_sync(
+                    dbsession, installation, repo["full_name"]
+                )
+            for repo in body["repositories_removed"]:
+                remove_repository_from_installation_sync(
+                    dbsession, installation, repo["full_name"]
+                )
+    elif x_github_event == "installation":
+        # user installed/uninstalled app
         try:
             action = body["action"]
             app_id = body["installation"]["app_id"]
             installation_id = body["installation"]["id"]
         except KeyError:
-            log.info("Not able to extract key info from Github webook, skipping")
+            log.info("Not able to extract key info from Github webhook, skipping")
             return
         with Session.begin() as dbsession:
-            installation: GithubAppInstallation | None
             github_app = get_github_app_by_id_sync(dbsession, app_id)
             if github_app is None:
-                log.warning("TODO LOGGING")
+                log.warning("Couldn't find Github app %d", app_id)
                 return
             if action == "created":
                 # app installed
@@ -487,35 +521,27 @@ def process_github_app_webhook(
                     dbsession, installation_id
                 )
                 if installation is None:
-                    log.warning("TODO LOGGING")
+                    log.warning(
+                        "Couldn't find Github app installation %d", installation_id
+                    )
                     return
                 delete_github_app_installation_sync(dbsession, installation)
-            elif action in ["added", "removed"]:
-                # repos added/removed to/from app
-                installation = get_github_app_installation_by_id_sync(
-                    dbsession, installation_id
-                )
-                if installation is None:
-                    log.warning("TODO LOGGING")
-                    return
-                for repo in body["repositories_added"]:
-                    add_repository_to_installation_sync(
-                        dbsession, installation, repo["full_name"]
-                    )
-                for repo in body["repositories_removed"]:
-                    remove_repository_from_installation_sync(
-                        dbsession, installation, repo["full_name"]
-                    )
             else:
                 log.warning(
                     "Github App webhook action not handled %s, skipping", action
                 )
+    else:
+        log.warning("Github App webhook event not handled %s, skipping", x_github_event)
 
 
 def create_github_app_installation(
     dbsession: DBSession, github_app: GithubApp, installation_id: int
 ) -> GithubAppInstallation:
-    # TODO do not create installation if installation with ID already exists
+    log.info("Creating Github app installation %d", installation_id)
+    installation = dbsession.get(GithubAppInstallation, installation_id)
+    if installation is not None:
+        log.info("Github installation %d aleady existed", installation_id)
+        return installation
     installation = GithubAppInstallation(
         id=installation_id,
         github_app=github_app,
@@ -539,7 +565,24 @@ async def get_github_app_installation_by_id(
 def add_repository_to_installation_sync(
     dbsession: DBSession, installation: GithubAppInstallation, repo_full_name: str
 ) -> GithubAppRepo:
-    # TODO get repo first and only add it if it's not there yet
+    log.info(
+        "Adding Github repo %s to installation %d", repo_full_name, installation.id
+    )
+    stmt = (
+        select(GithubAppRepo)
+        .where(GithubAppRepo.full_name == repo_full_name)
+        .where(GithubAppRepo.installation == installation)
+        .limit(1)
+    )
+    result = dbsession.execute(stmt)
+    repo = result.scalars().first()
+    if repo is not None:
+        log.info(
+            "Github repo %s aleady existed for installation %d",
+            repo_full_name,
+            installation.id,
+        )
+        return repo
     repo = GithubAppRepo(
         id=uuid.uuid4().hex,
         full_name=repo_full_name,
@@ -552,7 +595,24 @@ def add_repository_to_installation_sync(
 async def add_repository_to_installation(
     dbsession: AsyncDBSession, installation: GithubAppInstallation, repo_full_name: str
 ) -> GithubAppRepo:
-    # TODO get repo first and only add it if it's not there yet
+    log.info(
+        "Adding Github repo %s to installation %d", repo_full_name, installation.id
+    )
+    stmt = (
+        select(GithubAppRepo)
+        .where(GithubAppRepo.full_name == repo_full_name)
+        .where(GithubAppRepo.installation == installation)
+        .limit(1)
+    )
+    result = await dbsession.execute(stmt)
+    repo = result.scalars().first()
+    if repo is not None:
+        log.info(
+            "Github repo %s aleady existed for installation %d",
+            repo_full_name,
+            installation.id,
+        )
+        return repo
     repo = GithubAppRepo(
         id=uuid.uuid4().hex,
         full_name=repo_full_name,
@@ -565,6 +625,9 @@ async def add_repository_to_installation(
 def remove_repository_from_installation_sync(
     dbsession: DBSession, installation: GithubAppInstallation, repo_full_name: str
 ) -> None:
+    log.info(
+        "Removing Github repo %s from installation %d", repo_full_name, installation.id
+    )
     dbsession.query(GithubAppRepo).filter(
         GithubAppRepo.installation == installation
     ).filter(GithubAppRepo.full_name == repo_full_name).delete()
@@ -573,6 +636,9 @@ def remove_repository_from_installation_sync(
 async def remove_repository_from_installation(
     dbsession: AsyncDBSession, installation: GithubAppInstallation, repo_full_name: str
 ) -> None:
+    log.info(
+        "Removing Github repo %s from installation %d", repo_full_name, installation.id
+    )
     stmt = (
         delete(GithubAppRepo)
         .where(GithubAppRepo.installation == installation)
@@ -584,17 +650,36 @@ async def remove_repository_from_installation(
 def delete_github_app_installation_sync(
     dbsession: DBSession, installation: GithubAppInstallation
 ) -> None:
-    dbsession.query(GithubAppRepo).filter(
-        GithubAppRepo.installation == installation
-    ).delete()
+    for github_repo in installation.github_app_repos:
+        remove_repository_from_installation_sync(
+            dbsession, installation, github_repo.full_name
+        )
+    log.info(
+        "Deleting Github app installation %d of app %d %s (%s)",
+        installation.id,
+        installation.github_app_id,
+        installation.github_app.owner_login,
+        installation.github_app.owner_type,
+    )
     dbsession.delete(installation)
 
 
 async def delete_github_app_installation(
     dbsession: AsyncDBSession, installation: GithubAppInstallation
 ) -> None:
-    stmt = delete(GithubAppRepo).where(GithubAppRepo.installation == installation)
-    await dbsession.execute(stmt)
+    github_repos = await installation.awaitable_attrs.github_app_repos
+    for github_repo in github_repos:
+        await remove_repository_from_installation(
+            dbsession, installation, github_repo.full_name
+        )
+    github_app = await installation.awaitable_attrs.github_app
+    log.info(
+        "Deleting Github app installation %d of app %d %s (%s)",
+        installation.id,
+        installation.github_app_id,
+        github_app.owner_login,
+        github_app.owner_type,
+    )
     await dbsession.delete(installation)
 
 
@@ -654,6 +739,9 @@ async def get_repo_by_id(
 async def delete_github_app(dbsession: AsyncDBSession, app: GithubApp):
     for installation in await app.awaitable_attrs.installations:
         await delete_github_app_installation(dbsession, installation)
+    log.info(
+        "Deleting Github app %d of %s (%s)", app.id, app.owner_login, app.owner_type
+    )
     await dbsession.delete(app)
 
 
@@ -688,7 +776,8 @@ async def prune() -> None:
                         app = await installation.awaitable_attrs.github_app
                         assert app is not None
                         log.info(
-                            "Github app installation %d for %s %s (app ID %d)",
+                            "Github app installation %d for %s %s (app ID %d) "
+                            "is not accessible anymore, removing",
                             installation.id,
                             app.owner_login,
                             app.owner_type,
@@ -718,7 +807,8 @@ async def prune() -> None:
                     for full_name in local_full_names:
                         if full_name not in github_full_names:
                             log.info(
-                                "Repository %s from installation %d not available anymore, removing",
+                                "Repository %s from installation %d "
+                                "not available anymore, removing",
                                 full_name,
                                 installation_id,
                             )
@@ -730,7 +820,8 @@ async def prune() -> None:
                 app = await get_github_app_by_id(dbsession, app_id)
                 assert app is not None
                 log.info(
-                    "Github app %d (%s %s) didn't exist anymore, removing local references to it",
+                    "Github app %d %s (%s) doesn't exist anymore, "
+                    "removing local references to it",
                     app.id,
                     app.owner_login,
                     app.owner_type,
@@ -739,6 +830,7 @@ async def prune() -> None:
 
 
 async def app_still_exists(app_id: int) -> bool:
+    log.info("Verifying with Github if app %d still exists", app_id)
     async with AsyncSession.begin() as dbsession:
         app = await get_github_app_by_id(dbsession, app_id)
         if app is None:
@@ -756,10 +848,16 @@ async def app_still_exists(app_id: int) -> bool:
         return requests.get(url=url, headers=headers, timeout=20)
 
     response = await asyncio.get_event_loop().run_in_executor(None, query)
-    return response.status_code == 200
+    still_exists = response.status_code == 200
+    if still_exists:
+        log.info("Github app %d still exists on Github", app_id)
+    else:
+        log.info("Github app %d doesn't exist on Github", app_id)
+    return still_exists
 
 
 async def get_access_token_for_installation_id(installation_id: int) -> str:
+    log.info("Getting Github access token for installation %d", installation_id)
     async with AsyncSession.begin() as dbsession:
         installation = await get_github_app_installation_by_id(
             dbsession, installation_id
@@ -776,6 +874,11 @@ async def get_access_token_for_installation_id(installation_id: int) -> str:
         and expires is not None
         and expires > datetime.now(timezone.utc) + timedelta(minutes=5)
     ):
+        log.info(
+            "Cached Github access token for installation %d "
+            "still valid, using cached value",
+            installation_id,
+        )
         return access_token
     access_token, expires = await fetch_access_token(
         app_id=app_id, installation_id=installation_id, pem=pem
@@ -794,6 +897,7 @@ async def get_access_token_for_installation_id(installation_id: int) -> str:
 async def fetch_access_token(
     app_id: int, installation_id: int, pem: str
 ) -> tuple[str, datetime]:
+    log.info("Fetching Github access token for installation %d", installation_id)
     encoded_jwt = generate_jwt_token(app_id=app_id, pem=pem)
     url = f"https://api.github.com/app/installations/{installation_id}/access_tokens"
     headers = {
@@ -808,7 +912,8 @@ async def fetch_access_token(
     response = await asyncio.get_event_loop().run_in_executor(None, query)
     if response.status_code != 201:
         raise GithubException(
-            f"Github returned status code {response.status_code} when creating new access token"
+            f"Github returned status code {response.status_code} "
+            "when creating new access token"
         )
     resp_body = response.json()
     access_token = resp_body["token"]
@@ -821,6 +926,7 @@ async def fetch_access_token(
 async def fetch_repository_list_for_github_app_installation(
     access_token: str,
 ) -> list[str]:
+    log.info("Fetching repository list for Github installation")
     all_repos = []
     url = "https://api.github.com/installation/repositories?per_page=100"
     has_more = True
@@ -837,7 +943,8 @@ async def fetch_repository_list_for_github_app_installation(
         response = await asyncio.get_event_loop().run_in_executor(None, query)
         if response.status_code != 200:
             raise GithubException(
-                f"Github returned status code {response.status_code} when fetching repositories"
+                f"Github returned status code {response.status_code} "
+                "when fetching repositories"
             )
         resp_body = response.json()
         all_repos += [repo["full_name"] for repo in resp_body["repositories"]]
@@ -850,10 +957,14 @@ async def fetch_repository_list_for_github_app_installation(
                 if rel_part.strip() == 'rel="next"':
                     url = link_part.strip()[1:-1]
                     has_more = True
+                    log.info(
+                        "Fetching repository list for Github installation (next page)"
+                    )
     return all_repos
 
 
 def handle_app_created_on_github(pending_app_id: str, code: str) -> str:
+    log.info("Handling returning user from Github app creation")
     url = f"https://api.github.com/app-manifests/{code}/conversions"
     response = requests.post(url, headers={"Accept": "application/json"}, timeout=120)
     resp_body = response.json()
@@ -862,7 +973,7 @@ def handle_app_created_on_github(pending_app_id: str, code: str) -> str:
         assert pending_app is not None
         github_app = create_github_app(
             dbsession=dbsession,
-            id=resp_body["id"],
+            app_id=resp_body["id"],
             slug=resp_body["slug"],
             name=resp_body["name"],
             owner_id=resp_body["owner"]["id"],

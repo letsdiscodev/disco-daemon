@@ -5,7 +5,7 @@
 ```bash
 docker buildx build \
   --platform linux/amd64,linux/arm64/v8 \
-  --tag letsdiscodev/daemon:0.10.0 \
+  --tag letsdiscodev/daemon \
   --push \
   .
 ```
