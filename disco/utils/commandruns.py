@@ -57,7 +57,7 @@ def create_command_run(
     env_variables += [
         ("DISCO_PROJECT_NAME", project_name),
         ("DISCO_SERVICE_NAME", service),
-        ("DISCO_HOST", keyvalues.get_value_str(dbsession, "DISCO_HOST")),
+        ("DISCO_HOST", keyvalues.get_value_str_sync(dbsession, "DISCO_HOST")),
         ("DISCO_API_KEY", by_api_key.id),
     ]
     if deployment.commit_hash is not None:
@@ -91,7 +91,7 @@ def create_command_run(
             asyncio.run(async_log_output())
 
         try:
-            docker.run(
+            docker.run_sync(
                 image=image,
                 project_name=project_name,
                 name=f"{project_name}-run.{run_number}",

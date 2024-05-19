@@ -25,6 +25,7 @@ class ServiceType(str, Enum):
     static = "static"
     command = "command"
     cron = "cron"
+    cgi = "cgi"
 
 
 class Service(BaseModel):

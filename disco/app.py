@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from disco.endpoints import (
     apikeyinvites,
     apikeys,
+    cgi,
     deployments,
     envvariables,
     githubapps,
@@ -56,6 +57,7 @@ app.include_router(scale.router)
 app.include_router(apikeys.router)
 app.include_router(apikeyinvites.router)
 app.include_router(syslog.router)
+app.include_router(cgi.router)
 app.include_router(githubapps.router)
 
 

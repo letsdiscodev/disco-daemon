@@ -3,7 +3,7 @@ import logging
 import subprocess
 from datetime import datetime, timedelta, timezone
 from multiprocessing import cpu_count
-from typing import Callable
+from typing import AsyncGenerator, Callable
 
 from disco.utils.discofile import DiscoFile
 from disco.utils.filesystem import project_path
@@ -969,7 +969,7 @@ def remove_network_from_container(container: str, network: str) -> None:
         raise Exception(f"Docker returned status {process.returncode}")
 
 
-def run(
+def run_sync(
     image: str,
     project_name: str,
     name: str,
@@ -1061,7 +1061,7 @@ def run(
         remove_container(name)
 
 
-async def run_async(
+async def run(
     image: str,
     project_name: str,
     name: str,
@@ -1069,7 +1069,9 @@ async def run_async(
     volumes: list[tuple[str, str, str]],
     networks: list[str],
     command: str | None,
-    log_output: Callable[[str], None],
+    stdout: Callable[[str], None],
+    stderr: Callable[[str], None],
+    stdin: AsyncGenerator[bytes, None] | None = None,
     workdir: str | None = None,
     timeout: int = 600,
 ) -> None:
@@ -1087,6 +1089,8 @@ async def run_async(
         if workdir is not None:
             more_args.append("--workdir")
             more_args.append(workdir)
+        if stdin is not None:
+            more_args.append("--interactive")
         args = [
             "docker",
             "container",
@@ -1107,6 +1111,7 @@ async def run_async(
             stderr=subprocess.STDOUT,
         )
         assert process.stdout is not None
+
         timeout_dt = datetime.now(timezone.utc) + timedelta(seconds=timeout)
         async for line in process.stdout:
             line_text = line.decode("utf-8")
@@ -1124,27 +1129,55 @@ async def run_async(
             raise Exception(f"Docker returned status {process.returncode}")
         for network in networks:
             await add_network_to_container_async(container=name, network=network)
+        more_args = []
+        if stdin is not None:
+            more_args.append("--interactive")
         args = [
             "docker",
             "container",
             "start",
             "--attach",
+            *more_args,
             name,
         ]
         process = await asyncio.create_subprocess_exec(
             *args,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            stdin=asyncio.subprocess.PIPE if stdin is not None else None,
         )
-        assert process.stdout is not None
-        timeout_dt = datetime.now(timezone.utc) + timedelta(seconds=timeout)
-        async for line in process.stdout:
-            log_output(line.decode("utf-8"))
-            if datetime.now(timezone.utc) > timeout_dt:
-                process.terminate()
-                raise Exception(
-                    f"Running command failed, timeout after {timeout} seconds"
-                )
+
+        async def write_stdin() -> None:
+            if stdin is None:
+                return
+            assert process.stdin is not None
+            async for chunk in stdin:
+                process.stdin.write(chunk)
+                await process.stdin.drain()
+            process.stdin.write_eof()
+
+        async def read_stdout() -> None:
+            assert process.stdout is not None
+            async for line in process.stdout:
+                stdout(line.decode("utf-8"))
+
+        async def read_stderr() -> None:
+            assert process.stderr is not None
+            async for line in process.stderr:
+                stderr(line.decode("utf-8"))
+
+        tasks = [
+            asyncio.create_task(write_stdin()),
+            asyncio.create_task(read_stdout()),
+            asyncio.create_task(read_stderr()),
+        ]
+
+        try:
+            async with asyncio.timeout(timeout):
+                await asyncio.gather(*tasks)
+        except TimeoutError:
+            process.terminate()
+            raise Exception(f"Running command failed, timeout after {timeout} seconds")
 
         await process.wait()
         if process.returncode != 0:

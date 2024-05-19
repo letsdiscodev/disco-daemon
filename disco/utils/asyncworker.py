@@ -174,7 +174,7 @@ class ProjectCron(Cron):
         self.schedule = schedule
 
     async def run(self) -> None:
-        await docker.run_async(
+        await docker.run(
             image=self.image,
             project_name=self.project_name,
             name=f"{self.project_name}-{self.service_name}.{self.deployment_number}",
@@ -183,7 +183,8 @@ class ProjectCron(Cron):
             networks=self.networks,
             command=self.command,
             timeout=300,
-            log_output=lambda x: log.info("Output: %s", x.replace("\n", "")),
+            stdout=lambda x: log.info("Output (stdout): %s", x.replace("\n", "")),
+            stderr=lambda x: log.info("Output (stderr): %s", x.replace("\n", "")),
         )
 
     def schedule_next(self) -> None:

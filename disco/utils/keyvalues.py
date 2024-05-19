@@ -8,10 +8,19 @@ class KeyNotFoundError(Exception):
     pass
 
 
-def get_value_str(dbsession: DBSession, key: str) -> str:
+def get_value_str_sync(dbsession: DBSession, key: str) -> str:
     key_value = dbsession.query(KeyValue).get(key)
     if key_value is None:
         raise KeyNotFoundError(f"Key {key} not found")
+    return key_value.value
+
+
+async def get_value_str(dbsession: AsyncDBSession, key: str) -> str:
+    key_value = await dbsession.get(KeyValue, key)
+    if key_value is None:
+        raise KeyNotFoundError(f"Key {key} not found")
+    if key_value.value is None:
+        raise KeyNotFoundError(f"Key {key} has value None")
     return key_value.value
 
 

@@ -252,7 +252,7 @@ def replace_deployment(
                 )
                 for v in new_deployment_info.disco_file.services[service_name].volumes
             ]
-            docker.run(
+            docker.run_sync(
                 image=image,
                 project_name=new_deployment_info.project_name,
                 name=f"{new_deployment_info.project_name}-hook-deploy-start-before.{new_deployment_info.number}",
@@ -765,7 +765,7 @@ def prepare_static_site(
             ("bind", repo_path, "/repo"),
             ("bind", dist_path, service.public_path),
         ]
-        docker.run(
+        docker.run_sync(
             image=image,
             project_name=new_deployment_info.project_name,
             name=f"{new_deployment_info.project_name}-build-static-site.{new_deployment_info.number}",

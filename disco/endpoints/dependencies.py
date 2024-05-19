@@ -18,6 +18,16 @@ async def get_db():
         yield dbsession
 
 
+async def get_project_name_from_url_wo_tx(
+    project_name: Annotated[str, Path()],
+):
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
+        if project is None:
+            raise HTTPException(status_code=404)
+    yield project_name
+
+
 def get_project_from_url_sync(
     project_name: Annotated[str, Path()],
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
