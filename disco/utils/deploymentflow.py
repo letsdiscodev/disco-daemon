@@ -258,7 +258,7 @@ def replace_deployment(
                 name=f"{new_deployment_info.project_name}-hook-deploy-start-before.{new_deployment_info.number}",
                 env_variables=env_variables,
                 volumes=volumes,
-                networks=["disco-caddy-daemon"],
+                networks=["disco-main"],
                 command=service.command,
                 timeout=service.timeout,
                 log_output=log_output,
@@ -442,37 +442,6 @@ def create_networks(
         else:
             raise
 
-    assert new_deployment_info.disco_file is not None
-    if "web" in new_deployment_info.disco_file.services:
-        web_network = docker.deployment_web_network_name(
-            new_deployment_info.project_name, new_deployment_info.number
-        )
-        try:
-            if not recovery or not docker.network_exists(web_network):
-                docker.create_network(
-                    web_network,
-                    project_name=new_deployment_info.project_name,
-                    deployment_number=new_deployment_info.number,
-                )
-        except Exception:
-            if recovery:
-                log.error("Failed to create network %s", web_network)
-            else:
-                raise
-        try:
-            if (
-                not recovery
-                or web_network
-                not in docker.get_networks_connected_to_container("disco-caddy")
-            ):
-                docker.add_network_to_container("disco-caddy", web_network)
-        except Exception:
-            if recovery:
-                log_output("Failed to configure networks")
-                log.error("Failed to add network to disco-caddy: %s", web_network)
-            else:
-                raise
-
 
 def start_services(
     new_deployment_info: DeploymentInfo,
@@ -483,20 +452,23 @@ def start_services(
     for service_name, service in new_deployment_info.disco_file.services.items():
         if service.type != ServiceType.container:
             continue
-        networks = [
-            docker.deployment_network_name(
-                new_deployment_info.project_name, new_deployment_info.number
-            )
-        ]
-        if service_name == "web":
-            networks.append(
-                docker.deployment_web_network_name(
-                    new_deployment_info.project_name, new_deployment_info.number
-                )
-            )
         internal_service_name = docker.service_name(
             new_deployment_info.project_name, service_name, new_deployment_info.number
         )
+        networks: list[tuple[str, str]] = [
+            (
+                docker.deployment_network_name(
+                    new_deployment_info.project_name, new_deployment_info.number
+                ),
+                service_name,
+            ),
+            (
+                "disco-main",
+                f"{new_deployment_info.project_name}-{service_name}"
+                if service.exposed_internally
+                else internal_service_name,
+            ),
+        ]
         env_variables = new_deployment_info.env_variables + [
             ("DISCO_PROJECT_NAME", new_deployment_info.project_name),
             ("DISCO_SERVICE_NAME", service_name),
@@ -571,6 +543,7 @@ def stop_conflicting_port_services(
             continue
         for port in service.published_ports:
             new_ports.add(port.published_as)
+
     for service_name, service in prev_deployment_info.disco_file.services.items():
         if service.type != ServiceType.container:
             continue
@@ -699,11 +672,8 @@ def remove_unused_networks(
         project_networks = docker.list_networks_for_project(
             project_name=new_deployment_info.project_name,
         )
-        caddy_networks = docker.get_networks_connected_to_container("disco-caddy")
         for network_name in project_networks:
             if network_name not in networks_to_keep:
-                if network_name in caddy_networks:
-                    docker.remove_network_from_container("disco-caddy", network_name)
                 try:
                     docker.remove_network(network_name)
                 except Exception:

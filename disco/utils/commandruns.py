@@ -97,7 +97,7 @@ def create_command_run(
                 name=f"{project_name}-run.{run_number}",
                 env_variables=env_variables,
                 volumes=volumes,
-                networks=[network, "disco-caddy-daemon"],
+                networks=[network, "disco-main"],
                 command=command,
                 timeout=timeout,
                 log_output=log_output,

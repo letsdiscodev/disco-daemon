@@ -56,7 +56,7 @@ def start_service(
     env_variables: list[tuple[str, str]],
     volumes: list[tuple[str, str, str]],
     published_ports: list[tuple[int, int, str]],
-    networks: list[str],
+    networks: list[tuple[str, str]],
     replicas: int,
     command: str | None,
 ) -> None:
@@ -79,9 +79,9 @@ def start_service(
         more_args.append(
             f"published={host_port},target={container_port},protocol={protocol}"
         )
-    for network in networks:
+    for network, alias in networks:
         more_args.append("--network")
-        more_args.append(f"name={network},alias={project_service_name}")
+        more_args.append(f"name={network},alias={alias}")
     args = [
         "docker",
         "service",
@@ -148,7 +148,7 @@ async def start_service_async(
     env_variables: list[tuple[str, str]],
     volumes: list[tuple[str, str, str]],
     published_ports: list[tuple[int, int, str]],
-    networks: list[str],
+    networks: list[tuple[str, str]],
     replicas: int,
     command: str | None,
 ) -> None:
@@ -171,9 +171,9 @@ async def start_service_async(
         more_args.append(
             f"published={host_port},target={container_port},protocol={protocol}"
         )
-    for network in networks:
+    for network, alias in networks:
         more_args.append("--network")
-        more_args.append(f"name={network},alias={project_service_name}")
+        more_args.append(f"name={network},alias={alias}")
     args = [
         "docker",
         "service",
@@ -425,29 +425,6 @@ async def service_exists_async(service_name: str) -> bool:
     )
     await process.wait()
     return process.returncode == 0
-
-
-def get_networks_connected_to_container(container_name: str) -> list[str]:
-    args = [
-        "docker",
-        "inspect",
-        "--format",
-        "{{range $key, $value := .NetworkSettings.Networks}}{{$key}}{{println}}{{end}}",
-        container_name,
-    ]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    networks = [line.decode("utf-8")[:-1] for line in process.stdout.readlines()]
-    process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-    # remove last emtpy line
-    networks = [network for network in networks if network != ""]
-    return networks
 
 
 def list_services_for_project(project_name: str) -> list[str]:
@@ -831,66 +808,6 @@ def remove_network(name: str) -> None:
         raise Exception(f"Docker returned status {process.returncode}")
 
 
-def add_network_to_service(
-    service: str,
-    network: str,
-) -> None:
-    log.info("Adding network to service: %s to %s", network, service)
-    args = [
-        "docker",
-        "service",
-        "update",
-        "--network-add",
-        network,
-        service,
-    ]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    for line in process.stdout:
-        line_text = line.decode("utf-8")
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-
-    process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-
-
-def remove_network_from_service(
-    service: str,
-    network: str,
-) -> None:
-    log.info("Removing network from service: %s from %s", network, service)
-    args = [
-        "docker",
-        "service",
-        "update",
-        "--network-rm",
-        network,
-        service,
-    ]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    for line in process.stdout:
-        line_text = line.decode("utf-8")
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-
-    process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-
-
 def add_network_to_container(container: str, network: str) -> None:
     log.info("Adding network to container: %s to %s", network, container)
     args = [
@@ -1240,10 +1157,6 @@ async def remove_container_async(name: str) -> None:
 
 def deployment_network_name(project_name: str, deployment_number: int) -> str:
     return f"disco-project-{project_name}-{deployment_number}"
-
-
-def deployment_web_network_name(project_name: str, deployment_number: int) -> str:
-    return f"disco-project-{project_name}-{deployment_number}-caddy"
 
 
 def get_image_name_for_service(

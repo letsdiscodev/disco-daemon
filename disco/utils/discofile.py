@@ -44,6 +44,10 @@ class Service(BaseModel):
     )
     volumes: list[Volume] = []
     schedule: str = Field("* * * * *", pattern=r"^\*|\d+ \*|\d+ \*|\d+ \*|\d+ \*|\d+$")
+    exposed_internally: bool = Field(
+        False,
+        alias="exposedInternally",
+    )
     timeout: int = 300  # commands, static site generation
 
 

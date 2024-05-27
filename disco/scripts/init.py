@@ -54,7 +54,7 @@ def main() -> None:
     docker_swarm_init(disco_advertise_addr)
     node_id = get_this_swarm_node_id()
     label_swarm_node(node_id, "disco-role=main")
-    docker.create_network("disco-caddy-daemon")
+    docker.create_network("disco-main")
     docker.create_network("disco-logging")
     docker_swarm_create_disco_encryption_key()
     print("Setting up Caddy web server")
@@ -178,7 +178,7 @@ def start_caddy(host_home: str) -> None:
             "--mount",
             "source=disco-caddy-config,target=/config",
             "--network",
-            "disco-caddy-daemon",
+            "disco-main",
             "--mount",
             f"type=bind,source={host_home}/disco/caddy-socket,target=/disco/caddy-socket",
             "--mount",
@@ -220,7 +220,7 @@ def start_disco_daemon(host_home: str, image: str) -> None:
             "--name",
             "disco",
             "--network",
-            "disco-caddy-daemon",
+            "disco-main",
             "--network",
             "disco-logging",
             "--mount",

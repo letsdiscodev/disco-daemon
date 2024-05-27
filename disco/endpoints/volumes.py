@@ -205,14 +205,21 @@ async def volume_set(
             project_name, service_name, deployment_number
         )
         # TODO refactor, this code is pretty much copy-pasted from the deployment flow
-        networks = [docker.deployment_network_name(project_name, deployment_number)]
-        if service_name == "web":
-            networks.append(
-                docker.deployment_web_network_name(project_name, deployment_number)
-            )
         internal_service_name = docker.service_name(
             project_name, service_name, deployment_number
         )
+        networks: list[tuple[str, str]] = [
+            (
+                docker.deployment_network_name(project_name, deployment_number),
+                service_name,
+            ),
+            (
+                "disco-main",
+                f"{project_name}-{service_name}"
+                if service.exposed_internally
+                else internal_service_name,
+            ),
+        ]
         env_variables += [
             ("DISCO_PROJECT_NAME", project_name),
             ("DISCO_SERVICE_NAME", service_name),

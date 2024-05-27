@@ -116,7 +116,8 @@ class ProjectCron(Cron):
             networks=[
                 docker.deployment_network_name(
                     deployment.project.name, deployment.number
-                )
+                ),
+                "disco-main",
             ],
             cron=cron,
             next=cron.get_next(datetime),
@@ -165,7 +166,8 @@ class ProjectCron(Cron):
         self.volumes = volumes
         self.env_variables = env_variables
         self.networks = [
-            docker.deployment_network_name(deployment.project.name, deployment.number)
+            docker.deployment_network_name(deployment.project.name, deployment.number),
+            "disco-main",
         ]
         self.command = command
         if self.schedule != schedule:

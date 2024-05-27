@@ -222,7 +222,7 @@ async def request_cgi(
         name=f"{project_name}-cgi.{uuid.uuid4().hex}",
         env_variables=env_variables,
         volumes=volumes,
-        networks=[network, "disco-caddy-daemon"],
+        networks=[network, "disco-main"],
         command=command,
         stdin=content,
         stdout=stdout,
