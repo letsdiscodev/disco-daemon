@@ -29,7 +29,7 @@ from disco.utils.filesystem import (
     get_caddy_key_key,
     get_caddy_key_meta,
 )
-from disco.utils.github import get_all_repos
+from disco.utils.github import get_all_repos, repo_is_public
 from disco.utils.mq.tasks import enqueue_task_deprecated
 from disco.utils.projectdomains import add_domain
 from disco.utils.projects import (
@@ -144,7 +144,9 @@ async def validate_create_project(
             )
     if req_body.github_repo is not None:
         repos = await get_all_repos(dbsession)
-        if req_body.github_repo not in [repo.full_name for repo in repos]:
+        if req_body.github_repo not in [
+            repo.full_name for repo in repos
+        ] and not await repo_is_public(req_body.github_repo):
             raise RequestValidationError(
                 errors=(
                     ValidationError.from_exception_data(

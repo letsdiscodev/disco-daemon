@@ -991,3 +991,14 @@ def handle_app_created_on_github(pending_app_id: str, code: str) -> str:
             f"{github_app.html_url}/installations/new/permissions?target_id={owner_id}"
         )
         return install_url
+
+
+async def repo_is_public(full_name: str) -> bool:
+    log.info("Checking if Github repo is public %s", full_name)
+    url = f"https://api.github.com/repos/{full_name}"
+
+    def query() -> requests.Response:
+        return requests.get(url, headers={"Accept": "application/json"}, timeout=120)
+
+    response = await asyncio.get_event_loop().run_in_executor(None, query)
+    return response.status_code == 200
