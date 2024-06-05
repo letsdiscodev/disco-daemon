@@ -137,6 +137,61 @@ def alembic_upgrade(version_hash: str) -> None:
     command.upgrade(config, version_hash)
 
 
+def task_0_11_x(image: str) -> None:
+    from disco.utils import docker
+
+    print("Upating from 0.11.x to 0.12.x")
+    alembic_upgrade("b570b8c2424d")
+    docker.create_network("disco-main")
+    services_output = _run_cmd(
+        [
+            "docker",
+            "service",
+            "ls",
+            "--filter",
+            "label=disco.project.name",
+            "--format",
+            "{{ .Name }}",
+        ]
+    )
+    services = services_output.split("\n")[:-1]
+    for service in services:
+        _run_cmd(
+            [
+                "docker",
+                "service",
+                "update",
+                "--network-add",
+                "disco-main",
+                service,
+            ]
+        )
+    networks_output = _run_cmd(
+        [
+            "docker",
+            "network",
+            "ls",
+            "--filter",
+            "label=disco.project.name",
+            "--format",
+            "{{ .Name }}",
+        ]
+    )
+    networks = networks_output.split("\n")[:-1]
+    for network in networks:
+        if not network.endswith("-caddy"):
+            continue
+        try:
+            docker.remove_network_from_container("disco-caddy", network)
+        except Exception:
+            log.info("Couldn't remove network %s from disco-caddy", network)
+    docker.add_network_to_container("disco-caddy", "disco-main")
+    docker.remove_network_from_container("disco-caddy", "disco-caddy-daemon")
+    docker.remove_network("disco-caddy-daemon")
+    with Session.begin() as dbsession:
+        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.12.0")
+
+
 def task_0_10_x(image: str) -> None:
     print("Upating from 0.10.x to 0.11.x")
     directory = "/disco/data/commandoutputs"
@@ -453,6 +508,8 @@ def get_update_function_for_version(version: str) -> Callable[[str], None]:
     if version.startswith("0.10."):
         return task_0_10_x
     if version.startswith("0.11."):
-        assert disco.__version__.startswith("0.11.")
+        return task_0_11_x
+    if version.startswith("0.12."):
+        assert disco.__version__.startswith("0.12.")
         return task_patch
     raise NotImplementedError(f"Update missing for version {version}")
