@@ -236,6 +236,12 @@ class AsyncWorker:
                 continue
             cron.paused = True
 
+    def remove_project_crons(self, project_name: str) -> None:
+        log.info("Removing project crons for %s", project_name)
+        for cron in self._project_crons:
+            if cron.project_name == project_name:
+                self._project_crons.remove(cron)
+
     def reload_and_resume_project_crons(
         self, prev_project_name: str | None, project_name: str, deployment_number: int
     ) -> None:
@@ -251,7 +257,6 @@ class AsyncWorker:
             assert deployment is not None
             disco_file = get_disco_file_from_str(deployment.disco_file)
             existing_crons = set()
-            crons_to_remove = set()
             for cron in self._project_crons:
                 if cron.project_name != prev_project_name:
                     continue
@@ -263,9 +268,7 @@ class AsyncWorker:
                         disco_host=disco_host,
                     )
                 else:
-                    crons_to_remove.add(cron)
-            for cron_to_remove in crons_to_remove:
-                self._project_crons.remove(cron_to_remove)
+                    self._project_crons.remove(cron)
             for service_name, service in disco_file.services.items():
                 if service.type != ServiceType.cron:
                     continue

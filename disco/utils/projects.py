@@ -108,6 +108,8 @@ def get_all_projects(dbsession: DBSession) -> list[Project]:
 
 
 def delete_project(dbsession: DBSession, project: Project, by_api_key: ApiKey) -> None:
+    from disco.utils.asyncworker import async_worker
+
     log.info("%s is deleting project %s", by_api_key.log(), project.log())
     if project.github_repo is not None:
         try:
@@ -136,6 +138,7 @@ def delete_project(dbsession: DBSession, project: Project, by_api_key: ApiKey) -
             docker.remove_network(network)
         except Exception:
             log.info("Failed to remove network %s", network)
+    async_worker.remove_project_crons(project.name)
     if project.github_repo is not None:
         dbsession.delete(project.github_repo)
     for p_env_var in project.env_variables:

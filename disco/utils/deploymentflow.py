@@ -264,7 +264,7 @@ def replace_deployment(
                 log_output=log_output,
             )
     if prev_deployment_info is not None:
-        async_worker.pause_project_crons(prev_deployment_info.project_name)  # TODO here
+        async_worker.pause_project_crons(prev_deployment_info.project_name)
     if new_deployment_info is not None:
         assert new_deployment_info.disco_file is not None
         create_networks(new_deployment_info, recovery, log_output)
