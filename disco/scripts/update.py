@@ -301,7 +301,7 @@ def task_0_8_x(image: str) -> None:
             "/disco/caddy/config/caddy/autosave.json",
         ]
     )
-    start_caddy(host_home=host_home)
+    start_caddy(host_home=host_home, tunnel=False)
     with Session.begin() as dbsession:
         keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.9.0")
 

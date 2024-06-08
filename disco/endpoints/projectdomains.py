@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from disco.auth import get_api_key
 from disco.endpoints.dependencies import get_db, get_project_from_url
 from disco.models import ApiKey, Project, ProjectDomain
-from disco.utils.dns import domain_points_to_here
 from disco.utils.projectdomains import (
     add_domain,
     get_domain_by_id,
@@ -60,24 +59,6 @@ async def domains_post(
                         InitErrorDetails(
                             type=PydanticCustomError(
                                 "value_error", "Domain name already exists"
-                            ),
-                            loc=("body", "domain"),
-                            input=req_body.domain,
-                        )
-                    ],
-                )
-            ).errors()
-        )
-    if not await domain_points_to_here(dbsession, req_body.domain):
-        raise RequestValidationError(
-            errors=(
-                ValidationError.from_exception_data(
-                    "ValueError",
-                    [
-                        InitErrorDetails(
-                            type=PydanticCustomError(
-                                "value_error",
-                                "Domain does not point to server IP address",
                             ),
                             loc=("body", "domain"),
                             input=req_body.domain,

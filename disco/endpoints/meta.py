@@ -13,7 +13,6 @@ from disco.auth import get_api_key_sync
 from disco.endpoints.dependencies import get_sync_db
 from disco.models import ApiKey
 from disco.utils import docker, keyvalues
-from disco.utils.dns import domain_points_to_here_sync
 from disco.utils.meta import set_disco_host, update_disco
 from disco.utils.projects import get_project_by_domain_sync
 
@@ -97,24 +96,6 @@ def host_post(
                             type=PydanticCustomError(
                                 "value_error",
                                 "Domain already taken by other project",
-                            ),
-                            loc=("body", "domain"),
-                            input=req_body.host,
-                        )
-                    ],
-                )
-            ).errors()
-        )
-    if not domain_points_to_here_sync(dbsession, req_body.host):
-        raise RequestValidationError(
-            errors=(
-                ValidationError.from_exception_data(
-                    "ValueError",
-                    [
-                        InitErrorDetails(
-                            type=PydanticCustomError(
-                                "value_error",
-                                "Domain does not point to server IP address",
                             ),
                             loc=("body", "domain"),
                             input=req_body.host,

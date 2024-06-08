@@ -18,7 +18,6 @@ from disco.utils.deployments import (
     get_live_deployment_sync,
 )
 from disco.utils.discofile import get_disco_file_from_str
-from disco.utils.dns import domain_points_to_here
 from disco.utils.encryption import decrypt
 from disco.utils.envvariables import (
     get_env_variables_for_project,
@@ -114,26 +113,6 @@ async def validate_create_project(
                                 type=PydanticCustomError(
                                     "value_error",
                                     "Domain already taken by other project",
-                                ),
-                                loc=("body", "domain"),
-                                input=req_body.domain,
-                            )
-                        ],
-                    )
-                ).errors()
-            )
-        if req_body.caddy is None and not await domain_points_to_here(
-            dbsession, req_body.domain
-        ):
-            raise RequestValidationError(
-                errors=(
-                    ValidationError.from_exception_data(
-                        "ValueError",
-                        [
-                            InitErrorDetails(
-                                type=PydanticCustomError(
-                                    "value_error",
-                                    "Domain does not point to server IP address",
                                 ),
                                 loc=("body", "domain"),
                                 input=req_body.domain,

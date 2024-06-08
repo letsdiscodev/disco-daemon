@@ -808,12 +808,18 @@ def remove_network(name: str) -> None:
         raise Exception(f"Docker returned status {process.returncode}")
 
 
-def add_network_to_container(container: str, network: str) -> None:
+def add_network_to_container(
+    container: str, network: str, alias: str | None = None
+) -> None:
     log.info("Adding network to container: %s to %s", network, container)
+    more_args = []
+    if alias is not None:
+        more_args += ["--alias", alias]
     args = [
         "docker",
         "network",
         "connect",
+        *more_args,
         network,
         container,
     ]

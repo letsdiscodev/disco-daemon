@@ -26,6 +26,7 @@ def main() -> None:
     disco_advertise_addr = os.environ.get("DISCO_ADVERTISE_ADDR")
     host_home = os.environ.get("HOST_HOME")
     image = os.environ.get("DISCO_IMAGE")
+    cloudflare_tunnel_token = os.environ.get("CLOUDFLARE_TUNNEL_TOKEN")
     assert disco_host is not None
     assert disco_advertise_addr is not None
     assert host_home is not None
@@ -44,6 +45,12 @@ def main() -> None:
         keyvalues.set_value(dbsession=dbsession, key="DISCO_HOST", value=disco_host)
         keyvalues.set_value(dbsession=dbsession, key="HOST_HOME", value=host_home)
         keyvalues.set_value(dbsession=dbsession, key="REGISTRY_HOST", value=None)
+        if cloudflare_tunnel_token is not None:
+            keyvalues.set_value(
+                dbsession=dbsession,
+                key="CLOUDFLARE_TUNNEL_TOKEN",
+                value=cloudflare_tunnel_token,
+            )
         api_key = create_api_key(dbsession=dbsession, name="First API key")
         print("Created API key:", api_key.id)
     create_caddy_socket_dir(host_home)
@@ -58,10 +65,13 @@ def main() -> None:
     docker.create_network("disco-logging")
     docker_swarm_create_disco_encryption_key()
     print("Setting up Caddy web server")
-    write_caddy_init_config(disco_host)
-    start_caddy(host_home)
+    write_caddy_init_config(disco_host, tunnel=cloudflare_tunnel_token is not None)
+    start_caddy(host_home, tunnel=cloudflare_tunnel_token is not None)
     print("Setting up Disco")
     start_disco_daemon(host_home, image)
+    if cloudflare_tunnel_token is not None:
+        print("Setting up Cloudflare tunnel")
+        setup_cloudflare_tunnel(cloudflare_tunnel_token)
 
 
 def _run_cmd(args: list[str], timeout=600) -> str:
@@ -157,7 +167,17 @@ def create_caddy_socket_dir(host_home: str) -> None:
     os.makedirs(f"/host{host_home}/disco/caddy-socket")
 
 
-def start_caddy(host_home: str) -> None:
+def start_caddy(host_home: str, tunnel: bool) -> None:
+    more_args = []
+    if not tunnel:
+        more_args += [
+            "--publish",
+            "published=80,target=80,protocol=tcp",
+            "--publish",
+            "published=443,target=443,protocol=tcp",
+            "--publish",
+            "published=443,target=443,protocol=udp",
+        ]
     _run_cmd(
         [
             "docker",
@@ -167,12 +187,6 @@ def start_caddy(host_home: str) -> None:
             "--detach",
             "--restart",
             "always",
-            "--publish",
-            "published=80,target=80,protocol=tcp",
-            "--publish",
-            "published=443,target=443,protocol=tcp",
-            "--publish",
-            "published=443,target=443,protocol=udp",
             "--mount",
             "source=disco-caddy-data,target=/data",
             "--mount",
@@ -185,6 +199,7 @@ def start_caddy(host_home: str) -> None:
             "source=disco-caddy-init-config,target=/initconfig",
             "--mount",
             f"type=bind,source={host_home}/disco/srv,target=/disco/srv",
+            *more_args,
             f"caddy:{config.CADDY_VERSION}",
             "caddy",
             "run",
@@ -209,6 +224,32 @@ def create_docker_config(host_home: str) -> None:
     path = f"/host{host_home}/.docker"
     if not os.path.isdir(path):
         os.makedirs(f"/host{host_home}/.docker")
+
+
+def setup_cloudflare_tunnel(cloudflare_tunnel_token: str) -> None:
+    docker.create_network("disco-cloudflare-tunnel")
+    docker.add_network_to_container(
+        "disco-caddy", "disco-cloudflare-tunnel", alias="disco-server"
+    )
+    _run_cmd(
+        [
+            "docker",
+            "run",
+            "--name",
+            "cloudflared",
+            "--detach",
+            "--restart",
+            "always",
+            "--network",
+            "disco-cloudflare-tunnel",
+            "cloudflare/cloudflared:latest",
+            "tunnel",
+            "--no-autoupdate",
+            "run",
+            "--token",
+            cloudflare_tunnel_token,
+        ]
+    )
 
 
 def start_disco_daemon(host_home: str, image: str) -> None:

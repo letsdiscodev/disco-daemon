@@ -278,7 +278,7 @@ def update_disco_host(disco_host: str) -> None:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
 
-def write_caddy_init_config(disco_host: str) -> None:
+def write_caddy_init_config(disco_host: str, tunnel: bool) -> None:
     # We write the initial config directly to the config file so that Caddy listens
     # to the unix socket instead of a regular port.
     # We use a unix socket because that's the only way at the moment to let only Disco
@@ -294,7 +294,7 @@ def write_caddy_init_config(disco_host: str) -> None:
             "http": {
                 "servers": {
                     "disco": {
-                        "listen": [":443"],
+                        "listen": [":80" if tunnel else ":443"],
                         "routes": [
                             {
                                 "@id": "disco-domain-handle",
