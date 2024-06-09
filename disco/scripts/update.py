@@ -137,6 +137,32 @@ def alembic_upgrade(version_hash: str) -> None:
     command.upgrade(config, version_hash)
 
 
+def task_0_12_x(image: str) -> None:
+    from disco.scripts.init import start_caddy
+
+    print("Upating from 0.12.x to 0.13.x")
+    with Session.begin() as dbsession:
+        host_home = keyvalues.get_value_sync(dbsession=dbsession, key="HOST_HOME")
+    assert host_home is not None
+    _run_cmd(
+        [
+            "docker",
+            "stop",
+            "disco-caddy",
+        ]
+    )
+    _run_cmd(
+        [
+            "docker",
+            "rm",
+            "disco-caddy",
+        ]
+    )
+    start_caddy(host_home=host_home, tunnel=False)
+    with Session.begin() as dbsession:
+        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.13.0")
+
+
 def task_0_11_x(image: str) -> None:
     from disco.utils import docker
 
@@ -510,6 +536,8 @@ def get_update_function_for_version(version: str) -> Callable[[str], None]:
     if version.startswith("0.11."):
         return task_0_11_x
     if version.startswith("0.12."):
-        assert disco.__version__.startswith("0.12.")
+        return task_0_12_x
+    if version.startswith("0.13."):
+        assert disco.__version__.startswith("0.13.")
         return task_patch
     raise NotImplementedError(f"Update missing for version {version}")
