@@ -16,11 +16,17 @@ def build_image(
     project_name: str,
     dockerfile: str,
     context: str,
+    env_variables: list[tuple[str, str]],
     log_output: Callable[[str], None],
 ) -> None:
+    env_var_args = []
+    for key, _ in env_variables:
+        env_var_args.append("--secret")
+        env_var_args.append(f"id={key}")
     args = [
         "docker",
         "build",
+        *env_var_args,
         "--cpu-period",
         "100000",  # default
         "--cpu-quota",
@@ -34,6 +40,7 @@ def build_image(
     ]
     process = subprocess.Popen(
         args=args,
+        env=dict(env_variables),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         cwd=project_path(project_name),

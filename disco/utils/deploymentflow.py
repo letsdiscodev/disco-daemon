@@ -393,6 +393,14 @@ def build_images(
 ) -> list[str]:
     assert new_deployment_info.disco_file is not None
     images = []
+    env_variables = new_deployment_info.env_variables + [
+        ("DISCO_PROJECT_NAME", new_deployment_info.project_name),
+        ("DISCO_HOST", new_deployment_info.disco_host),
+    ]
+    if new_deployment_info.commit_hash is not None:
+        env_variables += [
+            ("DISCO_COMMIT", new_deployment_info.commit_hash),
+        ]
     for image_name, image in new_deployment_info.disco_file.images.items():
         log_output(f"Building image {image_name}\n")
         internal_image_name = docker.internal_image_name(
@@ -407,6 +415,7 @@ def build_images(
             project_name=new_deployment_info.project_name,
             dockerfile=image.dockerfile,
             context=image.context,
+            env_variables=env_variables,
             log_output=log_output,
         )
     return images
