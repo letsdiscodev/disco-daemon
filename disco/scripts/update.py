@@ -50,7 +50,7 @@ def main() -> None:
                 save_done_updating(dbsession)
                 return
     print(f"Installed version: {installed_version}")
-    print(f"New version: {installed_version}")
+    print(f"New version: {disco.__version__}")
     print("Stopping existing Disco processes")
     try:
         stop_disco_daemon()
