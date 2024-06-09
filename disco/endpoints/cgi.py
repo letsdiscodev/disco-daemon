@@ -4,7 +4,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Annotated, AsyncGenerator
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request, Response
 
 from disco.auth import get_api_key_wo_tx
 from disco.endpoints.dependencies import get_project_name_from_url_wo_tx
@@ -40,6 +40,7 @@ async def cgi_root(
     api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
     service_name: Annotated[str, Path()],
     request: Request,
+    x_disco_include_api_key: Annotated[str | None, Header()] = None,
 ):
     async with AsyncSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
@@ -67,6 +68,8 @@ async def cgi_root(
         path_info="/",
         query_string=request.url.query,
         requet_method=request.method,
+        include_api_key=x_disco_include_api_key is not None
+        and x_disco_include_api_key.lower() == "true",
         by_api_key_id=api_key_id,
     )
     if cgi_response.status_code == 500:
@@ -99,6 +102,7 @@ async def cgi_with_path(
     service_name: Annotated[str, Path()],
     request: Request,
     path_info: Annotated[str, Path()],
+    x_disco_include_api_key: Annotated[str | None, Header()] = None,
 ):
     async with AsyncSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
@@ -126,6 +130,8 @@ async def cgi_with_path(
         path_info=f"/{path_info}",
         query_string=request.url.query,
         requet_method=request.method,
+        include_api_key=x_disco_include_api_key is not None
+        and x_disco_include_api_key.lower() == "true",
         by_api_key_id=api_key_id,
     )
     if cgi_response.status_code == 500:
@@ -154,6 +160,7 @@ async def request_cgi(
     query_string: str,
     requet_method: str,
     by_api_key_id: str,
+    include_api_key: bool,
 ) -> CgiResponse:
     resp_text = ""
     cgi_err = ""
@@ -189,8 +196,10 @@ async def request_cgi(
             ("DISCO_PROJECT_NAME", project_name),
             ("DISCO_SERVICE_NAME", service_name),
             ("DISCO_HOST", await keyvalues.get_value_str(dbsession, "DISCO_HOST")),
-            ("DISCO_API_KEY", by_api_key_id),
         ]
+        if include_api_key:
+            log.info("Including DISCO_API_KEY env variable")
+            env_variables.append(("DISCO_API_KEY", by_api_key_id))
         if deployment.commit_hash is not None:
             env_variables += [
                 ("DISCO_COMMIT", deployment.commit_hash),
