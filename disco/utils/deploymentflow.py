@@ -28,6 +28,7 @@ from disco.utils.filesystem import (
     project_folder_exists,
     project_path_on_host,
     read_disco_file,
+    static_site_deployment_path,
 )
 from disco.utils.projects import get_project_by_id, volume_name_for_project
 
@@ -214,12 +215,17 @@ def replace_deployment(
         images = build_images(new_deployment_info, log_output)
         if new_deployment_info.registry_host is not None:
             push_images(images, log_output)
-        if (
-            "web" in new_deployment_info.disco_file.services
-            and new_deployment_info.disco_file.services["web"].type
-            == ServiceType.static
-        ):
-            prepare_static_site(new_deployment_info, log_output)
+        if "web" in new_deployment_info.disco_file.services:
+            if (
+                new_deployment_info.disco_file.services["web"].type
+                == ServiceType.static
+            ):
+                prepare_static_site(new_deployment_info, log_output)
+            elif (
+                new_deployment_info.disco_file.services["web"].type
+                == ServiceType.generator
+            ):
+                prepare_generator_site(new_deployment_info, log_output)
         if (
             "hook:deploy:start:before" in new_deployment_info.disco_file.services
             and new_deployment_info.disco_file.services["hook:deploy:start:before"].type
@@ -612,7 +618,10 @@ def serve_new_deployment(
             )
             if not recovery:
                 raise
-    else:  # static
+    elif new_deployment_info.disco_file.services["web"].type in [
+        ServiceType.static,
+        ServiceType.generator,
+    ]:
         try:
             caddy.serve_static_site_sync(
                 new_deployment_info.project_name, new_deployment_info.number
@@ -624,6 +633,10 @@ def serve_new_deployment(
             )
             if not recovery:
                 raise
+    else:
+        raise NotImplementedError(
+            f"Deployment type not handled {new_deployment_info.disco_file.services["web"].type}"
+        )
 
 
 def stop_prev_services(
@@ -702,6 +715,10 @@ def prepare_static_site(
     )
     assert new_deployment_info.disco_file.services["web"].public_path is not None
     if new_deployment_info.disco_file.services["web"].command is not None:
+        log_output("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n\n")
+        log_output('Static site with "command" is deprecated.\n')
+        log_output('Use "type": "generator" instead.\n')
+        log_output("\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n")
         log_output("Runnning static site command\n")
         service_name = "web"
         service = new_deployment_info.disco_file.services[service_name]
@@ -763,3 +780,42 @@ def prepare_static_site(
             public_path=new_deployment_info.disco_file.services["web"].public_path,
             deployment_number=new_deployment_info.number,
         )
+
+
+def prepare_generator_site(
+    new_deployment_info: DeploymentInfo,
+    log_output: Callable[[str], None],
+) -> None:
+    assert new_deployment_info.disco_file is not None
+    assert (
+        "web" in new_deployment_info.disco_file.services
+        and new_deployment_info.disco_file.services["web"].type == ServiceType.generator
+    )
+    assert new_deployment_info.disco_file.services["web"].public_path is not None
+    service = new_deployment_info.disco_file.services["web"]
+    if "public_path" in service.model_fields_set:
+        public_path = new_deployment_info.disco_file.services["web"].public_path
+    else:
+        public_path = "/code/dist"
+    image = docker.get_image_name_for_service(
+        disco_file=new_deployment_info.disco_file,
+        service_name="web",
+        registry_host=new_deployment_info.registry_host,
+        project_name=new_deployment_info.project_name,
+        deployment_number=new_deployment_info.number,
+    )
+    dst = static_site_deployment_path(
+        project_name=new_deployment_info.project_name,
+        deployment_number=new_deployment_info.number,
+    )
+    create_static_site_deployment_directory(
+        host_home=new_deployment_info.host_home,
+        project_name=new_deployment_info.project_name,
+        deployment_number=new_deployment_info.number,
+    )
+    log_output(f"Copying static files from Docker image {public_path}\n")
+    docker.copy_files_from_image(
+        image=image,
+        src=public_path,
+        dst=dst,
+    )

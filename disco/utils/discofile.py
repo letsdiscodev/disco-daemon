@@ -23,6 +23,7 @@ class Image(BaseModel):
 class ServiceType(str, Enum):
     container = "container"
     static = "static"
+    generator = "generator"
     command = "command"
     cron = "cron"
     cgi = "cgi"
@@ -31,6 +32,7 @@ class ServiceType(str, Enum):
 class Service(BaseModel):
     type: ServiceType = ServiceType.container
     public_path: str | None = Field(
+        # default is "/code/dist" for generator
         "/dist",
         alias="publicPath",
         pattern=r"/.+",

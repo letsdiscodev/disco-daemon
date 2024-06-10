@@ -1281,3 +1281,43 @@ def scale(services: dict[str, int]) -> None:
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
+
+
+def copy_files_from_image(image: str, src: str, dst: str) -> None:
+    args = [
+        "docker",
+        "container",
+        "create",
+        image,
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    out, _ = process.communicate()
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+    container_name = out.decode("utf-8").replace("\n", "")
+    # transform /code/dist to /code/dist/.
+    if not src.endswith("."):
+        if not src.endswith("/"):
+            src += "/"
+        src += "."
+    args = [
+        "docker",
+        "cp",
+        f"{container_name}:{src}",
+        dst,
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    _, _ = process.communicate()
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+    remove_container(container_name)
