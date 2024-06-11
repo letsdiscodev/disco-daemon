@@ -38,13 +38,15 @@ async def set_project_github_repo(
     dbsession: AsyncDBSession,
     project: Project,
     github_repo: str,
+    branch: str | None,
     by_api_key: ApiKey,
 ):
     log.info(
-        "%s is setting project Github repo %s %s",
+        "%s is setting project Github repo %s %s (branch %s)",
         by_api_key.log(),
         project.log(),
         github_repo,
+        branch,
     )
     if project.deployment_type is not None:
         if project.deployment_type == "GITHUB":
@@ -56,6 +58,7 @@ async def set_project_github_repo(
     project.github_repo = ProjectGithubRepo(
         id=uuid.uuid4().hex,
         full_name=github_repo,
+        branch=branch,
     )
 
 

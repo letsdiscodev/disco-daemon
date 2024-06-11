@@ -64,6 +64,7 @@ async def create_deployment(
         github_repo_full_name=project_github_repo.full_name
         if project_github_repo is not None
         else None,
+        branch=project_github_repo.branch if project_github_repo is not None else None,
         status="QUEUED",
         commit_hash=commit_hash,
         disco_file=disco_file.model_dump_json(indent=2, by_alias=True)
@@ -115,6 +116,7 @@ def create_deployment_sync(
         github_repo_full_name=project_github_repo.full_name
         if project_github_repo is not None
         else None,
+        branch=project_github_repo.branch if project_github_repo is not None else None,
         project=project,
         status="QUEUED",
         commit_hash=commit_hash,

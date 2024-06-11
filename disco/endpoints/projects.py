@@ -63,6 +63,7 @@ class NewProjectRequestBody(BaseModel):
         alias="githubRepo",
         pattern=r"^\S+/\S+$",
     )
+    branch: str | None = None
     domain: str | None = None
     env_variables: list[EnvVariable] = Field([], alias="envVariables")
     caddy: CaddyKey | None = None
@@ -172,6 +173,7 @@ async def projects_post(
             dbsession=dbsession,
             project=project,
             github_repo=req_body.github_repo,
+            branch=req_body.branch,
             by_api_key=api_key,
         )
     await set_env_variables(
@@ -221,7 +223,10 @@ def projects_get(dbsession: Annotated[DBSession, Depends(get_sync_db)]):
         "projects": [
             {
                 "name": project.name,
-                "github": {"fullName": project.github_repo.full_name}
+                "github": {
+                    "fullName": project.github_repo.full_name,
+                    "branch": project.github_repo.branch,
+                }
                 if project.github_repo is not None
                 else None,
             }

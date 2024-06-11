@@ -42,6 +42,7 @@ class Deployment(Base):
     github_repo_full_name: Mapped[str | None] = mapped_column(
         Unicode(2048), nullable=True
     )
+    branch: Mapped[str] = mapped_column(Unicode(255), nullable=True)
     registry_host: Mapped[str | None] = mapped_column(Unicode(2048), nullable=True)
     project_id: Mapped[str] = mapped_column(
         String(32),

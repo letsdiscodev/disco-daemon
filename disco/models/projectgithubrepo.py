@@ -38,6 +38,7 @@ class ProjectGithubRepo(Base):
         index=True,
     )
     full_name: Mapped[str] = mapped_column(Unicode(255), nullable=False, index=True)
+    branch: Mapped[str] = mapped_column(Unicode(255), nullable=True)
 
     project: Mapped[Project] = relationship("Project", back_populates="github_repo")
 

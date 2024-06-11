@@ -58,9 +58,10 @@ def checkout_commit(project_name: str, commit_hash: str) -> None:
         raise Exception(f"Git returned status {process.returncode}")
 
 
-def checkout_latest(project_name: str) -> None:
+def checkout_latest(project_name: str, branch: str | None) -> None:
     log.info("Checking out latest commit from Github project %s", project_name)
-    branch = main_or_master(project_name)
+    if branch is None:
+        branch = main_or_master(project_name)
     args = ["git", "checkout", f"origin/{branch}"]
     process = subprocess.Popen(
         args=args,
@@ -440,13 +441,26 @@ def process_github_app_webhook(
         try:
             full_name = body["repository"]["full_name"]
             branch, commit_hash = get_commit_info_from_webhook_push(body_text)
-            if branch not in ["master", "main"]:
-                log.info("Branch was not master or main, skipping")
-                return
             deployment_ids = []
             with Session.begin() as dbsession:
                 projects = get_projects_by_github_app_repo(dbsession, full_name)
                 for project in projects:
+                    if (
+                        project.github_repo.branch is None
+                        and branch not in ["main", "master"]
+                    ) or (
+                        project.github_repo.branch is not None
+                        and project.github_repo.branch != branch
+                    ):
+                        log.info(
+                            "Branch was %s, not deploying %s (tracking %s)",
+                            branch,
+                            project.log(),
+                            project.github_repo.branch
+                            if project.github_repo.branch is not None
+                            else "master and main",
+                        )
+                        continue
                     deployment = create_deployment_sync(
                         dbsession=dbsession,
                         project=project,
