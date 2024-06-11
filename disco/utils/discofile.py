@@ -32,10 +32,8 @@ class ServiceType(str, Enum):
 class Service(BaseModel):
     type: ServiceType = ServiceType.container
     public_path: str | None = Field(
-        # default is "/code/dist" for generator
-        "/dist",
+        "dist",
         alias="publicPath",
-        pattern=r"/.+",
     )
     image: str = "default"
     port: int = 8000

@@ -67,7 +67,7 @@ def remove_project_static_deployments_if_any(project_name: str) -> None:
 
 
 def static_site_src_public_path(project_name: str, public_path: str) -> str:
-    path = os.path.abspath(f"{project_path(project_name)}{public_path}")
+    path = os.path.abspath(f"{project_path(project_name)}/{public_path}")
     if not path.startswith(f"{project_path(project_name)}/"):
         # prevent traversal attacks
         raise Exception("publicPath must be inside project folder")

@@ -1283,6 +1283,27 @@ def scale(services: dict[str, int]) -> None:
         log.info("Output: %s", line_text)
 
 
+def get_image_workdir(image: str) -> str:
+    args = [
+        "docker",
+        "image",
+        "inspect",
+        image,
+        "--format={{.Config.WorkingDir}}",
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    out, _ = process.communicate()
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+    workdir = out.decode("utf-8").replace("\n", "")
+    return workdir
+
+
 def copy_files_from_image(image: str, src: str, dst: str) -> None:
     args = [
         "docker",

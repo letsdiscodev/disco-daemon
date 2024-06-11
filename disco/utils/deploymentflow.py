@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 from dataclasses import dataclass
 from typing import Callable
@@ -792,11 +793,6 @@ def prepare_generator_site(
         and new_deployment_info.disco_file.services["web"].type == ServiceType.generator
     )
     assert new_deployment_info.disco_file.services["web"].public_path is not None
-    service = new_deployment_info.disco_file.services["web"]
-    if "public_path" in service.model_fields_set:
-        public_path = new_deployment_info.disco_file.services["web"].public_path
-    else:
-        public_path = "/code/dist"
     image = docker.get_image_name_for_service(
         disco_file=new_deployment_info.disco_file,
         service_name="web",
@@ -813,9 +809,13 @@ def prepare_generator_site(
         project_name=new_deployment_info.project_name,
         deployment_number=new_deployment_info.number,
     )
-    log_output(f"Copying static files from Docker image {public_path}\n")
+    src = new_deployment_info.disco_file.services["web"].public_path
+    if not src.startswith("/"):
+        workdir = docker.get_image_workdir(image)
+        src = os.path.join(workdir, src)
+    log_output(f"Copying static files from Docker image {src}\n")
     docker.copy_files_from_image(
         image=image,
-        src=public_path,
+        src=src,
         dst=dst,
     )
