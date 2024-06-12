@@ -360,19 +360,19 @@ def checkout_commit(
             log_output("Failed to fetch repository. Is the repository accessible?\n")
             raise
     if new_deployment_info.commit_hash == "_DEPLOY_LATEST_":
-        log_output("Checking out latest commit\n")
         github.checkout_latest(
             project_name=new_deployment_info.project_name,
             branch=new_deployment_info.branch,
         )
     else:
-        log_output(f"Checking out {new_deployment_info.commit_hash}\n")
         github.checkout_commit(
             new_deployment_info.project_name,
             new_deployment_info.commit_hash,
         )
     commit_hash = github.get_head_commit_hash(new_deployment_info.project_name)
+    log_output(f"Checked out commit {commit_hash}\n")
     if new_deployment_info.commit_hash != commit_hash:
+        new_deployment_info.commit_hash = commit_hash
         with Session.begin() as dbsession:
             deployment = get_deployment_by_id(dbsession, new_deployment_info.id)
             assert deployment is not None
