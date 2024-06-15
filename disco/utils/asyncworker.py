@@ -40,8 +40,10 @@ class DiscoCron(Cron):
 
 async def cron_hour() -> None:
     from disco.utils.commandoutputs import clean_up_db_connections
+    from disco.utils.tunnels import clean_up_tunnels
 
     await clean_up_db_connections()
+    await clean_up_tunnels()
 
 
 async def cron_day() -> None:
