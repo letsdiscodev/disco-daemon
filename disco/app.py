@@ -20,6 +20,7 @@ from disco.endpoints import (
     run,
     scale,
     syslog,
+    tunnels,
     volumes,
 )
 from disco.utils.asyncworker import async_worker
@@ -57,6 +58,7 @@ app.include_router(scale.router)
 app.include_router(apikeys.router)
 app.include_router(apikeyinvites.router)
 app.include_router(syslog.router)
+app.include_router(tunnels.router)
 app.include_router(cgi.router)
 app.include_router(githubapps.router)
 

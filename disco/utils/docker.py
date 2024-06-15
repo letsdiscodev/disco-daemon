@@ -1342,3 +1342,78 @@ def copy_files_from_image(image: str, src: str, dst: str) -> None:
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
     remove_container(container_name)
+
+
+async def start_container(
+    image: str,
+    name: str,
+    env_variables: list[tuple[str, str]],
+    volumes: list[tuple[str, str, str]],
+    published_ports: list[tuple[int, int, str]],
+    networks: list[str],
+    command: str | None,
+    workdir: str | None = None,
+) -> None:
+    more_args = []
+    for var_name, var_value in env_variables:
+        more_args.append("--env")
+        more_args.append(f"{var_name}={var_value}")
+    for volume_type, source, destination in volumes:
+        assert volume_type in ["bind", "volume"]
+        more_args.append("--mount")
+        more_args.append(
+            f"type={volume_type},source={source},destination={destination}"
+        )
+    if workdir is not None:
+        more_args.append("--workdir")
+        more_args.append(workdir)
+    for host_port, container_port, protocol in published_ports:
+        more_args.append("--publish")
+        more_args.append(
+            f"published={host_port},target={container_port},protocol={protocol}"
+        )
+    args = [
+        "docker",
+        "container",
+        "create",
+        "--name",
+        name,
+        *more_args,
+        image,
+        *(command.split() if command is not None else []),
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    if len(stdout) > 0:
+        log.info("Stdout: %s", stdout)
+    if len(stderr) > 0:
+        log.info("Stderr: %s", stderr)
+    await process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+    for network in networks:
+        await add_network_to_container_async(container=name, network=network)
+    args = [
+        "docker",
+        "container",
+        "start",
+        name,
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    stdout, stderr = await process.communicate()
+    if len(stdout) > 0:
+        log.info("Stdout: %s", stdout)
+    if len(stderr) > 0:
+        log.info("Stderr: %s", stderr)
+    await process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
