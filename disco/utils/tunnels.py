@@ -54,7 +54,7 @@ async def monitor_tunnel(service_name: str) -> None:
 
 async def extend_tunnel_expiration(service_name: str) -> None:
     global _active_tunnels
-    log.info("Setting expiration of tunnel %d to 5 minutes from now", service_name)
+    log.info("Setting expiration of tunnel %s to 5 minutes from now", service_name)
     async with tunnel_list_lock:
         for tunnel in _active_tunnels:
             if tunnel.service_name == service_name:
