@@ -2,8 +2,9 @@ import asyncio
 import logging
 import random
 from secrets import token_hex
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ValidationError
 from pydantic_core import InitErrorDetails, PydanticCustomError
@@ -14,7 +15,13 @@ from disco.utils import docker
 from disco.utils.deployments import get_live_deployment
 from disco.utils.discofile import get_disco_file_from_str
 from disco.utils.projects import get_project_by_name
-from disco.utils.tunnels import TUNNEL_CMD, monitor_tunnel
+from disco.utils.tunnels import (
+    TUNNEL_CMD,
+    close_tunnel,
+    extend_tunnel_expiration,
+    get_service_name,
+    monitor_tunnel,
+)
 
 log = logging.getLogger(__name__)
 
@@ -83,7 +90,7 @@ async def tunnels_post(req_body: CreateTunnelReqBody):
     tunnel_cmd = TUNNEL_CMD.copy()
     port = random.randint(10000, 65535)
     password = token_hex(16)
-    tunnel_service_name = f"disco-tunnel-{port}"
+    tunnel_service_name = get_service_name(port)
     assert tunnel_cmd[4] == "{name}"
     assert tunnel_cmd[6] == "PASSWORD={password}"
     assert tunnel_cmd[8] == "published={host_port},target=22,protocol=tcp"
@@ -127,3 +134,15 @@ async def tunnels_post(req_body: CreateTunnelReqBody):
             "port": port,
         }
     }
+
+
+@router.post("/api/tunnels/{port}")
+async def tunnel_post(port: Annotated[int, Path()]):
+    await extend_tunnel_expiration(get_service_name(port))
+    return {}
+
+
+@router.delete("/api/tunnels/{port}")
+async def tunnel_delete(port: Annotated[int, Path()]):
+    await close_tunnel(get_service_name(port))
+    return {}

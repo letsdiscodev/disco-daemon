@@ -36,6 +36,10 @@ TUNNEL_CMD = [
 ]
 
 
+def get_service_name(port: int) -> str:
+    return f"disco-tunnel-{port}"
+
+
 async def monitor_tunnel(service_name: str) -> None:
     global _active_tunnels
     log.info("Adding %s to the list of monitored tunnels", service_name)
@@ -46,6 +50,31 @@ async def monitor_tunnel(service_name: str) -> None:
                 expires=datetime.now(timezone.utc) + timedelta(minutes=5),
             )
         )
+
+
+async def extend_tunnel_expiration(service_name: str) -> None:
+    global _active_tunnels
+    log.info("Setting expiration of tunnel %d to 5 minutes from now", service_name)
+    async with tunnel_list_lock:
+        for tunnel in _active_tunnels:
+            if tunnel.service_name == service_name:
+                tunnel.expires = datetime.now(timezone.utc) + timedelta(minutes=5)
+                return
+    log.warning("Couldn't find active tunnel %s, not extending", service_name)
+
+
+async def close_tunnel(service_name: str) -> None:
+    global _active_tunnels
+    log.info("Closing tunnel %s", service_name)
+    active_tunnels = set(await get_active_tunnels())
+    running_tunnels = await get_running_tunnels()
+    if service_name in active_tunnels:
+        async with tunnel_list_lock:
+            for tunnel in _active_tunnels:
+                if tunnel.service_name == service_name:
+                    tunnel.expires = datetime.now(timezone.utc) - timedelta(minutes=999)
+    if service_name in running_tunnels:
+        await docker.stop_service(service_name)
 
 
 async def get_active_tunnels() -> list[str]:
