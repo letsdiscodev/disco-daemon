@@ -122,6 +122,7 @@ async def stop_expired_tunnels() -> None:
     """
     expired_tunnels = await get_expired_tunnels()
     for expired_tunnel in expired_tunnels:
+        log.warning("Killing expired tunnel %s", expired_tunnel)
         await close_tunnel(expired_tunnel)
 
 
