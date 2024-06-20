@@ -38,18 +38,24 @@ class DiscoCron(Cron):
     run: Callable[[], Awaitable[None]] = no_op
 
 
+async def cron_minute() -> None:
+    from disco.utils.tunnels import clean_up_rogue_tunnels
+
+    await clean_up_rogue_tunnels()
+
+
 async def cron_hour() -> None:
     from disco.utils.commandoutputs import clean_up_db_connections
-    from disco.utils.tunnels import clean_up_tunnels
+    from disco.utils.tunnels import clean_up_rogue_tunnels
 
     await clean_up_db_connections()
-    await clean_up_tunnels()
+    await clean_up_rogue_tunnels()
 
 
 async def cron_day() -> None:
-    from disco.utils.logs import clean_up_syslogs
+    from disco.utils.logs import clean_up_rogue_syslogs
 
-    await clean_up_syslogs()
+    await clean_up_rogue_syslogs()
 
 
 @dataclass
@@ -373,6 +379,7 @@ class AsyncWorker:
                 )
                 + timedelta(minutes=1),
                 delta=timedelta(minutes=1),
+                run=cron_minute,
             ),
             DiscoCron(
                 name="HOUR",

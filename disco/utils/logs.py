@@ -130,7 +130,7 @@ async def get_running_syslogs() -> list[str]:
     return services
 
 
-async def clean_up_syslogs() -> None:
+async def clean_up_rogue_syslogs() -> None:
     active_syslogs = set(await get_active_syslogs())
     running_syslogs = await get_running_syslogs()
     for running_syslog in running_syslogs:

@@ -66,24 +66,29 @@ async def extend_tunnel_expiration(service_name: str) -> None:
 async def close_tunnel(service_name: str) -> None:
     global _active_tunnels
     log.info("Closing tunnel %s", service_name)
-    active_tunnels = set(await get_active_tunnels())
-    running_tunnels = await get_running_tunnels()
-    if service_name in active_tunnels:
-        async with tunnel_list_lock:
-            for tunnel in _active_tunnels:
-                if tunnel.service_name == service_name:
-                    tunnel.expires = datetime.now(timezone.utc) - timedelta(minutes=999)
-    if service_name in running_tunnels:
-        await docker.stop_service(service_name)
+    async with tunnel_list_lock:
+        for tunnel in _active_tunnels:
+            if tunnel.service_name == service_name:
+                _active_tunnels.remove(tunnel)
+        running_tunnels = await get_running_tunnels()
+        if service_name in running_tunnels:
+            await docker.stop_service(service_name)
 
 
 async def get_active_tunnels() -> list[str]:
     global _active_tunnels
     async with tunnel_list_lock:
-        _active_tunnels = [
-            sl for sl in _active_tunnels if sl.expires > datetime.now(timezone.utc)
-        ]
         return [sl.service_name for sl in _active_tunnels]
+
+
+async def get_expired_tunnels() -> list[str]:
+    global _active_tunnels
+    async with tunnel_list_lock:
+        return [
+            sl.service_name
+            for sl in _active_tunnels
+            if sl.expires < datetime.now(timezone.utc)
+        ]
 
 
 async def get_running_tunnels() -> list[str]:
@@ -108,10 +113,28 @@ async def get_running_tunnels() -> list[str]:
     return services
 
 
-async def clean_up_tunnels() -> None:
+async def stop_expired_tunnels() -> None:
+    """Close tunnels that just expired within the last minute.
+
+    If for some reason, the CLI doesn't tell Disco to close the tunnel,
+    we catch that it expired and we close it.
+
+    """
+    expired_tunnels = await get_expired_tunnels()
+    for expired_tunnel in expired_tunnels:
+        await close_tunnel(expired_tunnel)
+
+
+async def clean_up_rogue_tunnels() -> None:
+    """Close tunnels that could still run but we don't know about.
+
+    E.g. if the server was restarted while a tunnel was running.
+    The tunnel would still run but Disco wouldn't know about it.
+
+    """
     active_tunnels = set(await get_active_tunnels())
     running_tunnels = await get_running_tunnels()
     for running_tunnel in running_tunnels:
         if running_tunnel not in active_tunnels:
             log.warning("Killing rogue tunnel %s", running_tunnel)
-            await docker.stop_service(running_tunnel)
+            await close_tunnel(running_tunnel)
