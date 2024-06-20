@@ -19,10 +19,15 @@ def build_image(
     env_variables: list[tuple[str, str]],
     log_output: Callable[[str], None],
 ) -> None:
+    # include all env variables individually, and also include a .env with all variables
     env_var_args = []
     for key, _ in env_variables:
         env_var_args.append("--secret")
         env_var_args.append(f"id={key}")
+    dot_env = "\n".join([f"{key}={value}" for key, value in env_variables]) + "\n"
+    env_var_args.append("--secret")
+    env_var_args.append("id=.env,env=DOT_ENV")
+    env_variables += [("DOT_ENV", dot_env)]
     args = [
         "docker",
         "build",
