@@ -418,6 +418,8 @@ def service_exists(service_name: str) -> bool:
     ]
     process = subprocess.Popen(
         args=args,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     process.wait()
     return process.returncode == 0
