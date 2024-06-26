@@ -321,6 +321,23 @@ def write_caddy_init_config(disco_host: str, tunnel: bool) -> None:
                             }
                         ],
                         "protocols": ["h1", "h2"],
+                        "logs": {},
+                    }
+                }
+            }
+        },
+        "logging": {
+            "logs": {
+                "default": {
+                    "encoder": {
+                        "fields": {
+                            "request>headers": {"filter": "delete"},
+                            "request>tls": {"filter": "delete"},
+                            "resp_headers": {"filter": "delete"},
+                            "user_id": {"filter": "delete"},
+                        },
+                        "format": "filter",
+                        "wrap": {"format": "json"},
                     }
                 }
             }
