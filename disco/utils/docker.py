@@ -3,22 +3,26 @@ import logging
 import subprocess
 from datetime import datetime, timedelta, timezone
 from multiprocessing import cpu_count
-from typing import AsyncGenerator, Callable
+from typing import AsyncGenerator, Awaitable, Callable
 
-from disco.utils.discofile import DiscoFile
+from disco.utils.discofile import DiscoFile, Service
 from disco.utils.filesystem import project_path
 
 log = logging.getLogger(__name__)
 
 
-def build_image(
+async def build_image(
     image: str,
     project_name: str,
-    dockerfile: str,
-    context: str,
     env_variables: list[tuple[str, str]],
-    log_output: Callable[[str], None],
+    stdout: Callable[[str], Awaitable[None]],
+    stderr: Callable[[str], Awaitable[None]],
+    context: str,
+    dockerfile_path: str | None = None,
+    dockerfile_str: str | None = None,
+    timeout: int = 3600,
 ) -> None:
+    assert (dockerfile_path is None) != (dockerfile_str is None)
     # include all env variables individually, and also include a .env with all variables
     env_var_args = []
     for key, _ in env_variables:
@@ -40,21 +44,51 @@ def build_image(
         "--tag",
         image,
         "--file",
-        dockerfile,
+        dockerfile_path if dockerfile_path is not None else "-",
         context,
     ]
-    process = subprocess.Popen(
-        args=args,
-        env=dict(env_variables),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        cwd=project_path(project_name),
-    )
-    assert process.stdout is not None
-    for line in process.stdout:
-        log_output(line.decode("utf-8"))
 
-    process.wait()
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        env=dict(env_variables),
+        cwd=project_path(project_name),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        stdin=asyncio.subprocess.PIPE if dockerfile_str is not None else None,
+    )
+
+    async def write_stdin() -> None:
+        if dockerfile_str is None:
+            return
+        assert process.stdin is not None
+        process.stdin.write(dockerfile_str.encode("utf-8"))
+        await process.stdin.drain()
+        process.stdin.write_eof()
+
+    async def read_stdout() -> None:
+        assert process.stdout is not None
+        async for line in process.stdout:
+            await stdout(line.decode("utf-8"))
+
+    async def read_stderr() -> None:
+        assert process.stderr is not None
+        async for line in process.stderr:
+            await stderr(line.decode("utf-8"))
+
+    tasks = [
+        asyncio.create_task(write_stdin()),
+        asyncio.create_task(read_stdout()),
+        asyncio.create_task(read_stderr()),
+    ]
+
+    try:
+        async with asyncio.timeout(timeout):
+            await asyncio.gather(*tasks)
+    except TimeoutError:
+        process.terminate()
+        raise Exception(f"Building image failed, timeout after {timeout} seconds")
+
+    await process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
 
@@ -1191,8 +1225,16 @@ def get_image_name_for_service(
             f"Service {service_name} not in Discofile: {list(disco_file.services.keys())}"
         )
     service = disco_file.services[service_name]
+    if service.build is not None:
+        # has a build command, is named after service name
+        return internal_image_name(
+            registry_host=registry_host,
+            project_name=project_name,
+            deployment_number=deployment_number,
+            image_name=service_name,
+        )
     if service.image in disco_file.images:
-        # image built by Disco
+        # image defined in Discofile
         return internal_image_name(
             registry_host=registry_host,
             project_name=project_name,
@@ -1424,3 +1466,15 @@ async def start_container(
     await process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
+
+
+EASY_MODE_DOCKERFILE = """
+FROM {image}
+WORKDIR /project
+COPY . /project
+RUN --mount=type=secret,id=.env env $(cat /run/secrets/.env | xargs) {command}
+"""
+
+
+def easy_mode_dockerfile(service: Service) -> str:
+    return EASY_MODE_DOCKERFILE.format(image=service.image, command=service.build)

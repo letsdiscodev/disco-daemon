@@ -38,6 +38,7 @@ class Service(BaseModel):
     image: str = "default"
     port: int = 8000
     command: str | None = None
+    build: str | None = None
     published_ports: list[PublishedPort] = Field(
         [],
         alias="publishedPorts",
@@ -85,6 +86,9 @@ def _should_add_default_image(disco_file: DiscoFile) -> bool:
         if service.image != "default":
             continue
         if service.type == ServiceType.static and service.command is None:
+            continue
+        if service.build is not None:
+            # uses build command, does not rely on images
             continue
         # at this point, it uses default and will execute something
         return True

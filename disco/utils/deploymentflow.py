@@ -5,7 +5,7 @@ import logging
 import os
 import random
 from dataclasses import dataclass
-from typing import Callable
+from typing import Awaitable, Callable
 
 from disco.models import Deployment
 from disco.models.db import Session
@@ -34,6 +34,10 @@ from disco.utils.filesystem import (
 from disco.utils.projects import get_project_by_id, volume_name_for_project
 
 log = logging.getLogger(__name__)
+
+
+class DiscoBuildException(Exception):
+    pass
 
 
 @dataclass
@@ -83,15 +87,14 @@ class DeploymentInfo:
 def process_deployment(deployment_id: str) -> None:
     from disco.utils.mq.tasks import enqueue_task_deprecated
 
-    def log_output(output: str) -> None:
+    async def log_output_async(output: str) -> None:
         log.info("Deployment %s: %s", deployment_id, output)
+        await commandoutputs.store_output(
+            commandoutputs.deployment_source(deployment_id), output
+        )
 
-        async def async_log_output():
-            await commandoutputs.store_output(
-                commandoutputs.deployment_source(deployment_id), output
-            )
-
-        asyncio.run(async_log_output())
+    def log_output(output: str) -> None:
+        asyncio.run(log_output_async(output))
 
     def log_output_terminate():
         async def async_log_output():
@@ -158,6 +161,7 @@ def process_deployment(deployment_id: str) -> None:
             prev_deployment_id=prev_deployment_id,
             recovery=False,
             log_output=log_output,
+            log_output_async=log_output_async,
         )
         log_output(f"Deployment complete {random.choice(['🪩', '🕺', '💃'])}\n")
         set_current_deployment_status("COMPLETE")
@@ -171,6 +175,7 @@ def process_deployment(deployment_id: str) -> None:
             prev_deployment_id=deployment_id,
             recovery=True,
             log_output=log_output,
+            log_output_async=log_output_async,
         )
     finally:
         log.info("Finished processing build %s", deployment_id)
@@ -192,6 +197,7 @@ def replace_deployment(
     prev_deployment_id: str | None,
     recovery: bool,
     log_output: Callable[[str], None],
+    log_output_async: Callable[[str], Awaitable[None]],
 ):
     log.info(
         "Starting replacement process of deployment %s with %s (recovery: %s)",
@@ -215,7 +221,11 @@ def replace_deployment(
                 new_deployment_info, log_output
             )
         assert new_deployment_info.disco_file is not None
-        images = build_images(new_deployment_info, log_output)
+        images = build_images(
+            new_deployment_info=new_deployment_info,
+            log_output=log_output,
+            log_output_async=log_output_async,
+        )
         if new_deployment_info.registry_host is not None:
             push_images(images, log_output)
         if "web" in new_deployment_info.disco_file.services:
@@ -397,6 +407,7 @@ def read_disco_file_for_deployment(
 def build_images(
     new_deployment_info: DeploymentInfo,
     log_output: Callable[[str], None],
+    log_output_async: Callable[[str], Awaitable[None]],
 ) -> list[str]:
     assert new_deployment_info.disco_file is not None
     images = []
@@ -408,6 +419,37 @@ def build_images(
         env_variables += [
             ("DISCO_COMMIT", new_deployment_info.commit_hash),
         ]
+    for service_name, service in new_deployment_info.disco_file.services.items():
+        if service.build is None:
+            continue
+        if service.image is None:
+            log_output(
+                "Cannot build image of service '%s', missing base 'image' attribute\n",
+                service_name,
+            )
+            raise DiscoBuildException(
+                "Discofile service contained 'build' without 'image'"
+            )
+        log_output(f"Building image for {service_name}\n")
+        internal_image_name = docker.internal_image_name(
+            registry_host=new_deployment_info.registry_host,
+            project_name=new_deployment_info.project_name,
+            deployment_number=new_deployment_info.number,
+            image_name=service_name,
+        )
+        images.append(internal_image_name)
+        dockerfile_str = docker.easy_mode_dockerfile(service)
+        asyncio.run(
+            docker.build_image(
+                image=internal_image_name,
+                project_name=new_deployment_info.project_name,
+                dockerfile_str=dockerfile_str,
+                context=".",
+                env_variables=env_variables,
+                stdout=log_output_async,
+                stderr=log_output_async,
+            )
+        )
     for image_name, image in new_deployment_info.disco_file.images.items():
         log_output(f"Building image {image_name}\n")
         internal_image_name = docker.internal_image_name(
@@ -417,13 +459,16 @@ def build_images(
             image_name=image_name,
         )
         images.append(internal_image_name)
-        docker.build_image(
-            image=internal_image_name,
-            project_name=new_deployment_info.project_name,
-            dockerfile=image.dockerfile,
-            context=image.context,
-            env_variables=env_variables,
-            log_output=log_output,
+        asyncio.run(
+            docker.build_image(
+                image=internal_image_name,
+                project_name=new_deployment_info.project_name,
+                dockerfile_path=image.dockerfile,
+                context=image.context,
+                env_variables=env_variables,
+                stdout=log_output_async,
+                stderr=log_output_async,
+            )
         )
     return images
 
