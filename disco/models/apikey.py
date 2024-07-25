@@ -12,6 +12,7 @@ if TYPE_CHECKING:
         ApiKeyInvite,
         ApiKeyUsage,
         CommandRun,
+        CorsOrigin,
         Deployment,
         ProjectEnvironmentVariable,
     )
@@ -45,6 +46,11 @@ class ApiKey(Base):
     created_api_key_invites: Mapped[list[ApiKeyInvite]] = relationship(
         "ApiKeyInvite",
         foreign_keys="ApiKeyInvite.by_api_key_id",
+        back_populates="by_api_key",
+    )
+    created_cors_origins: Mapped[list[CorsOrigin]] = relationship(
+        "CorsOrigin",
+        foreign_keys="CorsOrigin.by_api_key_id",
         back_populates="by_api_key",
     )
     from_invite: Mapped[ApiKeyInvite | None] = relationship(

@@ -8,6 +8,7 @@ from disco.endpoints import (
     apikeyinvites,
     apikeys,
     cgi,
+    corsorigins,
     deployments,
     envvariables,
     githubapps,
@@ -23,6 +24,7 @@ from disco.endpoints import (
     tunnels,
     volumes,
 )
+from disco.middleware import middleware
 from disco.utils.asyncworker import async_worker
 
 logging.basicConfig(level=logging.INFO)
@@ -42,7 +44,7 @@ async def lifespan(app: FastAPI):
     await worker_task
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan, middleware=middleware)
 
 app.include_router(meta.router)
 app.include_router(projects.router)
@@ -59,6 +61,7 @@ app.include_router(apikeys.router)
 app.include_router(apikeyinvites.router)
 app.include_router(syslog.router)
 app.include_router(tunnels.router)
+app.include_router(corsorigins.router)
 app.include_router(cgi.router)
 app.include_router(githubapps.router)
 
