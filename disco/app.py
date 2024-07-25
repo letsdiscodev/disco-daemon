@@ -23,6 +23,7 @@ from disco.endpoints import (
     tunnels,
     volumes,
 )
+from disco.middleware import middleware
 from disco.utils.asyncworker import async_worker
 
 logging.basicConfig(level=logging.INFO)
@@ -42,7 +43,7 @@ async def lifespan(app: FastAPI):
     await worker_task
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan, middleware=middleware)
 
 app.include_router(meta.router)
 app.include_router(projects.router)

@@ -6,6 +6,9 @@ from disco.models.apikeyusage import ApiKeyUsage  # noqa: F401
 from disco.models.commandrun import (
     CommandRun,  # noqa: F401
 )
+from disco.models.corsorigin import (
+    CorsOrigin,  # noqa: F401
+)
 from disco.models.deployment import Deployment  # noqa: F401
 from disco.models.deploymentenvironmentvariable import (
     DeploymentEnvironmentVariable,  # noqa: F401
