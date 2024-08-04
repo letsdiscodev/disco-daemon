@@ -42,7 +42,7 @@ class CorsOrigin(Base):
     by_api_key: Mapped[ApiKey] = relationship(
         "ApiKey",
         foreign_keys=by_api_key_id,
-        back_populates="created_api_key_invites",
+        back_populates="created_cors_origins",
     )
 
     def log(self):

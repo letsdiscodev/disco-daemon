@@ -8,6 +8,7 @@ from disco.endpoints import (
     apikeyinvites,
     apikeys,
     cgi,
+    corsorigins,
     deployments,
     envvariables,
     githubapps,
@@ -60,6 +61,7 @@ app.include_router(apikeys.router)
 app.include_router(apikeyinvites.router)
 app.include_router(syslog.router)
 app.include_router(tunnels.router)
+app.include_router(corsorigins.router)
 app.include_router(cgi.router)
 app.include_router(githubapps.router)
 
