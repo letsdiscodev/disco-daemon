@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
-from secrets import token_hex
 from typing import TYPE_CHECKING
 
 from sqlalchemy import ForeignKey, String, Unicode
@@ -16,7 +16,7 @@ class CorsOrigin(Base):
     __tablename__ = "cors_origins"
 
     id: Mapped[str] = mapped_column(
-        String(32), default=lambda: token_hex(16), primary_key=True
+        String(32), default=lambda: uuid.uuid4().hex, primary_key=True
     )
     created: Mapped[datetime] = mapped_column(
         DateTimeTzAware(),

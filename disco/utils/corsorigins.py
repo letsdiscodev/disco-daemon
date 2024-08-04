@@ -1,4 +1,5 @@
 import logging
+import uuid
 from typing import Sequence
 
 from sqlalchemy import select
@@ -18,15 +19,17 @@ async def allow_origin(
     cors_origin = await get_cors_origin(dbsession, origin)
     if cors_origin is None:
         cors_origin = CorsOrigin(
+            id=uuid.uuid4().hex,
             origin=origin,
             by_api_key=by_api_key,
         )
         dbsession.add(cors_origin)
         all_origins = await get_all_cors_origins(dbsession)
-        update_cors([o.origin for o in all_origins])
         log.info(
             "Added CORS origin to allowed origins in database %s", cors_origin.log()
         )
+        origins = set([o.origin for o in all_origins] + [cors_origin.origin])
+        update_cors(list(origins))
     else:
         log.info(
             "CORS origin already present in database, not adding %s", cors_origin.log()

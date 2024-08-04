@@ -26,7 +26,7 @@ middleware = [
 def update_cors(allowed_origins: list[str]) -> None:
     from disco.app import app
 
-    log.info("Updating CORS allowed origin in middleware")
+    log.info("Updating CORS allowed origin in middleware %s", allowed_origins)
     mw = app.middleware_stack
     while mw is not None:
         if isinstance(mw, CORSMiddleware):
