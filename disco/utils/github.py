@@ -12,8 +12,8 @@ from datetime import datetime, timedelta, timezone
 from secrets import token_hex
 from typing import Literal, Sequence
 
+import jwt
 import requests
-from jwt import JWT, jwk_from_pem
 from sqlalchemy import delete, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
@@ -291,14 +291,13 @@ def get_access_token_for_github_app_repo(full_name: str) -> str | None:
 
 
 def generate_jwt_token(app_id: int, pem: str) -> str:
-    signing_key = jwk_from_pem(pem.encode("utf-8"))
+    signing_key = pem.encode("utf-8")
     payload = {
         "iat": int(time.time()),
         "exp": int(time.time()) + 30,
         "iss": app_id,
     }
-    jwt_instance = JWT()
-    return jwt_instance.encode(payload, signing_key, alg="RS256")
+    return jwt.encode(payload, signing_key, algorithm="RS256")
 
 
 def create_pending_github_app(

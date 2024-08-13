@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timezone
 from secrets import token_hex
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
@@ -62,13 +63,28 @@ async def get_api_key_by_id(
     return await dbsession.get(ApiKey, api_key_id)
 
 
-def get_api_key_by_public_key(dbsession: DBSession, public_key: str) -> ApiKey | None:
-    return (
-        dbsession.query(ApiKey)
-        .filter(ApiKey.public_key == public_key)
-        .filter(ApiKey.deleted.is_(None))
-        .first()
+def get_api_key_by_public_key_sync(
+    dbsession: DBSession, public_key: str
+) -> ApiKey | None:
+    stmt = (
+        select(ApiKey)
+        .where(ApiKey.public_key == public_key)
+        .where(ApiKey.deleted.is_(None))
     )
+    result = dbsession.execute(stmt)
+    return result.scalars().first()
+
+
+async def get_api_key_by_public_key(
+    dbsession: AsyncDBSession, public_key: str
+) -> ApiKey | None:
+    stmt = (
+        select(ApiKey)
+        .where(ApiKey.public_key == public_key)
+        .where(ApiKey.deleted.is_(None))
+    )
+    result = await dbsession.execute(stmt)
+    return result.scalars().first()
 
 
 def delete_api_key(api_key: ApiKey, by_api_key: ApiKey) -> None:
