@@ -11,7 +11,7 @@ from disco.models import ApiKey
 from disco.utils.apikeys import (
     delete_api_key,
     get_all_api_keys,
-    get_api_key_by_public_key,
+    get_api_key_by_public_key_sync,
 )
 from disco.utils.encryption import obfuscate
 
@@ -24,7 +24,7 @@ def get_api_key_from_url(
     dbsession: Annotated[DBSession, Depends(get_sync_db)],
     public_key: Annotated[str, Path()],
 ):
-    api_key = get_api_key_by_public_key(dbsession, public_key)
+    api_key = get_api_key_by_public_key_sync(dbsession, public_key)
     if api_key is None:
         raise HTTPException(status_code=404)
     yield api_key

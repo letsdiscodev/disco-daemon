@@ -12,8 +12,8 @@ from datetime import datetime, timedelta, timezone
 from secrets import token_hex
 from typing import Literal, Sequence
 
-import requests
 import jwt
+import requests
 from sqlalchemy import delete, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
