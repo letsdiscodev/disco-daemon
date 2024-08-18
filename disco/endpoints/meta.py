@@ -22,11 +22,15 @@ router = APIRouter(dependencies=[Depends(get_api_key_sync)])
 
 
 @router.get("/api/disco/meta")
-def meta_get(dbsession: Annotated[DBSession, Depends(get_sync_db)]):
+def meta_get(
+    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
+):
     return {
         "version": disco.__version__,
         "discoHost": keyvalues.get_value_sync(dbsession, "DISCO_HOST"),
         "registryHost": keyvalues.get_value_sync(dbsession, "REGISTRY_HOST"),
+        "publicKey": api_key.public_key,
     }
 
 
