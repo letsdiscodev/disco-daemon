@@ -13,6 +13,7 @@ from sqlalchemy.orm.session import Session as DBSession
 
 from disco.endpoints.dependencies import get_db, get_sync_db
 from disco.models.db import AsyncSession
+from disco.utils import keyvalues
 from disco.utils.apikeys import (
     get_api_key_by_public_key,
     get_api_key_by_public_key_sync,
@@ -39,18 +40,26 @@ def get_api_key_sync(
     elif bearer_credentials is not None:
         bearer_jwt = bearer_credentials.credentials
         try:
-            unverified_jwt = jwt.decode(bearer_jwt, options={"verify_signature": False})
+            headers = jwt.get_unverified_header(bearer_jwt)
         except jwt.PyJWTError:
-            unverified_jwt = None
-        if unverified_jwt is not None:
-            public_key = unverified_jwt["kid"]
+            headers = None
+        if headers is not None:
+            public_key = headers["kid"]
             api_key_for_public_key = get_api_key_by_public_key_sync(
                 dbsession, public_key
             )
             if api_key_for_public_key is not None:
+                disco_host = keyvalues.get_value_str_sync(dbsession, "DISCO_HOST")
                 try:
                     jwt.decode(
-                        bearer_jwt, api_key_for_public_key.id, algorithms=["HS256"]
+                        bearer_jwt,
+                        api_key_for_public_key.id,
+                        algorithms=["HS256"],
+                        audience=disco_host,
+                        options=dict(
+                            verify_signature=True,
+                            verify_exp=True,
+                        ),
                     )
                     api_key_str = api_key_for_public_key.id
                 except jwt.PyJWTError:
@@ -77,18 +86,26 @@ async def get_api_key(
     elif bearer_credentials is not None:
         bearer_jwt = bearer_credentials.credentials
         try:
-            unverified_jwt = jwt.decode(bearer_jwt, options={"verify_signature": False})
+            headers = jwt.get_unverified_header(bearer_jwt)
         except jwt.PyJWTError:
-            unverified_jwt = None
-        if unverified_jwt is not None:
-            public_key = unverified_jwt["kid"]
+            headers = None
+        if headers is not None:
+            public_key = headers["kid"]
             api_key_for_public_key = await get_api_key_by_public_key(
                 dbsession, public_key
             )
             if api_key_for_public_key is not None:
+                disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
                 try:
                     jwt.decode(
-                        bearer_jwt, api_key_for_public_key.id, algorithms=["HS256"]
+                        bearer_jwt,
+                        api_key_for_public_key.id,
+                        algorithms=["HS256"],
+                        audience=disco_host,
+                        options=dict(
+                            verify_signature=True,
+                            verify_exp=True,
+                        ),
                     )
                     api_key_str = api_key_for_public_key.id
                 except jwt.PyJWTError:
@@ -116,20 +133,26 @@ async def get_api_key_wo_tx(
         elif bearer_credentials is not None:
             bearer_jwt = bearer_credentials.credentials
             try:
-                unverified_jwt = jwt.decode(
-                    bearer_jwt, options={"verify_signature": False}
-                )
+                headers = jwt.get_unverified_header(bearer_jwt)
             except jwt.PyJWTError:
-                unverified_jwt = None
-            if unverified_jwt is not None:
-                public_key = unverified_jwt["kid"]
+                headers = None
+            if headers is not None:
+                public_key = headers["kid"]
                 api_key_for_public_key = await get_api_key_by_public_key(
                     dbsession, public_key
                 )
                 if api_key_for_public_key is not None:
+                    disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
                     try:
                         jwt.decode(
-                            bearer_jwt, api_key_for_public_key.id, algorithms=["HS256"]
+                            bearer_jwt,
+                            api_key_for_public_key.id,
+                            algorithms=["HS256"],
+                            audience=disco_host,
+                            options=dict(
+                                verify_signature=True,
+                                verify_exp=True,
+                            ),
                         )
                         api_key_str = api_key_for_public_key.id
                     except jwt.PyJWTError:
