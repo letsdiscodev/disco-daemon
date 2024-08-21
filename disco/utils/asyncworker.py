@@ -41,6 +41,7 @@ class DiscoCron(Cron):
 async def cron_minute() -> None:
     from disco.utils.tunnels import stop_expired_tunnels
 
+    log.info("Disco minute cron")
     await stop_expired_tunnels()
 
 
