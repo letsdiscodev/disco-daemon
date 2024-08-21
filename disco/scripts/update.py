@@ -200,7 +200,7 @@ def task_0_16_x(image: str) -> None:
             set_caddy_config_cmd,
         ]
     )
-
+    alembic_upgrade("26877eda6774")
     with Session.begin() as dbsession:
         keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.17.0")
 
