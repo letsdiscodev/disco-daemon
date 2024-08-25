@@ -162,6 +162,7 @@ async def get_api_key_wo_tx(
         api_key = await get_valid_api_key_by_id(dbsession, api_key_str)
         if api_key is None:
             raise HTTPException(status_code=403)
+        api_key_id = api_key.id
         await record_api_key_usage(dbsession, api_key)
 
     yield api_key_id
