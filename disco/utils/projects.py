@@ -63,8 +63,14 @@ async def set_project_github_repo(
     )
 
 
-def get_project_by_id(dbsession: DBSession, project_id: str) -> Project | None:
+def get_project_by_id_sync(dbsession: DBSession, project_id: str) -> Project | None:
     return dbsession.query(Project).get(project_id)
+
+
+async def get_project_by_id(
+    dbsession: AsyncDBSession, project_id: str
+) -> Project | None:
+    return await dbsession.get(Project, project_id)
 
 
 def get_project_by_name_sync(dbsession: DBSession, name: str) -> Project | None:

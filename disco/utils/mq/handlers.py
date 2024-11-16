@@ -15,11 +15,11 @@ def process_deployment(task_body):
 def process_deployment_if_any(task_body):
     from disco.utils.deployments import get_oldest_queued_deployment
     from disco.utils.mq.tasks import enqueue_task_deprecated
-    from disco.utils.projects import get_project_by_id
+    from disco.utils.projects import get_project_by_id_sync
 
     project_id = task_body["project_id"]
     with Session.begin() as dbsession:
-        project = get_project_by_id(dbsession, project_id)
+        project = get_project_by_id_sync(dbsession, project_id)
         if project is None:
             log.warning(
                 "Project %s not found, not processing next deployment", project_id

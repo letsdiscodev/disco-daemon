@@ -5,9 +5,9 @@ import logging
 import os
 import random
 from dataclasses import dataclass
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Sequence
 
-from disco.models import Deployment
+from disco.models import Deployment, DeploymentEnvironmentVariable, ProjectDomain
 from disco.models.db import AsyncSession, Session
 from disco.utils import caddy, commandoutputs, docker, github, keyvalues
 from disco.utils.asyncworker import async_worker
@@ -31,7 +31,10 @@ from disco.utils.filesystem import (
     read_disco_file,
     static_site_deployment_path,
 )
-from disco.utils.projects import get_project_by_id, volume_name_for_project
+from disco.utils.projects import (
+    get_project_by_id,
+    volume_name_for_project,
+)
 
 log = logging.getLogger(__name__)
 
@@ -57,11 +60,14 @@ class DeploymentInfo:
     env_variables: list[tuple[str, str]]
 
     @staticmethod
-    def from_deployment(
+    async def from_deployment(
         deployment: Deployment,
         host_home: str,
         disco_host: str,
     ) -> DeploymentInfo:
+        env_variables: Sequence[
+            DeploymentEnvironmentVariable
+        ] = await deployment.awaitable_attrs.env_variables
         return DeploymentInfo(
             id=deployment.id,
             number=deployment.number,
@@ -78,8 +84,7 @@ class DeploymentInfo:
             if deployment.disco_file is not None
             else None,
             env_variables=[
-                (env_var.name, decrypt(env_var.value))
-                for env_var in deployment.env_variables
+                (env_var.name, decrypt(env_var.value)) for env_var in env_variables
             ],
         )
 
@@ -156,12 +161,13 @@ def process_deployment(deployment_id: str) -> None:
         set_current_deployment_status("FAILED")
         raise
     try:
-        replace_deployment(
-            new_deployment_id=deployment_id,
-            prev_deployment_id=prev_deployment_id,
-            recovery=False,
-            log_output=log_output_sync,
-            log_output_async=log_output,
+        asyncio.run(
+            replace_deployment(
+                new_deployment_id=deployment_id,
+                prev_deployment_id=prev_deployment_id,
+                recovery=False,
+                log_output=log_output,
+            )
         )
         log_output_sync(f"Deployment complete {random.choice(['🪩', '🕺', '💃'])}\n")
         set_current_deployment_status("COMPLETE")
@@ -170,12 +176,13 @@ def process_deployment(deployment_id: str) -> None:
         log.exception("Exception while deploying")
         log_output_sync("Deployment failed\n")
         log_output_sync("Restoring previous deployment\n")
-        replace_deployment(
-            new_deployment_id=prev_deployment_id,
-            prev_deployment_id=deployment_id,
-            recovery=True,
-            log_output=log_output_sync,
-            log_output_async=log_output,
+        asyncio.run(
+            replace_deployment(
+                new_deployment_id=prev_deployment_id,
+                prev_deployment_id=deployment_id,
+                recovery=True,
+                log_output=log_output,
+            )
         )
     finally:
         log.info("Finished processing build %s", deployment_id)
@@ -192,12 +199,11 @@ def process_deployment(deployment_id: str) -> None:
         )
 
 
-def replace_deployment(
+async def replace_deployment(
     new_deployment_id: str | None,
     prev_deployment_id: str | None,
     recovery: bool,
-    log_output: Callable[[str], None],
-    log_output_async: Callable[[str], Awaitable[None]],
+    log_output: Callable[[str], Awaitable[None]],
 ):
     log.info(
         "Starting replacement process of deployment %s with %s (recovery: %s)",
@@ -205,49 +211,45 @@ def replace_deployment(
         new_deployment_id,
         str(recovery),
     )
-    new_deployment_info, prev_deployment_info = get_deployment_info(
+    new_deployment_info, prev_deployment_info = await get_deployment_info(
         new_deployment_id, prev_deployment_id
     )
     if not recovery:
         assert new_deployment_info is not None
         if new_deployment_info.commit_hash is not None:
-            asyncio.run(checkout_commit(new_deployment_info, log_output_async))
+            await checkout_commit(new_deployment_info, log_output)
         elif new_deployment_info.github_repo_full_name is not None:
-            new_deployment_info.commit_hash = asyncio.run(
-                github.get_head_commit_hash(new_deployment_info.project_name)
+            new_deployment_info.commit_hash = await github.get_head_commit_hash(
+                new_deployment_info.project_name
             )
         if new_deployment_info.disco_file is None:
-            new_deployment_info.disco_file = asyncio.run(
-                read_disco_file_for_deployment(new_deployment_info, log_output_async)
+            new_deployment_info.disco_file = await read_disco_file_for_deployment(
+                new_deployment_info, log_output
             )
         assert new_deployment_info.disco_file is not None
-        images = asyncio.run(
-            build_images(
-                new_deployment_info=new_deployment_info,
-                log_output=log_output_async,
-            )
+        images = await build_images(
+            new_deployment_info=new_deployment_info,
+            log_output=log_output,
         )
         if new_deployment_info.registry_host is not None:
-            asyncio.run(push_images(images, log_output_async))
+            await push_images(images, log_output)
         if "web" in new_deployment_info.disco_file.services:
             if (
                 new_deployment_info.disco_file.services["web"].type
                 == ServiceType.static
             ):
-                asyncio.run(prepare_static_site(new_deployment_info, log_output_async))
+                await prepare_static_site(new_deployment_info, log_output)
             elif (
                 new_deployment_info.disco_file.services["web"].type
                 == ServiceType.generator
             ):
-                asyncio.run(
-                    prepare_generator_site(new_deployment_info, log_output_async)
-                )
+                await prepare_generator_site(new_deployment_info, log_output)
         if (
             "hook:deploy:start:before" in new_deployment_info.disco_file.services
             and new_deployment_info.disco_file.services["hook:deploy:start:before"].type
             == ServiceType.command
         ):
-            log_output("Runnning hook:deploy:start:before command\n")
+            await log_output("Runnning hook:deploy:start:before command\n")
             service_name = "hook:deploy:start:before"
             service = new_deployment_info.disco_file.services[service_name]
             image = docker.get_image_name_for_service(
@@ -274,7 +276,7 @@ def replace_deployment(
                 )
                 for v in new_deployment_info.disco_file.services[service_name].volumes
             ]
-            docker.run_sync(
+            await docker.run(
                 image=image,
                 project_name=new_deployment_info.project_name,
                 name=f"{new_deployment_info.project_name}-hook-deploy-start-before.{new_deployment_info.number}",
@@ -283,30 +285,28 @@ def replace_deployment(
                 networks=["disco-main"],
                 command=service.command,
                 timeout=service.timeout,
-                log_output=log_output,
+                stdout=log_output,
+                stderr=log_output,
             )
     if prev_deployment_info is not None:
         async_worker.pause_project_crons(prev_deployment_info.project_name)
     if new_deployment_info is not None:
         assert new_deployment_info.disco_file is not None
-        asyncio.run(create_networks(new_deployment_info, recovery))
-        asyncio.run(
-            stop_conflicting_port_services(
-                new_deployment_info, prev_deployment_info, recovery, log_output_async
-            )
+        await create_networks(new_deployment_info, recovery)
+        await stop_conflicting_port_services(
+            new_deployment_info, prev_deployment_info, recovery, log_output
         )
-        asyncio.run(start_services(new_deployment_info, recovery, log_output_async))
+        await start_services(new_deployment_info, recovery, log_output)
         if "web" in new_deployment_info.disco_file.services:
-            with Session.begin() as dbsession:
-                project = get_project_by_id(dbsession, new_deployment_info.project_id)
-                assert project is not None
-                has_domains = len(project.domains) > 0
-            if has_domains:
-                asyncio.run(
-                    serve_new_deployment(
-                        new_deployment_info, recovery, log_output_async
-                    )
+            async with AsyncSession.begin() as dbsession:
+                project = await get_project_by_id(
+                    dbsession, new_deployment_info.project_id
                 )
+                assert project is not None
+                domains: Sequence[ProjectDomain] = await project.awaitable_attrs.domains
+                has_domains = len(domains) > 0
+            if has_domains:
+                await serve_new_deployment(new_deployment_info, recovery, log_output)
         async_worker.reload_and_resume_project_crons(
             prev_project_name=prev_deployment_info.project_name
             if prev_deployment_info is not None
@@ -314,27 +314,25 @@ def replace_deployment(
             project_name=new_deployment_info.project_name,
             deployment_number=new_deployment_info.number,
         )
-    asyncio.run(
-        stop_prev_services(
-            new_deployment_info, prev_deployment_info, recovery, log_output_async
-        )
+    await stop_prev_services(
+        new_deployment_info, prev_deployment_info, recovery, log_output
     )
     if new_deployment_info is not None:
-        asyncio.run(remove_unused_networks(new_deployment_info))
+        await remove_unused_networks(new_deployment_info)
 
 
-def get_deployment_info(
+async def get_deployment_info(
     new_deployment_id: str | None, prev_deployment_id: str | None
 ) -> tuple[DeploymentInfo | None, DeploymentInfo | None]:
-    with Session.begin() as dbsession:
-        disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
-        host_home = keyvalues.get_value_sync(dbsession, "HOST_HOME")
+    async with AsyncSession.begin() as dbsession:
+        disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
+        host_home = await keyvalues.get_value(dbsession, "HOST_HOME")
         assert disco_host is not None
         assert host_home is not None
         if new_deployment_id is not None:
-            new_deployment = get_deployment_by_id_sync(dbsession, new_deployment_id)
+            new_deployment = await get_deployment_by_id(dbsession, new_deployment_id)
             if new_deployment is not None:
-                new_deployment_info = DeploymentInfo.from_deployment(
+                new_deployment_info = await DeploymentInfo.from_deployment(
                     deployment=new_deployment,
                     host_home=host_home,
                     disco_host=disco_host,
@@ -342,9 +340,9 @@ def get_deployment_info(
         else:
             new_deployment_info = None
         if prev_deployment_id is not None:
-            prev_deployment = get_deployment_by_id_sync(dbsession, prev_deployment_id)
+            prev_deployment = await get_deployment_by_id(dbsession, prev_deployment_id)
             assert prev_deployment is not None
-            prev_deployment_info = DeploymentInfo.from_deployment(
+            prev_deployment_info = await DeploymentInfo.from_deployment(
                 prev_deployment,
                 host_home=host_home,
                 disco_host=disco_host,
