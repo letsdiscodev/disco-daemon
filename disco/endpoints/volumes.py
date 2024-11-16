@@ -140,7 +140,7 @@ async def volume_set(
         internal_service_name = docker.service_name(
             project_name, service_name, deployment_number
         )
-        if not await docker.service_exists_async(internal_service_name):
+        if not await docker.service_exists(internal_service_name):
             log.info("Service %s not running, not trying to stop")
             continue
         log.info("Stopping %s", internal_service_name)
@@ -238,7 +238,7 @@ async def volume_set(
             deployment_number=deployment_number,
         )
         log.info("Starting %s", internal_service_name)
-        await docker.start_service_async(
+        await docker.start_service(
             image=image,
             name=internal_service_name,
             project_name=project_name,

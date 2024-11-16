@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from typing import Sequence
@@ -62,8 +63,14 @@ async def set_project_github_repo(
     )
 
 
-def get_project_by_id(dbsession: DBSession, project_id: str) -> Project | None:
+def get_project_by_id_sync(dbsession: DBSession, project_id: str) -> Project | None:
     return dbsession.query(Project).get(project_id)
+
+
+async def get_project_by_id(
+    dbsession: AsyncDBSession, project_id: str
+) -> Project | None:
+    return await dbsession.get(Project, project_id)
 
 
 def get_project_by_name_sync(dbsession: DBSession, name: str) -> Project | None:
@@ -95,15 +102,16 @@ async def get_project_by_domain(
     return result.scalars().first()
 
 
-def get_projects_by_github_app_repo(
-    dbsession: DBSession, full_name: str
+async def get_projects_by_github_app_repo(
+    dbsession: AsyncDBSession, full_name: str
 ) -> Sequence[Project]:
-    return (
-        dbsession.query(Project)
+    stmt = (
+        select(Project)
         .join(ProjectGithubRepo)
-        .filter(ProjectGithubRepo.full_name == full_name)
-        .all()
+        .where(ProjectGithubRepo.full_name == full_name)
     )
+    result = await dbsession.execute(stmt)
+    return result.scalars().all()
 
 
 def get_all_projects(dbsession: DBSession) -> list[Project]:
@@ -122,7 +130,7 @@ def delete_project(dbsession: DBSession, project: Project, by_api_key: ApiKey) -
     remove_project_static_deployments_if_any(project.name)
     for domain in project.domains:
         remove_domain_sync(dbsession=dbsession, domain=domain, by_api_key=by_api_key)
-    services = docker.list_services_for_project(project.name)
+    services = docker.list_services_for_project_sync(project.name)
     for service_name in services:
         try:
             docker.stop_service_sync(service_name)
@@ -130,15 +138,15 @@ def delete_project(dbsession: DBSession, project: Project, by_api_key: ApiKey) -
             log.info("Failed to stop service %s", service_name)
     containers = docker.list_containers_for_project(project.name)
     for container in containers:
-        docker.remove_container(container)
-    networks = docker.list_networks_for_project(project.name)
+        docker.remove_container_sync(container)
+    networks = asyncio.run(docker.list_networks_for_project(project.name))
     for network in networks:
         try:
             docker.remove_network_from_container("disco-caddy", network)
         except Exception:
             pass
         try:
-            docker.remove_network(network)
+            docker.remove_network_sync(network)
         except Exception:
             log.info("Failed to remove network %s", network)
     async_worker.remove_project_crons(project.name)

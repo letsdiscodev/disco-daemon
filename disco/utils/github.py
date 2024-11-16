@@ -24,6 +24,7 @@ from disco.models import (
     GithubAppInstallation,
     GithubAppRepo,
     PendingGithubApp,
+    ProjectGithubRepo,
 )
 from disco.models.db import AsyncSession, Session
 from disco.utils.filesystem import project_path, projects_root
@@ -35,67 +36,67 @@ class GithubException(Exception):
     pass
 
 
-def checkout_commit(project_name: str, commit_hash: str) -> None:
+async def checkout_commit(project_name: str, commit_hash: str) -> None:
     log.info(
         "Checking out commit from Github project %s: %s", project_name, commit_hash
     )
     args = ["git", "checkout", commit_hash]
-    process = subprocess.Popen(
-        args=args,
+    process = await asyncio.create_subprocess_exec(
+        *args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         cwd=project_path(project_name),
     )
     assert process.stdout is not None
-    for line in process.stdout:
+    async for line in process.stdout:
         line_text = line.decode("utf-8")
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
 
-    process.wait()
+    await process.wait()
     if process.returncode != 0:
         raise Exception(f"Git returned status {process.returncode}")
 
 
-def checkout_latest(project_name: str, branch: str | None) -> None:
+async def checkout_latest(project_name: str, branch: str | None) -> None:
     log.info("Checking out latest commit from Github project %s", project_name)
     if branch is None:
-        branch = main_or_master(project_name)
+        branch = await main_or_master(project_name)
     args = ["git", "checkout", f"origin/{branch}"]
-    process = subprocess.Popen(
-        args=args,
+    process = await asyncio.create_subprocess_exec(
+        *args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         cwd=project_path(project_name),
     )
     assert process.stdout is not None
-    for line in process.stdout:
+    async for line in process.stdout:
         line_text = line.decode("utf-8")
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
 
-    process.wait()
+    await process.wait()
     if process.returncode != 0:
         raise Exception(f"Git returned status {process.returncode}")
 
 
-def get_head_commit_hash(project_name: str) -> str:
+async def get_head_commit_hash(project_name: str) -> str:
     log.info("Getting head commit hash for %s", project_name)
     args = ["git", "rev-parse", "HEAD"]
-    process = subprocess.Popen(
-        args=args,
+    process = await asyncio.create_subprocess_exec(
+        *args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         cwd=project_path(project_name),
     )
     assert process.stdout is not None
-    for line in process.stdout:
+    async for line in process.stdout:
         decoded_line = line.decode("utf-8")
         hash = decoded_line.replace("\n", "")
 
-    process.wait()
+    await process.wait()
     if process.returncode != 0:
         raise Exception(f"Git returned status {process.returncode}")
 
@@ -104,7 +105,7 @@ def get_head_commit_hash(project_name: str) -> str:
     return hash
 
 
-def main_or_master(project_name: str) -> str:
+async def main_or_master(project_name: str) -> str:
     log.info("Finding if origin/master or origin/main exists in %s", project_name)
     args = [
         "git",
@@ -114,8 +115,8 @@ def main_or_master(project_name: str) -> str:
         "origin/master",
         "origin/main",
     ]
-    process = subprocess.Popen(
-        args=args,
+    process = await asyncio.create_subprocess_exec(
+        *args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         cwd=project_path(project_name),
@@ -123,12 +124,12 @@ def main_or_master(project_name: str) -> str:
     assert process.stdout is not None
     main_exists = False
     master_exists = False
-    for line in process.stdout:
+    async for line in process.stdout:
         if "origin/main" in line.decode("utf-8"):
             main_exists = True
         if "origin/master" in line.decode("utf-8"):
             master_exists = True
-    process.wait()
+    await process.wait()
     if process.returncode != 0:
         raise Exception(f"Git returned status {process.returncode}")
     if master_exists:
@@ -159,9 +160,9 @@ def remove_repo(project_name: str) -> None:
     shutil.rmtree(project_path(project_name))
 
 
-def fetch(project_name: str, repo_full_name: str) -> None:
+async def fetch(project_name: str, repo_full_name: str) -> None:
     log.info("Fetching from Github project %s", project_name)
-    access_token = get_access_token_for_github_app_repo(full_name=repo_full_name)
+    access_token = await get_access_token_for_github_app_repo(full_name=repo_full_name)
     if access_token is not None:
         log.info("Using access token to fetch repo %s", repo_full_name)
         url = f"https://x-access-token:{access_token}@github.com/{repo_full_name}"
@@ -169,45 +170,45 @@ def fetch(project_name: str, repo_full_name: str) -> None:
         log.info("Not using access token to fetch repo %s", repo_full_name)
         url = f"https://github.com/{repo_full_name}"
     args = ["git", "remote", "set-url", "origin", url]
-    process = subprocess.Popen(
-        args=args,
+    process = await asyncio.create_subprocess_exec(
+        *args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         cwd=project_path(project_name),
     )
     assert process.stdout is not None
-    for line in process.stdout:
+    async for line in process.stdout:
         line_text = line.decode("utf-8")
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
-    process.wait()
+    await process.wait()
     if process.returncode != 0:
         raise Exception(f"Git returned status {process.returncode}")
     args = ["git", "fetch", "origin"]
-    process = subprocess.Popen(
-        args=args,
+    process = await asyncio.create_subprocess_exec(
+        *args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         cwd=project_path(project_name),
     )
     assert process.stdout is not None
-    for line in process.stdout:
+    async for line in process.stdout:
         line_text = line.decode("utf-8")
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
-    process.wait()
+    await process.wait()
     if process.returncode != 0:
         raise GithubException(f"Git returned status {process.returncode}")
 
 
-def clone(
+async def clone(
     project_name: str,
     repo_full_name: str,
 ) -> None:
     log.info("Cloning from Github project %s (%s)", project_name, repo_full_name)
-    access_token = get_access_token_for_github_app_repo(full_name=repo_full_name)
+    access_token = await get_access_token_for_github_app_repo(full_name=repo_full_name)
     if access_token is not None:
         log.info("Using access token to clone repo %s", repo_full_name)
         url = f"https://x-access-token:{access_token}@github.com/{repo_full_name}"
@@ -215,45 +216,43 @@ def clone(
         log.info("Not using access token to clone repo %s", repo_full_name)
         url = f"https://github.com/{repo_full_name}"
     args = ["git", "clone", url, project_path(project_name)]
-    process = subprocess.Popen(
-        args=args,
+    process = await asyncio.create_subprocess_exec(
+        *args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         cwd=projects_root(),
     )
     assert process.stdout is not None
-    for line in process.stdout:
+    async for line in process.stdout:
         line_text = line.decode("utf-8")
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
 
-    process.wait()
+    await process.wait()
     if process.returncode != 0:
         raise GithubException(f"Git returned status {process.returncode}")
 
 
-def get_access_token_for_github_app_repo(full_name: str) -> str | None:
+async def get_access_token_for_github_app_repo(full_name: str) -> str | None:
     log.info("Getting Github access token for repo %s", full_name)
-    with Session.begin() as dbsession:
-        repos = get_repos_by_full_name_sync(dbsession, full_name)
+    async with AsyncSession.begin() as dbsession:
+        repos = await get_repos_by_full_name(dbsession, full_name)
         if len(repos) == 0:
             log.info("No Github app for repo %s, using anonymous access", full_name)
             return None
         repo_ids = [repo.id for repo in repos]
     for repo_id in repo_ids:
-        with Session.begin() as dbsession:
-            repo = get_repo_by_id_sync(dbsession, repo_id)
+        async with AsyncSession.begin() as dbsession:
+            repo = await get_repo_by_id(dbsession, repo_id)
             if repo is None:  # in case it's been removed since fetching above
                 continue
-            installation_id = repo.installation.id
+            installation_id = repo.installation_id
         try:
             log.info(
                 "Using Github installation %d for repo %s", installation_id, full_name
             )
-            access_token = asyncio.run(
-                get_access_token_for_installation_id(installation_id)
-            )
+            access_token = await get_access_token_for_installation_id(installation_id)
         except GithubException as ex:
             log.info(
                 "Failed to obtain Github access token for installation %d for repo %s: %s",
@@ -264,8 +263,8 @@ def get_access_token_for_github_app_repo(full_name: str) -> str | None:
             continue
         assert access_token is not None
         try:
-            repo_full_names = asyncio.run(
-                fetch_repository_list_for_github_app_installation(access_token)
+            repo_full_names = await fetch_repository_list_for_github_app_installation(
+                access_token
             )
         except GithubException as ex:
             log.info(
@@ -380,7 +379,7 @@ async def get_github_app_by_id(
     return await dbsession.get(GithubApp, app_id)
 
 
-def process_github_app_webhook(
+async def process_github_app_webhook(
     request_body_bytes: bytes,
     x_github_event: str | None,
     x_hub_signature_256: str | None,
@@ -409,8 +408,8 @@ def process_github_app_webhook(
         log.warning("X-GitHub-Hook-Installation-Target-ID not provided, skipping")
         return
 
-    with Session.begin() as dbsession:
-        github_app = get_github_app_by_id_sync(
+    async with AsyncSession.begin() as dbsession:
+        github_app = await get_github_app_by_id(
             dbsession, int(x_github_hook_installation_target_id)
         )
         if github_app is None:
@@ -432,35 +431,36 @@ def process_github_app_webhook(
     log.info("X-Hub-Signature-256 signature matched, continuing")
     log.info("Github event: %s", x_github_event)
     if x_github_event == "push":
-        from disco.utils.deployments import create_deployment_sync
+        from disco.utils.deploymentflow import enqueue_deployment
+        from disco.utils.deployments import create_deployment
         from disco.utils.github import get_commit_info_from_webhook_push
-        from disco.utils.mq.tasks import enqueue_task_deprecated
         from disco.utils.projects import get_projects_by_github_app_repo
 
         try:
             full_name = body["repository"]["full_name"]
             branch, commit_hash = get_commit_info_from_webhook_push(body_text)
             deployment_ids = []
-            with Session.begin() as dbsession:
-                projects = get_projects_by_github_app_repo(dbsession, full_name)
+            async with AsyncSession.begin() as dbsession:
+                projects = await get_projects_by_github_app_repo(dbsession, full_name)
                 for project in projects:
+                    github_repo: ProjectGithubRepo = (
+                        await project.awaitable_attrs.github_repo
+                    )
                     if (
-                        project.github_repo.branch is None
-                        and branch not in ["main", "master"]
+                        github_repo.branch is None and branch not in ["main", "master"]
                     ) or (
-                        project.github_repo.branch is not None
-                        and project.github_repo.branch != branch
+                        github_repo.branch is not None and github_repo.branch != branch
                     ):
                         log.info(
                             "Branch was %s, not deploying %s (tracking %s)",
                             branch,
                             project.log(),
-                            project.github_repo.branch
-                            if project.github_repo.branch is not None
+                            github_repo.branch
+                            if github_repo.branch is not None
                             else "master and main",
                         )
                         continue
-                    deployment = create_deployment_sync(
+                    deployment = await create_deployment(
                         dbsession=dbsession,
                         project=project,
                         commit_hash=commit_hash,
@@ -469,12 +469,7 @@ def process_github_app_webhook(
                     )
                     deployment_ids.append(deployment.id)
             for deployment_id in deployment_ids:
-                enqueue_task_deprecated(
-                    task_name="PROCESS_DEPLOYMENT",
-                    body=dict(
-                        deployment_id=deployment_id,
-                    ),
-                )
+                await enqueue_deployment(deployment_id)
         except KeyError:
             log.info("Not able to extract key info from Github webhook, skipping")
             return
@@ -486,23 +481,23 @@ def process_github_app_webhook(
         except KeyError:
             log.info("Not able to extract key info from Github webhook, skipping")
             return
-        with Session.begin() as dbsession:
-            github_app = get_github_app_by_id_sync(dbsession, app_id)
+        async with AsyncSession.begin() as dbsession:
+            github_app = await get_github_app_by_id(dbsession, app_id)
             if github_app is None:
                 log.warning("Couldn't find Github app %d", app_id)
                 return
-            installation = get_github_app_installation_by_id_sync(
+            installation = await get_github_app_installation_by_id(
                 dbsession, installation_id
             )
             if installation is None:
                 log.warning("Couldn't find Github app installation %d", installation_id)
                 return
             for repo in body["repositories_added"]:
-                add_repository_to_installation_sync(
+                await add_repository_to_installation(
                     dbsession, installation, repo["full_name"]
                 )
             for repo in body["repositories_removed"]:
-                remove_repository_from_installation_sync(
+                await remove_repository_from_installation(
                     dbsession, installation, repo["full_name"]
                 )
     elif x_github_event == "installation":
@@ -514,23 +509,23 @@ def process_github_app_webhook(
         except KeyError:
             log.info("Not able to extract key info from Github webhook, skipping")
             return
-        with Session.begin() as dbsession:
-            github_app = get_github_app_by_id_sync(dbsession, app_id)
+        async with AsyncSession.begin() as dbsession:
+            github_app = await get_github_app_by_id(dbsession, app_id)
             if github_app is None:
                 log.warning("Couldn't find Github app %d", app_id)
                 return
             if action == "created":
                 # app installed
-                installation = create_github_app_installation(
+                installation = await create_github_app_installation(
                     dbsession, github_app, installation_id
                 )
                 for repo in body["repositories"]:
-                    add_repository_to_installation_sync(
+                    await add_repository_to_installation(
                         dbsession, installation, repo["full_name"]
                     )
             elif action == "deleted":
                 # app uninstalled
-                installation = get_github_app_installation_by_id_sync(
+                installation = await get_github_app_installation_by_id(
                     dbsession, installation_id
                 )
                 if installation is None:
@@ -538,7 +533,7 @@ def process_github_app_webhook(
                         "Couldn't find Github app installation %d", installation_id
                     )
                     return
-                delete_github_app_installation_sync(dbsession, installation)
+                await delete_github_app_installation(dbsession, installation)
             else:
                 log.warning(
                     "Github App webhook action not handled %s, skipping", action
@@ -547,11 +542,11 @@ def process_github_app_webhook(
         log.warning("Github App webhook event not handled %s, skipping", x_github_event)
 
 
-def create_github_app_installation(
-    dbsession: DBSession, github_app: GithubApp, installation_id: int
+async def create_github_app_installation(
+    dbsession: AsyncDBSession, github_app: GithubApp, installation_id: int
 ) -> GithubAppInstallation:
     log.info("Creating Github app installation %d", installation_id)
-    installation = dbsession.get(GithubAppInstallation, installation_id)
+    installation = await dbsession.get(GithubAppInstallation, installation_id)
     if installation is not None:
         log.info("Github installation %d aleady existed", installation_id)
         return installation
@@ -726,6 +721,19 @@ def get_repos_by_full_name_sync(
         .order_by(desc(GithubAppInstallation.access_token_expires))
     )
     result = dbsession.execute(stmt)
+    return result.scalars().all()
+
+
+async def get_repos_by_full_name(
+    dbsession: AsyncDBSession, full_name: str
+) -> Sequence[GithubAppRepo]:
+    stmt = (
+        select(GithubAppRepo)
+        .join(GithubAppInstallation)
+        .where(GithubAppRepo.full_name == full_name)
+        .order_by(desc(GithubAppInstallation.access_token_expires))
+    )
+    result = await dbsession.execute(stmt)
     return result.scalars().all()
 
 

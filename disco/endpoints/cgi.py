@@ -165,11 +165,11 @@ async def request_cgi(
     resp_text = ""
     cgi_err = ""
 
-    def stdout(text: str) -> None:
+    async def stdout(text: str) -> None:
         nonlocal resp_text
         resp_text += text
 
-    def stderr(text: str) -> None:
+    async def stderr(text: str) -> None:
         nonlocal cgi_err
         cgi_err += text
 

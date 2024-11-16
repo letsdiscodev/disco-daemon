@@ -187,6 +187,12 @@ class ProjectCron(Cron):
         self.schedule = schedule
 
     async def run(self) -> None:
+        async def log_stdout(stdout: str) -> None:
+            log.info("Output (stdout): %s", stdout.replace("\n", ""))
+
+        async def log_stderr(stderr: str) -> None:
+            log.info("Output (stderr): %s", stderr.replace("\n", ""))
+
         await docker.run(
             image=self.image,
             project_name=self.project_name,
@@ -196,8 +202,8 @@ class ProjectCron(Cron):
             networks=self.networks,
             command=self.command,
             timeout=300,
-            stdout=lambda x: log.info("Output (stdout): %s", x.replace("\n", "")),
-            stderr=lambda x: log.info("Output (stderr): %s", x.replace("\n", "")),
+            stdout=log_stdout,
+            stderr=log_stderr,
         )
 
     def schedule_next(self) -> None:
@@ -256,7 +262,7 @@ class AsyncWorker:
     def reload_and_resume_project_crons(
         self, prev_project_name: str | None, project_name: str, deployment_number: int
     ) -> None:
-        from disco.utils.deployments import get_deployment_by_number
+        from disco.utils.deployments import get_deployment_by_number_sync
         from disco.utils.projects import get_project_by_name_sync
 
         with Session.begin() as dbsession:
@@ -264,7 +270,9 @@ class AsyncWorker:
             assert disco_host is not None
             project = get_project_by_name_sync(dbsession, project_name)
             assert project is not None
-            deployment = get_deployment_by_number(dbsession, project, deployment_number)
+            deployment = get_deployment_by_number_sync(
+                dbsession, project, deployment_number
+            )
             assert deployment is not None
             disco_file = get_disco_file_from_str(deployment.disco_file)
             existing_crons = set()
@@ -454,3 +462,8 @@ class AsyncWorker:
 
 
 async_worker = AsyncWorker()
+
+
+async def enqueue(async_callable: Callable[[], Awaitable[None]]):
+    queue_task = QueueTask(run=async_callable)
+    await async_worker.queue.put(queue_task)

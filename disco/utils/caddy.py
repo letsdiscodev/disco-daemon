@@ -227,10 +227,14 @@ async def remove_apex_www_redirects(domain_id: str) -> None:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
 
-def get_served_service_for_project(project_name: str) -> str | None:
+async def get_served_service_for_project(project_name: str) -> str | None:
     url = f"{BASE_URL}/id/disco-project-handler-{project_name}/upstreams/0/dial"
     session = _get_session()
-    response = session.get(url, headers=HEADERS, timeout=10)
+
+    def query() -> requests.Response:
+        return session.get(url, headers=HEADERS, timeout=10)
+
+    response = await asyncio.get_event_loop().run_in_executor(None, query)
     if response.status_code != 200:
         return None
     try:

@@ -13,6 +13,7 @@ from disco.auth import get_api_key, get_api_key_sync
 from disco.endpoints.dependencies import get_db, get_project_from_url_sync, get_sync_db
 from disco.endpoints.envvariables import EnvVariable
 from disco.models import ApiKey, Project
+from disco.utils.deploymentflow import enqueue_deployment
 from disco.utils.deployments import (
     create_deployment,
     get_live_deployment_sync,
@@ -29,7 +30,6 @@ from disco.utils.filesystem import (
     get_caddy_key_meta,
 )
 from disco.utils.github import get_all_repos, repo_is_public
-from disco.utils.mq.tasks import enqueue_task_deprecated
 from disco.utils.projectdomains import add_domain
 from disco.utils.projects import (
     create_project,
@@ -70,15 +70,6 @@ class NewProjectRequestBody(BaseModel):
     generate_suffix: bool = Field(False, alias="generateSuffix")
     commit: str = "_DEPLOY_LATEST_"
     deployment_number: int | None = Field(None, alias="deploymentNumber")
-
-
-def process_deployment(deployment_id: str) -> None:
-    enqueue_task_deprecated(
-        task_name="PROCESS_DEPLOYMENT",
-        body=dict(
-            deployment_id=deployment_id,
-        ),
-    )
 
 
 async def validate_create_project(
@@ -201,7 +192,7 @@ async def projects_post(
             number=req_body.deployment_number,
             by_api_key=api_key,
         )
-        background_tasks.add_task(process_deployment, deployment.id)
+        background_tasks.add_task(enqueue_deployment, deployment.id)
     else:
         deployment = None
     return {

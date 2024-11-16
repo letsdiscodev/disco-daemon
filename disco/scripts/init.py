@@ -61,8 +61,8 @@ def main() -> None:
     docker_swarm_init(disco_advertise_addr)
     node_id = get_this_swarm_node_id()
     label_swarm_node(node_id, "disco-role=main")
-    docker.create_network("disco-main")
-    docker.create_network("disco-logging")
+    docker.create_network_sync("disco-main")
+    docker.create_network_sync("disco-logging")
     docker_swarm_create_disco_encryption_key()
     print("Setting up Caddy web server")
     write_caddy_init_config(disco_host, tunnel=cloudflare_tunnel_token is not None)
@@ -227,7 +227,7 @@ def create_docker_config(host_home: str) -> None:
 
 
 def setup_cloudflare_tunnel(cloudflare_tunnel_token: str) -> None:
-    docker.create_network("disco-cloudflare-tunnel")
+    docker.create_network_sync("disco-cloudflare-tunnel")
     docker.add_network_to_container(
         "disco-caddy", "disco-cloudflare-tunnel", alias="disco-server"
     )

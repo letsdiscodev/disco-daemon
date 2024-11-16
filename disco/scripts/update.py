@@ -255,7 +255,7 @@ def task_0_11_x(image: str) -> None:
 
     print("Upating from 0.11.x to 0.12.x")
     alembic_upgrade("b570b8c2424d")
-    docker.create_network("disco-main")
+    docker.create_network_sync("disco-main")
     services_output = _run_cmd(
         [
             "docker",
@@ -300,7 +300,7 @@ def task_0_11_x(image: str) -> None:
             log.info("Couldn't remove network %s from disco-caddy", network)
     docker.add_network_to_container("disco-caddy", "disco-main")
     docker.remove_network_from_container("disco-caddy", "disco-caddy-daemon")
-    docker.remove_network("disco-caddy-daemon")
+    docker.remove_network_sync("disco-caddy-daemon")
     with Session.begin() as dbsession:
         keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.12.0")
 

@@ -1,6 +1,9 @@
+import asyncio
 import logging
 import os
 import shutil
+
+import aiofiles.os
 
 log = logging.getLogger(__name__)
 
@@ -17,18 +20,18 @@ def project_path_on_host(host_home: str, project_name: str) -> str:
     return f"{host_home}{project_path(project_name)}"
 
 
-def project_folder_exists(project_name: str):
-    return os.path.isdir(project_path(project_name))
+async def project_folder_exists(project_name: str):
+    return await aiofiles.os.path.isdir(project_path(project_name))
 
 
-def read_disco_file(project_name: str) -> str | None:
+async def read_disco_file(project_name: str) -> str | None:
     path = f"{project_path(project_name)}/disco.json"
     log.info("Reading disco file %s", path)
-    if not os.path.isfile(path):
+    if not await aiofiles.os.path.isfile(path):
         log.info("Disco file does not exist, not reading %s", path)
         return None
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
+    async with aiofiles.open(path, "r", encoding="utf-8") as f:
+        return await f.read()
 
 
 def static_sites_root() -> str:
@@ -50,11 +53,21 @@ def static_site_deployment_path_host_machine(
     return f"{host_home}{path}"
 
 
-def create_static_site_deployment_directory(
+def create_static_site_deployment_directory_sync(
     host_home: str, project_name: str, deployment_number: int
 ) -> str:
     path = static_site_deployment_path(project_name, deployment_number)
     os.makedirs(path)
+    return static_site_deployment_path_host_machine(
+        host_home, project_name, deployment_number
+    )
+
+
+async def create_static_site_deployment_directory(
+    host_home: str, project_name: str, deployment_number: int
+) -> str:
+    path = static_site_deployment_path(project_name, deployment_number)
+    await aiofiles.os.makedirs(path)
     return static_site_deployment_path_host_machine(
         host_home, project_name, deployment_number
     )
@@ -74,12 +87,17 @@ def static_site_src_public_path(project_name: str, public_path: str) -> str:
     return path
 
 
-def copy_static_site_src_to_deployment_folder(
+async def copy_static_site_src_to_deployment_folder(
     project_name: str, public_path: str, deployment_number: int
 ) -> None:
     src_path = static_site_src_public_path(project_name, public_path)
     dst_path = static_site_deployment_path(project_name, deployment_number)
-    shutil.copytree(src_path, dst_path)
+
+    def copytree_sync():
+        shutil.copytree(src_path, dst_path)
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, copytree_sync)
 
 
 def _certificate_directory(domain: str) -> str:
