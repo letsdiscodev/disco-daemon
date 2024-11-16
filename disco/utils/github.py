@@ -35,67 +35,67 @@ class GithubException(Exception):
     pass
 
 
-def checkout_commit(project_name: str, commit_hash: str) -> None:
+async def checkout_commit(project_name: str, commit_hash: str) -> None:
     log.info(
         "Checking out commit from Github project %s: %s", project_name, commit_hash
     )
     args = ["git", "checkout", commit_hash]
-    process = subprocess.Popen(
-        args=args,
+    process = await asyncio.create_subprocess_exec(
+        *args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         cwd=project_path(project_name),
     )
     assert process.stdout is not None
-    for line in process.stdout:
+    async for line in process.stdout:
         line_text = line.decode("utf-8")
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
 
-    process.wait()
+    await process.wait()
     if process.returncode != 0:
         raise Exception(f"Git returned status {process.returncode}")
 
 
-def checkout_latest(project_name: str, branch: str | None) -> None:
+async def checkout_latest(project_name: str, branch: str | None) -> None:
     log.info("Checking out latest commit from Github project %s", project_name)
     if branch is None:
-        branch = main_or_master(project_name)
+        branch = await main_or_master(project_name)
     args = ["git", "checkout", f"origin/{branch}"]
-    process = subprocess.Popen(
-        args=args,
+    process = await asyncio.create_subprocess_exec(
+        *args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         cwd=project_path(project_name),
     )
     assert process.stdout is not None
-    for line in process.stdout:
+    async for line in process.stdout:
         line_text = line.decode("utf-8")
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
 
-    process.wait()
+    await process.wait()
     if process.returncode != 0:
         raise Exception(f"Git returned status {process.returncode}")
 
 
-def get_head_commit_hash(project_name: str) -> str:
+async def get_head_commit_hash(project_name: str) -> str:
     log.info("Getting head commit hash for %s", project_name)
     args = ["git", "rev-parse", "HEAD"]
-    process = subprocess.Popen(
-        args=args,
+    process = await asyncio.create_subprocess_exec(
+        *args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         cwd=project_path(project_name),
     )
     assert process.stdout is not None
-    for line in process.stdout:
+    async for line in process.stdout:
         decoded_line = line.decode("utf-8")
         hash = decoded_line.replace("\n", "")
 
-    process.wait()
+    await process.wait()
     if process.returncode != 0:
         raise Exception(f"Git returned status {process.returncode}")
 
@@ -104,7 +104,7 @@ def get_head_commit_hash(project_name: str) -> str:
     return hash
 
 
-def main_or_master(project_name: str) -> str:
+async def main_or_master(project_name: str) -> str:
     log.info("Finding if origin/master or origin/main exists in %s", project_name)
     args = [
         "git",
@@ -114,8 +114,8 @@ def main_or_master(project_name: str) -> str:
         "origin/master",
         "origin/main",
     ]
-    process = subprocess.Popen(
-        args=args,
+    process = await asyncio.create_subprocess_exec(
+        *args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         cwd=project_path(project_name),
@@ -123,12 +123,12 @@ def main_or_master(project_name: str) -> str:
     assert process.stdout is not None
     main_exists = False
     master_exists = False
-    for line in process.stdout:
+    async for line in process.stdout:
         if "origin/main" in line.decode("utf-8"):
             main_exists = True
         if "origin/master" in line.decode("utf-8"):
             master_exists = True
-    process.wait()
+    await process.wait()
     if process.returncode != 0:
         raise Exception(f"Git returned status {process.returncode}")
     if master_exists:
@@ -159,7 +159,7 @@ def remove_repo(project_name: str) -> None:
     shutil.rmtree(project_path(project_name))
 
 
-def fetch(project_name: str, repo_full_name: str) -> None:
+async def fetch(project_name: str, repo_full_name: str) -> None:
     log.info("Fetching from Github project %s", project_name)
     access_token = get_access_token_for_github_app_repo(full_name=repo_full_name)
     if access_token is not None:
@@ -169,45 +169,45 @@ def fetch(project_name: str, repo_full_name: str) -> None:
         log.info("Not using access token to fetch repo %s", repo_full_name)
         url = f"https://github.com/{repo_full_name}"
     args = ["git", "remote", "set-url", "origin", url]
-    process = subprocess.Popen(
-        args=args,
+    process = await asyncio.create_subprocess_exec(
+        *args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         cwd=project_path(project_name),
     )
     assert process.stdout is not None
-    for line in process.stdout:
+    async for line in process.stdout:
         line_text = line.decode("utf-8")
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
-    process.wait()
+    await process.wait()
     if process.returncode != 0:
         raise Exception(f"Git returned status {process.returncode}")
     args = ["git", "fetch", "origin"]
-    process = subprocess.Popen(
-        args=args,
+    process = await asyncio.create_subprocess_exec(
+        *args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         cwd=project_path(project_name),
     )
     assert process.stdout is not None
-    for line in process.stdout:
+    async for line in process.stdout:
         line_text = line.decode("utf-8")
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
-    process.wait()
+    await process.wait()
     if process.returncode != 0:
         raise GithubException(f"Git returned status {process.returncode}")
 
 
-def clone(
+async def clone(
     project_name: str,
     repo_full_name: str,
 ) -> None:
     log.info("Cloning from Github project %s (%s)", project_name, repo_full_name)
-    access_token = get_access_token_for_github_app_repo(full_name=repo_full_name)
+    access_token = await get_access_token_for_github_app_repo(full_name=repo_full_name)
     if access_token is not None:
         log.info("Using access token to clone repo %s", repo_full_name)
         url = f"https://x-access-token:{access_token}@github.com/{repo_full_name}"
@@ -215,45 +215,43 @@ def clone(
         log.info("Not using access token to clone repo %s", repo_full_name)
         url = f"https://github.com/{repo_full_name}"
     args = ["git", "clone", url, project_path(project_name)]
-    process = subprocess.Popen(
-        args=args,
+    process = await asyncio.create_subprocess_exec(
+        *args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         cwd=projects_root(),
     )
     assert process.stdout is not None
-    for line in process.stdout:
+    async for line in process.stdout:
         line_text = line.decode("utf-8")
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
 
-    process.wait()
+    await process.wait()
     if process.returncode != 0:
         raise GithubException(f"Git returned status {process.returncode}")
 
 
-def get_access_token_for_github_app_repo(full_name: str) -> str | None:
+async def get_access_token_for_github_app_repo(full_name: str) -> str | None:
     log.info("Getting Github access token for repo %s", full_name)
-    with Session.begin() as dbsession:
-        repos = get_repos_by_full_name_sync(dbsession, full_name)
+    async with AsyncSession.begin() as dbsession:
+        repos = await get_repos_by_full_name(dbsession, full_name)
         if len(repos) == 0:
             log.info("No Github app for repo %s, using anonymous access", full_name)
             return None
         repo_ids = [repo.id for repo in repos]
     for repo_id in repo_ids:
-        with Session.begin() as dbsession:
-            repo = get_repo_by_id_sync(dbsession, repo_id)
+        async with AsyncSession.begin() as dbsession:
+            repo = await get_repo_by_id(dbsession, repo_id)
             if repo is None:  # in case it's been removed since fetching above
                 continue
-            installation_id = repo.installation.id
+            installation_id = repo.installation_id
         try:
             log.info(
                 "Using Github installation %d for repo %s", installation_id, full_name
             )
-            access_token = asyncio.run(
-                get_access_token_for_installation_id(installation_id)
-            )
+            access_token = await get_access_token_for_installation_id(installation_id)
         except GithubException as ex:
             log.info(
                 "Failed to obtain Github access token for installation %d for repo %s: %s",
@@ -264,8 +262,8 @@ def get_access_token_for_github_app_repo(full_name: str) -> str | None:
             continue
         assert access_token is not None
         try:
-            repo_full_names = asyncio.run(
-                fetch_repository_list_for_github_app_installation(access_token)
+            repo_full_names = await fetch_repository_list_for_github_app_installation(
+                access_token
             )
         except GithubException as ex:
             log.info(
@@ -726,6 +724,19 @@ def get_repos_by_full_name_sync(
         .order_by(desc(GithubAppInstallation.access_token_expires))
     )
     result = dbsession.execute(stmt)
+    return result.scalars().all()
+
+
+async def get_repos_by_full_name(
+    dbsession: AsyncDBSession, full_name: str
+) -> Sequence[GithubAppRepo]:
+    stmt = (
+        select(GithubAppRepo)
+        .join(GithubAppInstallation)
+        .where(GithubAppRepo.full_name == full_name)
+        .order_by(desc(GithubAppInstallation.access_token_expires))
+    )
+    result = await dbsession.execute(stmt)
     return result.scalars().all()
 
 

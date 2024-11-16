@@ -180,8 +180,16 @@ def get_next_deployment_number_sync(dbsession: DBSession, project: Project) -> i
     return number + 1
 
 
-def get_deployment_by_id(dbsession: DBSession, deployment_id: str) -> Deployment | None:
+def get_deployment_by_id_sync(
+    dbsession: DBSession, deployment_id: str
+) -> Deployment | None:
     return dbsession.query(Deployment).get(deployment_id)
+
+
+async def get_deployment_by_id(
+    dbsession: AsyncDBSession, deployment_id: str
+) -> Deployment | None:
+    return await dbsession.get(Deployment, deployment_id)
 
 
 def get_deployment_by_number(

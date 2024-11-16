@@ -35,7 +35,7 @@ class GithubAppRepo(Base):
         onupdate=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
-    installation_id: Mapped[str] = mapped_column(
+    installation_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("github_app_installations.id"),
         nullable=False,
