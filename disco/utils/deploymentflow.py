@@ -1,23 +1,28 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import random
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Sequence
 
-from disco.models import Deployment, DeploymentEnvironmentVariable, ProjectDomain
-from disco.models.db import AsyncSession, Session
+from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
+
+from disco.models import (
+    Deployment,
+    DeploymentEnvironmentVariable,
+    Project,
+    ProjectDomain,
+)
+from disco.models.db import AsyncSession
 from disco.utils import caddy, commandoutputs, docker, github, keyvalues
-from disco.utils.asyncworker import async_worker
+from disco.utils.asyncworker import async_worker, enqueue
 from disco.utils.deployments import (
     DEPLOYMENT_STATUS,
     get_deployment_by_id,
-    get_deployment_by_id_sync,
     get_deployment_in_progress,
     get_last_deployment,
-    get_live_deployment_sync,
+    get_live_deployment,
     set_deployment_commit_hash,
     set_deployment_disco_file,
     set_deployment_status,
@@ -89,114 +94,116 @@ class DeploymentInfo:
         )
 
 
-def process_deployment(deployment_id: str) -> None:
-    from disco.utils.mq.tasks import enqueue_task_deprecated
+async def enqueue_deployment(deployment_id) -> None:
+    async def task() -> None:
+        await process_deployment(deployment_id)
 
+    await enqueue(task)
+
+
+async def process_deployment_if_any(dbsession: AsyncDBSession, project_id: str) -> None:
+    from disco.utils.deployments import get_oldest_queued_deployment
+    from disco.utils.projects import get_project_by_id
+
+    project = await get_project_by_id(dbsession, project_id)
+    if project is None:
+        log.warning("Project %s not found, not processing next deployment", project_id)
+        return
+    deployment = await get_oldest_queued_deployment(dbsession, project)
+    if deployment is None or deployment.status != "QUEUED":
+        log.info(
+            "No more queued deployments for project %s, done for now.",
+            project.log(),
+        )
+        return
+    await enqueue_deployment(deployment.id)
+
+
+async def process_deployment(deployment_id: str) -> None:
     async def log_output(output: str) -> None:
         log.info("Deployment %s: %s", deployment_id, output)
         await commandoutputs.store_output(
             commandoutputs.deployment_source(deployment_id), output
         )
 
-    def log_output_sync(output: str) -> None:
-        asyncio.run(log_output(output))
+    async def log_output_terminate():
+        await commandoutputs.terminate(commandoutputs.deployment_source(deployment_id))
 
-    def log_output_terminate():
-        async def async_log_output():
-            await commandoutputs.terminate(
-                commandoutputs.deployment_source(deployment_id)
-            )
-
-        asyncio.run(async_log_output())
-
-    def set_current_deployment_status(status: DEPLOYMENT_STATUS) -> None:
-        with Session.begin() as dbsession:
-            deployment = get_deployment_by_id_sync(dbsession, deployment_id)
+    async def set_current_deployment_status(status: DEPLOYMENT_STATUS) -> None:
+        async with AsyncSession.begin() as dbsession:
+            deployment = await get_deployment_by_id(dbsession, deployment_id)
             assert deployment is not None
             set_deployment_status(deployment, status)
 
-    with Session.begin() as dbsession:
-        deployment = get_deployment_by_id_sync(dbsession, deployment_id)
+    async with AsyncSession.begin() as dbsession:
+        deployment = await get_deployment_by_id(dbsession, deployment_id)
         assert deployment is not None
-        deployment_in_progress = get_deployment_in_progress(
-            dbsession, deployment.project
-        )
+        project: Project = await deployment.awaitable_attrs.project
+        deployment_in_progress = await get_deployment_in_progress(dbsession, project)
         if deployment_in_progress is not None:
-            log_output_sync(
+            await log_output(
                 f"Deployment {deployment_in_progress.number} in progress, "
                 "waiting for build to complete "
                 f"before processing deployment {deployment.number}.\n"
             )
             return
-        last_deployment = get_last_deployment(dbsession, deployment.project)
+        last_deployment = await get_last_deployment(dbsession, project)
         if last_deployment is not None and last_deployment.id != deployment_id:
-            log_output_sync(
+            await log_output(
                 f"Deployment {last_deployment.number} is latest, "
                 f"skipping deployment {deployment.number}.\n"
             )
-            set_current_deployment_status("SKIPPED")
-            log_output_terminate()
-            enqueue_task_deprecated(
-                task_name="PROCESS_DEPLOYMENT_IF_ANY",
-                body={
-                    "project_id": deployment.project_id,
-                },
-            )
+            await set_current_deployment_status("SKIPPED")
+            await log_output_terminate()
+            await process_deployment_if_any(dbsession, deployment.project_id)
             return
 
-    set_current_deployment_status("IN_PROGRESS")
-    log_output_sync("Starting deployment\n")
+    await set_current_deployment_status("IN_PROGRESS")
+    await log_output("Starting deployment\n")
     try:
-        with Session.begin() as dbsession:
+        async with AsyncSession.begin() as dbsession:
             log.info("Getting data from database for deployment %s", deployment_id)
-            deployment = get_deployment_by_id_sync(dbsession, deployment_id)
+            deployment = await get_deployment_by_id(dbsession, deployment_id)
             assert deployment is not None
-            prev_deployment = get_live_deployment_sync(dbsession, deployment.project)
+            project = await deployment.awaitable_attrs.project
+            prev_deployment = await get_live_deployment(dbsession, project)
             prev_deployment_id = (
                 prev_deployment.id if prev_deployment is not None else None
             )
     except Exception:
         log.exception("Deployment %s failed", deployment_id)
-        log_output_sync("Deployment failed\n")
-        set_current_deployment_status("FAILED")
+        await log_output("Deployment failed\n")
+        await set_current_deployment_status("FAILED")
         raise
     try:
-        asyncio.run(
-            replace_deployment(
-                new_deployment_id=deployment_id,
-                prev_deployment_id=prev_deployment_id,
-                recovery=False,
-                log_output=log_output,
-            )
+        await replace_deployment(
+            new_deployment_id=deployment_id,
+            prev_deployment_id=prev_deployment_id,
+            recovery=False,
+            log_output=log_output,
         )
-        log_output_sync(f"Deployment complete {random.choice(['🪩', '🕺', '💃'])}\n")
-        set_current_deployment_status("COMPLETE")
+
+        await log_output(f"Deployment complete {random.choice(['🪩', '🕺', '💃'])}\n")
+        await set_current_deployment_status("COMPLETE")
     except Exception:
-        set_current_deployment_status("FAILED")
+        await set_current_deployment_status("FAILED")
         log.exception("Exception while deploying")
-        log_output_sync("Deployment failed\n")
-        log_output_sync("Restoring previous deployment\n")
-        asyncio.run(
-            replace_deployment(
-                new_deployment_id=prev_deployment_id,
-                prev_deployment_id=deployment_id,
-                recovery=True,
-                log_output=log_output,
-            )
+        await log_output("Deployment failed\n")
+        await log_output("Restoring previous deployment\n")
+        await replace_deployment(
+            new_deployment_id=prev_deployment_id,
+            prev_deployment_id=deployment_id,
+            recovery=True,
+            log_output=log_output,
         )
     finally:
         log.info("Finished processing build %s", deployment_id)
-        log_output_terminate()
+        await log_output_terminate()
 
-    with Session.begin() as dbsession:
-        deployment = get_deployment_by_id_sync(dbsession, deployment_id)
+    async with AsyncSession.begin() as dbsession:
+        deployment = await get_deployment_by_id(dbsession, deployment_id)
         assert deployment is not None
-        enqueue_task_deprecated(
-            task_name="PROCESS_DEPLOYMENT_IF_ANY",
-            body={
-                "project_id": deployment.project_id,
-            },
-        )
+        await process_deployment_if_any(dbsession, deployment.project_id)
 
 
 async def replace_deployment(

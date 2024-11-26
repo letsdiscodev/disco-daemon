@@ -8,6 +8,7 @@ from sqlalchemy.orm.session import Session as DBSession
 from disco.auth import get_api_key_sync
 from disco.endpoints.dependencies import get_project_from_url_sync, get_sync_db
 from disco.models import ApiKey, Project, ProjectEnvironmentVariable
+from disco.utils.deploymentflow import enqueue_deployment, process_deployment
 from disco.utils.encryption import decrypt
 from disco.utils.envvariables import (
     delete_env_variable,
@@ -15,20 +16,10 @@ from disco.utils.envvariables import (
     get_env_variables_for_project,
     set_env_variables_sync,
 )
-from disco.utils.mq.tasks import enqueue_task_deprecated
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(get_api_key_sync)])
-
-
-def process_deployment(deployment_id: str) -> None:
-    enqueue_task_deprecated(
-        task_name="PROCESS_DEPLOYMENT",
-        body=dict(
-            deployment_id=deployment_id,
-        ),
-    )
 
 
 @router.get("/api/projects/{project_name}/env")
@@ -74,7 +65,7 @@ def env_variables_post(
         by_api_key=api_key,
     )
     if deployment is not None:
-        background_tasks.add_task(process_deployment, deployment.id)
+        background_tasks.add_task(enqueue_deployment, deployment.id)
     return {
         "deployment": {
             "number": deployment.number,

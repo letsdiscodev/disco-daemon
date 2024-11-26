@@ -13,16 +13,16 @@ from sse_starlette.sse import EventSourceResponse
 from disco.auth import get_api_key_sync, get_api_key_wo_tx
 from disco.endpoints.dependencies import get_project_from_url_sync, get_sync_db
 from disco.models import ApiKey, Project
-from disco.models.db import Session
+from disco.models.db import AsyncSession
 from disco.utils import commandoutputs
+from disco.utils.deploymentflow import enqueue_deployment
 from disco.utils.deployments import (
     create_deployment_sync,
     get_deployment_by_number,
     get_last_deployment,
 )
 from disco.utils.discofile import DiscoFile
-from disco.utils.mq.tasks import enqueue_task_deprecated
-from disco.utils.projects import get_project_by_name_sync
+from disco.utils.projects import get_project_by_name
 
 log = logging.getLogger(__name__)
 
@@ -66,15 +66,6 @@ class DeploymentRequestBody(BaseModel):
         return self
 
 
-def process_deployment(deployment_id: str) -> None:
-    enqueue_task_deprecated(
-        task_name="PROCESS_DEPLOYMENT",
-        body=dict(
-            deployment_id=deployment_id,
-        ),
-    )
-
-
 @router.post(
     "/api/projects/{project_name}/deployments",
     status_code=201,
@@ -94,7 +85,7 @@ def deployments_post(
         disco_file=req_body.disco_file,
         by_api_key=api_key,
     )
-    background_tasks.add_task(process_deployment, deployment.id)
+    background_tasks.add_task(enqueue_deployment, deployment.id)
     return {
         "deployment": {
             "number": deployment.number,
@@ -111,14 +102,16 @@ async def deployment_output_get(
     deployment_number: int,
     last_event_id: Annotated[str | None, Header()] = None,
 ):
-    with Session.begin() as dbsession:
-        project = get_project_by_name_sync(dbsession, project_name)
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
         if project is None:
             raise HTTPException(status_code=404)
         if deployment_number == 0:
-            deployment = get_last_deployment(dbsession, project)
+            deployment = await get_last_deployment(dbsession, project)
         else:
-            deployment = get_deployment_by_number(dbsession, project, deployment_number)
+            deployment = await get_deployment_by_number(
+                dbsession, project, deployment_number
+            )
         if deployment is None:
             raise HTTPException(status_code=404)
         source = commandoutputs.deployment_source(deployment.id)

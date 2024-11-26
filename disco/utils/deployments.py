@@ -192,7 +192,7 @@ async def get_deployment_by_id(
     return await dbsession.get(Deployment, deployment_id)
 
 
-def get_deployment_by_number(
+def get_deployment_by_number_sync(
     dbsession: DBSession, project: Project, deployment_number: int
 ) -> Deployment | None:
     return (
@@ -201,6 +201,18 @@ def get_deployment_by_number(
         .filter(Deployment.number == deployment_number)
         .first()
     )
+
+
+async def get_deployment_by_number(
+    dbsession: AsyncDBSession, project: Project, deployment_number: int
+) -> Deployment | None:
+    stmt = (
+        select(Deployment)
+        .where(Deployment.project == project)
+        .where(Deployment.number == deployment_number)
+    )
+    result = await dbsession.execute(stmt)
+    return result.scalars().first()
 
 
 DEPLOYMENT_STATUS = Literal[
@@ -255,34 +267,42 @@ def get_live_deployment_sync(
     )
 
 
-def get_last_deployment(dbsession: DBSession, project: Project) -> Deployment | None:
-    return (
-        dbsession.query(Deployment)
+async def get_last_deployment(
+    dbsession: AsyncDBSession, project: Project
+) -> Deployment | None:
+    stmt = (
+        select(Deployment)
         .filter(Deployment.project == project)
         .order_by(Deployment.number.desc())
-        .first()
+        .limit(1)
     )
+    result = await dbsession.execute(stmt)
+    return result.scalars().first()
 
 
-def get_deployment_in_progress(
-    dbsession: DBSession, project: Project
+async def get_deployment_in_progress(
+    dbsession: AsyncDBSession, project: Project
 ) -> Deployment | None:
-    return (
-        dbsession.query(Deployment)
-        .filter(Deployment.project == project)
-        .filter(Deployment.status == "IN_PROGRESS")
+    stmt = (
+        select(Deployment)
+        .where(Deployment.project == project)
+        .where(Deployment.status == "IN_PROGRESS")
         .order_by(Deployment.number.desc())
-        .first()
+        .limit(1)
     )
+    result = await dbsession.execute(stmt)
+    return result.scalars().first()
 
 
-def get_oldest_queued_deployment(
-    dbsession: DBSession, project: Project
+async def get_oldest_queued_deployment(
+    dbsession: AsyncDBSession, project: Project
 ) -> Deployment | None:
-    return (
-        dbsession.query(Deployment)
-        .filter(Deployment.project == project)
-        .filter(Deployment.status == "QUEUED")
+    stmt = (
+        select(Deployment)
+        .where(Deployment.project == project)
+        .where(Deployment.status == "QUEUED")
         .order_by(Deployment.number.asc())
-        .first()
+        .limit(1)
     )
+    result = await dbsession.execute(stmt)
+    return result.scalars().first()
