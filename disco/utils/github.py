@@ -24,6 +24,7 @@ from disco.models import (
     GithubAppInstallation,
     GithubAppRepo,
     PendingGithubApp,
+    ProjectGithubRepo,
 )
 from disco.models.db import AsyncSession, Session
 from disco.utils.filesystem import project_path, projects_root
@@ -161,7 +162,7 @@ def remove_repo(project_name: str) -> None:
 
 async def fetch(project_name: str, repo_full_name: str) -> None:
     log.info("Fetching from Github project %s", project_name)
-    access_token = get_access_token_for_github_app_repo(full_name=repo_full_name)
+    access_token = await get_access_token_for_github_app_repo(full_name=repo_full_name)
     if access_token is not None:
         log.info("Using access token to fetch repo %s", repo_full_name)
         url = f"https://x-access-token:{access_token}@github.com/{repo_full_name}"
@@ -378,7 +379,7 @@ async def get_github_app_by_id(
     return await dbsession.get(GithubApp, app_id)
 
 
-def process_github_app_webhook(
+async def process_github_app_webhook(
     request_body_bytes: bytes,
     x_github_event: str | None,
     x_hub_signature_256: str | None,
@@ -407,8 +408,8 @@ def process_github_app_webhook(
         log.warning("X-GitHub-Hook-Installation-Target-ID not provided, skipping")
         return
 
-    with Session.begin() as dbsession:
-        github_app = get_github_app_by_id_sync(
+    async with AsyncSession.begin() as dbsession:
+        github_app = await get_github_app_by_id(
             dbsession, int(x_github_hook_installation_target_id)
         )
         if github_app is None:
@@ -430,35 +431,36 @@ def process_github_app_webhook(
     log.info("X-Hub-Signature-256 signature matched, continuing")
     log.info("Github event: %s", x_github_event)
     if x_github_event == "push":
-        from disco.utils.deployments import create_deployment_sync
+        from disco.utils.deploymentflow import enqueue_deployment
+        from disco.utils.deployments import create_deployment
         from disco.utils.github import get_commit_info_from_webhook_push
-        from disco.utils.mq.tasks import enqueue_task_deprecated
         from disco.utils.projects import get_projects_by_github_app_repo
 
         try:
             full_name = body["repository"]["full_name"]
             branch, commit_hash = get_commit_info_from_webhook_push(body_text)
             deployment_ids = []
-            with Session.begin() as dbsession:
-                projects = get_projects_by_github_app_repo(dbsession, full_name)
+            async with AsyncSession.begin() as dbsession:
+                projects = await get_projects_by_github_app_repo(dbsession, full_name)
                 for project in projects:
+                    github_repo: ProjectGithubRepo = (
+                        await project.awaitable_attrs.github_repo
+                    )
                     if (
-                        project.github_repo.branch is None
-                        and branch not in ["main", "master"]
+                        github_repo.branch is None and branch not in ["main", "master"]
                     ) or (
-                        project.github_repo.branch is not None
-                        and project.github_repo.branch != branch
+                        github_repo.branch is not None and github_repo.branch != branch
                     ):
                         log.info(
                             "Branch was %s, not deploying %s (tracking %s)",
                             branch,
                             project.log(),
-                            project.github_repo.branch
-                            if project.github_repo.branch is not None
+                            github_repo.branch
+                            if github_repo.branch is not None
                             else "master and main",
                         )
                         continue
-                    deployment = create_deployment_sync(
+                    deployment = await create_deployment(
                         dbsession=dbsession,
                         project=project,
                         commit_hash=commit_hash,
@@ -467,12 +469,7 @@ def process_github_app_webhook(
                     )
                     deployment_ids.append(deployment.id)
             for deployment_id in deployment_ids:
-                enqueue_task_deprecated(
-                    task_name="PROCESS_DEPLOYMENT",
-                    body=dict(
-                        deployment_id=deployment_id,
-                    ),
-                )
+                await enqueue_deployment(deployment_id)
         except KeyError:
             log.info("Not able to extract key info from Github webhook, skipping")
             return
@@ -484,23 +481,23 @@ def process_github_app_webhook(
         except KeyError:
             log.info("Not able to extract key info from Github webhook, skipping")
             return
-        with Session.begin() as dbsession:
-            github_app = get_github_app_by_id_sync(dbsession, app_id)
+        async with AsyncSession.begin() as dbsession:
+            github_app = await get_github_app_by_id(dbsession, app_id)
             if github_app is None:
                 log.warning("Couldn't find Github app %d", app_id)
                 return
-            installation = get_github_app_installation_by_id_sync(
+            installation = await get_github_app_installation_by_id(
                 dbsession, installation_id
             )
             if installation is None:
                 log.warning("Couldn't find Github app installation %d", installation_id)
                 return
             for repo in body["repositories_added"]:
-                add_repository_to_installation_sync(
+                await add_repository_to_installation(
                     dbsession, installation, repo["full_name"]
                 )
             for repo in body["repositories_removed"]:
-                remove_repository_from_installation_sync(
+                await remove_repository_from_installation(
                     dbsession, installation, repo["full_name"]
                 )
     elif x_github_event == "installation":
@@ -512,23 +509,23 @@ def process_github_app_webhook(
         except KeyError:
             log.info("Not able to extract key info from Github webhook, skipping")
             return
-        with Session.begin() as dbsession:
-            github_app = get_github_app_by_id_sync(dbsession, app_id)
+        async with AsyncSession.begin() as dbsession:
+            github_app = await get_github_app_by_id(dbsession, app_id)
             if github_app is None:
                 log.warning("Couldn't find Github app %d", app_id)
                 return
             if action == "created":
                 # app installed
-                installation = create_github_app_installation(
+                installation = await create_github_app_installation(
                     dbsession, github_app, installation_id
                 )
                 for repo in body["repositories"]:
-                    add_repository_to_installation_sync(
+                    await add_repository_to_installation(
                         dbsession, installation, repo["full_name"]
                     )
             elif action == "deleted":
                 # app uninstalled
-                installation = get_github_app_installation_by_id_sync(
+                installation = await get_github_app_installation_by_id(
                     dbsession, installation_id
                 )
                 if installation is None:
@@ -536,7 +533,7 @@ def process_github_app_webhook(
                         "Couldn't find Github app installation %d", installation_id
                     )
                     return
-                delete_github_app_installation_sync(dbsession, installation)
+                await delete_github_app_installation(dbsession, installation)
             else:
                 log.warning(
                     "Github App webhook action not handled %s, skipping", action
@@ -545,11 +542,11 @@ def process_github_app_webhook(
         log.warning("Github App webhook event not handled %s, skipping", x_github_event)
 
 
-def create_github_app_installation(
-    dbsession: DBSession, github_app: GithubApp, installation_id: int
+async def create_github_app_installation(
+    dbsession: AsyncDBSession, github_app: GithubApp, installation_id: int
 ) -> GithubAppInstallation:
     log.info("Creating Github app installation %d", installation_id)
-    installation = dbsession.get(GithubAppInstallation, installation_id)
+    installation = await dbsession.get(GithubAppInstallation, installation_id)
     if installation is not None:
         log.info("Github installation %d aleady existed", installation_id)
         return installation

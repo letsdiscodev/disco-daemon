@@ -387,7 +387,9 @@ async def checkout_commit(
                 repo_full_name=new_deployment_info.github_repo_full_name,
             )
         except github.GithubException:
-            log_output("Failed to fetch repository. Is the repository accessible?\n")
+            await log_output(
+                "Failed to fetch repository. Is the repository accessible?\n"
+            )
             raise
     if new_deployment_info.commit_hash == "_DEPLOY_LATEST_":
         await github.checkout_latest(

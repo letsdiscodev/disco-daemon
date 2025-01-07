@@ -205,7 +205,7 @@ async def github_app_create_post():
 
 
 @router.post("/.webhooks/github-apps", status_code=202)
-def github_webhook_service_post(
+async def github_webhook_service_post(
     x_github_event: Annotated[str | None, Header()],
     x_hub_signature_256: Annotated[str | None, Header()],
     x_github_hook_installation_target_type: Annotated[str | None, Header()],
@@ -215,8 +215,8 @@ def github_webhook_service_post(
 ):
     log.info("Received Github webhook: %s", body.decode("utf-8"))
 
-    def process_webhook() -> None:
-        process_github_app_webhook(
+    async def process_webhook() -> None:
+        await process_github_app_webhook(
             request_body_bytes=body,
             x_github_event=x_github_event,
             x_hub_signature_256=x_hub_signature_256,

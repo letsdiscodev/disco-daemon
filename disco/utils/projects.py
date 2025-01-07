@@ -102,15 +102,16 @@ async def get_project_by_domain(
     return result.scalars().first()
 
 
-def get_projects_by_github_app_repo(
-    dbsession: DBSession, full_name: str
+async def get_projects_by_github_app_repo(
+    dbsession: AsyncDBSession, full_name: str
 ) -> Sequence[Project]:
-    return (
-        dbsession.query(Project)
+    stmt = (
+        select(Project)
         .join(ProjectGithubRepo)
-        .filter(ProjectGithubRepo.full_name == full_name)
-        .all()
+        .where(ProjectGithubRepo.full_name == full_name)
     )
+    result = await dbsession.execute(stmt)
+    return result.scalars().all()
 
 
 def get_all_projects(dbsession: DBSession) -> list[Project]:
