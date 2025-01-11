@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import uuid
-from typing import Literal
+from typing import Literal, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
@@ -19,7 +19,7 @@ from disco.utils.discofile import DiscoFile
 log = logging.getLogger(__name__)
 
 
-def maybe_create_deployment(
+def maybe_create_deployment_sync(
     dbsession: DBSession,
     project: Project,
     commit_hash: str | None,
@@ -30,6 +30,25 @@ def maybe_create_deployment(
     if number == 1 and commit_hash is None and disco_file is None:
         return None
     return create_deployment_sync(
+        dbsession=dbsession,
+        project=project,
+        commit_hash=commit_hash,
+        disco_file=disco_file,
+        by_api_key=by_api_key,
+    )
+
+
+async def maybe_create_deployment(
+    dbsession: AsyncDBSession,
+    project: Project,
+    commit_hash: str | None,
+    disco_file: DiscoFile | None,
+    by_api_key: ApiKey | None,
+) -> Deployment | None:
+    number = await get_next_deployment_number(dbsession, project)
+    if number == 1 and commit_hash is None and disco_file is None:
+        return None
+    return await create_deployment(
         dbsession=dbsession,
         project=project,
         commit_hash=commit_hash,
@@ -217,10 +236,12 @@ async def get_deployment_by_number(
 
 DEPLOYMENT_STATUS = Literal[
     "QUEUED",
-    "IN_PROGRESS",
+    "PREPARING",
+    "REPLACING",
     "COMPLETE",
     "SKIPPED",
     "FAILED",
+    "CANCELLED",
 ]
 
 
@@ -229,6 +250,48 @@ def set_deployment_status(deployment: Deployment, status: DEPLOYMENT_STATUS) -> 
         "Setting deployment status of deployment %s to %s", deployment.log(), status
     )
     deployment.status = status
+
+
+async def get_deployments_with_status(
+    dbsession: AsyncDBSession, project: Project, status: DEPLOYMENT_STATUS
+) -> Sequence[Deployment]:
+    stmt = (
+        select(Deployment)
+        .where(Deployment.project == project)
+        .where(Deployment.status == status)
+        .order_by(Deployment.number)
+    )
+    result = await dbsession.execute(stmt)
+    return result.scalars().all()
+
+
+def set_deployment_task_id(deployment: Deployment, task_id: str) -> None:
+    deployment.task_id = task_id
+
+
+async def cancel_deployment(deployment: Deployment, by_api_key: ApiKey) -> None:
+    from disco.utils.asyncworker import async_worker
+
+    assert deployment.status in ["QUEUED", "PREPARING"]
+    log.info(
+        "Cancelling deployment %s (had status %s) by %s",
+        deployment.id,
+        deployment.status,
+        by_api_key.log(),
+    )
+    output_source = commandoutputs.deployment_source(deployment.id)
+    await commandoutputs.store_output(
+        output_source,
+        "Cancelling build - initiated by API key: "
+        f"{by_api_key.public_key} ({by_api_key.name})\n",
+    )
+    if deployment.status == "QUEUED":
+        await commandoutputs.store_output(output_source, "Cancelled\n")
+        await commandoutputs.terminate(output_source)
+        set_deployment_status(deployment, "CANCELLED")
+    elif deployment.status == "PREPARING":
+        assert deployment.task_id is not None
+        async_worker.cancel_task(deployment.task_id)
 
 
 def set_deployment_disco_file(deployment: Deployment, disco_file: str) -> None:
@@ -268,14 +331,14 @@ def get_live_deployment_sync(
 
 
 async def get_last_deployment(
-    dbsession: AsyncDBSession, project: Project
+    dbsession: AsyncDBSession,
+    project: Project,
+    statuses: list[DEPLOYMENT_STATUS] | None = None,
 ) -> Deployment | None:
-    stmt = (
-        select(Deployment)
-        .filter(Deployment.project == project)
-        .order_by(Deployment.number.desc())
-        .limit(1)
-    )
+    stmt = select(Deployment).where(Deployment.project == project)
+    if statuses is not None:
+        stmt = stmt.where(Deployment.status.in_(statuses))
+    stmt = stmt.order_by(Deployment.number.desc()).limit(1)
     result = await dbsession.execute(stmt)
     return result.scalars().first()
 
@@ -286,7 +349,7 @@ async def get_deployment_in_progress(
     stmt = (
         select(Deployment)
         .where(Deployment.project == project)
-        .where(Deployment.status == "IN_PROGRESS")
+        .where(Deployment.status.in_(["PREPARING", "REPLACING"]))
         .order_by(Deployment.number.desc())
         .limit(1)
     )

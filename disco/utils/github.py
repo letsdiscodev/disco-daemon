@@ -468,6 +468,7 @@ async def process_github_app_webhook(
                         by_api_key=None,
                     )
                     deployment_ids.append(deployment.id)
+
             for deployment_id in deployment_ids:
                 await enqueue_deployment(deployment_id)
         except KeyError:

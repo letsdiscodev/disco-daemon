@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, Awaitable, Callable
@@ -212,6 +213,7 @@ class ProjectCron(Cron):
 
 @dataclass
 class QueueTask(WorkerTask):
+    id: str
     run: Callable[[], Awaitable[None]]
 
 
@@ -222,7 +224,17 @@ class AsyncWorker:
         self._project_crons: list[ProjectCron] = []
         # not threadsafe, only use in async code
         self.queue: asyncio.Queue[QueueTask] = asyncio.Queue()
+        self._queue_tasks: dict[str, asyncio.Task] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
+
+    async def enqueue(self, async_callable: Callable[[], Awaitable[None]]) -> str:
+        queue_task = QueueTask(id=uuid.uuid4().hex, run=async_callable)
+        await async_worker.queue.put(queue_task)
+        return queue_task.id
+
+    def cancel_task(self, task_id: str) -> None:
+        task = self._queue_tasks[task_id]
+        task.cancel()
 
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
@@ -322,10 +334,21 @@ class AsyncWorker:
                 1000000 - datetime.now(timezone.utc).microsecond
             ) / 1000000
             try:
-                worker_task = await asyncio.wait_for(
-                    self.queue.get(), next_second_delta
-                )
-                yield asyncio.create_task(self._process_worker_task(worker_task))
+                w_task = await asyncio.wait_for(self.queue.get(), next_second_delta)
+                aio_task = asyncio.create_task(self._process_worker_task(w_task))
+                self._queue_tasks[w_task.id] = aio_task
+
+                def get_remove_task_func(task_id: str):
+                    # defining function that returns function to create closure
+                    # otherwise, it would just remove the last task
+                    # that was added
+                    def remove_task(_):
+                        self._queue_tasks.pop(task_id)
+
+                    return remove_task
+
+                aio_task.add_done_callback(get_remove_task_func(w_task.id))
+                yield aio_task
             except asyncio.TimeoutError:
                 pass
 
@@ -462,8 +485,3 @@ class AsyncWorker:
 
 
 async_worker = AsyncWorker()
-
-
-async def enqueue(async_callable: Callable[[], Awaitable[None]]):
-    queue_task = QueueTask(run=async_callable)
-    await async_worker.queue.put(queue_task)

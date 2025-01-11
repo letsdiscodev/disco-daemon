@@ -62,6 +62,10 @@ class Deployment(Base):
         nullable=True,
         index=True,
     )
+    task_id: Mapped[str | None] = mapped_column(
+        String(32),
+        nullable=True,
+    )
 
     project: Mapped[Project] = relationship(
         "Project",

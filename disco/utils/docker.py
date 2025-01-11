@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+import signal
 import subprocess
 from datetime import datetime, timedelta, timezone
 from multiprocessing import cpu_count
@@ -47,50 +49,56 @@ async def build_image(
         dockerfile_path if dockerfile_path is not None else "-",
         context,
     ]
-
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        env=dict(env_variables),
-        cwd=project_path(project_name),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        stdin=asyncio.subprocess.PIPE if dockerfile_str is not None else None,
-    )
-
-    async def write_stdin() -> None:
-        if dockerfile_str is None:
-            return
-        assert process.stdin is not None
-        process.stdin.write(dockerfile_str.encode("utf-8"))
-        await process.stdin.drain()
-        process.stdin.write_eof()
-
-    async def read_stdout() -> None:
-        assert process.stdout is not None
-        async for line in process.stdout:
-            await stdout(line.decode("utf-8"))
-
-    async def read_stderr() -> None:
-        assert process.stderr is not None
-        async for line in process.stderr:
-            await stderr(line.decode("utf-8"))
-
-    tasks = [
-        asyncio.create_task(write_stdin()),
-        asyncio.create_task(read_stdout()),
-        asyncio.create_task(read_stderr()),
-    ]
-
     try:
-        async with asyncio.timeout(timeout):
-            await asyncio.gather(*tasks)
-    except TimeoutError:
-        process.terminate()
-        raise Exception(f"Building image failed, timeout after {timeout} seconds")
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            env=dict(env_variables),
+            cwd=project_path(project_name),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            stdin=asyncio.subprocess.PIPE if dockerfile_str is not None else None,
+        )
 
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
+        async def write_stdin() -> None:
+            if dockerfile_str is None:
+                return
+            assert process.stdin is not None
+            process.stdin.write(dockerfile_str.encode("utf-8"))
+            await process.stdin.drain()
+            process.stdin.write_eof()
+
+        async def read_stdout() -> None:
+            assert process.stdout is not None
+            async for line in process.stdout:
+                await stdout(line.decode("utf-8"))
+
+        async def read_stderr() -> None:
+            assert process.stderr is not None
+            async for line in process.stderr:
+                await stderr(line.decode("utf-8"))
+
+        tasks = [
+            asyncio.create_task(write_stdin()),
+            asyncio.create_task(read_stdout()),
+            asyncio.create_task(read_stderr()),
+        ]
+
+        try:
+            async with asyncio.timeout(timeout):
+                await asyncio.gather(*tasks)
+        except TimeoutError:
+            process.terminate()
+            raise Exception(f"Building image failed, timeout after {timeout} seconds")
+
+        await process.wait()
+        if process.returncode != 0:
+            raise Exception(f"Docker returned status {process.returncode}")
+    except asyncio.CancelledError:
+        log.info("Killing build of image %s for project %s", image, project_name)
+        os.kill(process.pid, signal.SIGKILL)
+        await process.wait()
+        log.warning("Killed build of image %s for project %s", image, project_name)
+        raise
 
 
 def start_service_sync(
@@ -329,37 +337,44 @@ async def push_image(image: str) -> None:
         "push",
         image,
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-
-    async def read_stdout() -> None:
-        assert process.stdout is not None
-        async for line in process.stdout:
-            log.info("Stdout: %s", line.decode("utf-8").replace("\n", ""))
-
-    async def read_stderr() -> None:
-        assert process.stderr is not None
-        async for line in process.stderr:
-            log.info("Stderr: %s", line.decode("utf-8").replace("\n", ""))
-
-    tasks = [
-        asyncio.create_task(read_stdout()),
-        asyncio.create_task(read_stderr()),
-    ]
-
     try:
-        async with asyncio.timeout(timeout):
-            await asyncio.gather(*tasks)
-    except TimeoutError:
-        process.terminate()
-        raise Exception(f"Running command failed, timeout after {timeout} seconds")
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
 
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
+        async def read_stdout() -> None:
+            assert process.stdout is not None
+            async for line in process.stdout:
+                log.info("Stdout: %s", line.decode("utf-8").replace("\n", ""))
+
+        async def read_stderr() -> None:
+            assert process.stderr is not None
+            async for line in process.stderr:
+                log.info("Stderr: %s", line.decode("utf-8").replace("\n", ""))
+
+        tasks = [
+            asyncio.create_task(read_stdout()),
+            asyncio.create_task(read_stderr()),
+        ]
+
+        try:
+            async with asyncio.timeout(timeout):
+                await asyncio.gather(*tasks)
+        except TimeoutError:
+            process.terminate()
+            raise Exception(f"Running command failed, timeout after {timeout} seconds")
+
+        await process.wait()
+        if process.returncode != 0:
+            raise Exception(f"Docker returned status {process.returncode}")
+    except asyncio.CancelledError:
+        log.info("Killing pushing image %s", image)
+        os.kill(process.pid, signal.SIGKILL)
+        await process.wait()
+        log.info("Killed pushing image %s", image)
+        raise
 
 
 def stop_service_sync(name: str) -> None:
