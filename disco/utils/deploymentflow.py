@@ -159,7 +159,9 @@ async def process_deployment(deployment_id: str) -> None:
                     f"before processing deployment {deployment.number}.\n"
                 )
                 return False
-            last_deployment = await get_last_deployment(dbsession, project)
+            last_deployment = await get_last_deployment(
+                dbsession, project, statuses=["QUEUED"]
+            )
             if last_deployment is not None and last_deployment.id != deployment_id:
                 await log_output(
                     f"Deployment {last_deployment.number} is latest, "

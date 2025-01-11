@@ -312,14 +312,14 @@ def get_live_deployment_sync(
 
 
 async def get_last_deployment(
-    dbsession: AsyncDBSession, project: Project
+    dbsession: AsyncDBSession,
+    project: Project,
+    statuses: list[DEPLOYMENT_STATUS] | None = None,
 ) -> Deployment | None:
-    stmt = (
-        select(Deployment)
-        .filter(Deployment.project == project)
-        .order_by(Deployment.number.desc())
-        .limit(1)
-    )
+    stmt = select(Deployment).where(Deployment.project == project)
+    if statuses is not None:
+        stmt = stmt.where(Deployment.status.in_(statuses))
+    stmt = stmt.order_by(Deployment.number.desc()).limit(1)
     result = await dbsession.execute(stmt)
     return result.scalars().first()
 

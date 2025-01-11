@@ -140,7 +140,7 @@ async def deployment_delete(
             cancelled_deployments.append(single_deployment.number)
         return {
             "cancelledDeployments": [
-                {"number": number} for number in cancelled_deployments
+                {"number": number} for number in sorted(cancelled_deployments)
             ]
         }
 
