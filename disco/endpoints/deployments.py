@@ -94,7 +94,7 @@ def deployments_post(
     }
 
 
-@router.get(
+@router.delete(
     "/api/projects/{project_name}/deployments/{deployment_number}",
     dependencies=[Depends(get_api_key_wo_tx)],
 )

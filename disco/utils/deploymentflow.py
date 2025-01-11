@@ -178,15 +178,6 @@ async def process_deployment(deployment_id: str) -> None:
             prev_deployment_id = (
                 prev_deployment.id if prev_deployment is not None else None
             )
-    except asyncio.CancelledError:
-        await log_output("Cancelled")
-        await set_current_deployment_status("CANCELLED")
-    except Exception:
-        log.exception("Deployment %s failed", deployment_id)
-        await log_output("Deployment failed\n")
-        await set_current_deployment_status("FAILED")
-        raise
-    try:
         await prepare_deployment(
             new_deployment_id=deployment_id,
             prev_deployment_id=prev_deployment_id,
