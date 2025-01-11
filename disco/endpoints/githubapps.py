@@ -125,7 +125,7 @@ def github_app_create_get(
     else:
         github_url = f"https://github.com/settings/apps/new?state={pending_app.state}"
     manifest = {
-        "name": f"Disco {randomname.get_name()}",
+        "name": f"Disco @{disco_host} {randomname.get_name()}",
         "url": f"https://{disco_host}/github-apps/home",
         "redirect_url": f"https://{disco_host}/github-apps/{pending_app.id}/created",
         "callback_urls": [],
