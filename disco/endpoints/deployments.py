@@ -15,11 +15,13 @@ from disco.endpoints.dependencies import get_project_from_url_sync, get_sync_db
 from disco.models import ApiKey, Project
 from disco.models.db import AsyncSession
 from disco.utils import commandoutputs
+from disco.utils.apikeys import get_valid_api_key_by_id
 from disco.utils.deploymentflow import enqueue_deployment
 from disco.utils.deployments import (
     cancel_deployment,
     create_deployment_sync,
     get_deployment_by_number,
+    get_deployments_with_status,
     get_last_deployment,
 )
 from disco.utils.discofile import DiscoFile
@@ -96,30 +98,51 @@ def deployments_post(
 
 @router.delete(
     "/api/projects/{project_name}/deployments/{deployment_number}",
-    dependencies=[Depends(get_api_key_wo_tx)],
 )
 async def deployment_delete(
     project_name: str,
     deployment_number: int,
+    api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
 ):
     async with AsyncSession.begin() as dbsession:
+        api_key = await get_valid_api_key_by_id(dbsession, api_key_id)
+        assert api_key is not None
         project = await get_project_by_name(dbsession, project_name)
         if project is None:
             raise HTTPException(status_code=404)
+        cancelled_deployments = []
         if deployment_number == 0:
-            deployment = await get_last_deployment(dbsession, project)
+            deployments_queued = await get_deployments_with_status(
+                dbsession, project, "QUEUED"
+            )
+            for deployment in deployments_queued:
+                await cancel_deployment(deployment, by_api_key=api_key)
+                cancelled_deployments.append(deployment.number)
+            deployments_preparing = await get_deployments_with_status(
+                dbsession, project, "PREPARING"
+            )
+            for deployment in deployments_preparing:
+                await cancel_deployment(deployment, by_api_key=api_key)
+                cancelled_deployments.append(deployment.number)
         else:
-            deployment = await get_deployment_by_number(
+            single_deployment = await get_deployment_by_number(
                 dbsession, project, deployment_number
             )
-        if deployment is None:
-            raise HTTPException(status_code=404)
-        if deployment.status not in ["QUEUED", "PREPARING"]:
-            raise HTTPException(
-                422,
-                f"Cannot cancel deployment {deployment.number}, status {deployment.status} not one of QUEUED or PREPARING",
-            )
-        cancel_deployment(deployment)
+            if single_deployment is None:
+                raise HTTPException(status_code=404)
+            if single_deployment.status not in ["QUEUED", "PREPARING"]:
+                raise HTTPException(
+                    422,
+                    f"Cannot cancel deployment {single_deployment.number}, "
+                    f"status {single_deployment.status} not one of QUEUED or PREPARING",
+                )
+            await cancel_deployment(single_deployment, by_api_key=api_key)
+            cancelled_deployments.append(single_deployment.number)
+        return {
+            "cancelledDeployments": [
+                {"number": number} for number in cancelled_deployments
+            ]
+        }
 
 
 @router.get(

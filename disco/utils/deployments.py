@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import uuid
-from typing import Literal
+from typing import Literal, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
@@ -233,19 +233,45 @@ def set_deployment_status(deployment: Deployment, status: DEPLOYMENT_STATUS) -> 
     deployment.status = status
 
 
+async def get_deployments_with_status(
+    dbsession: AsyncDBSession, project: Project, status: DEPLOYMENT_STATUS
+) -> Sequence[Deployment]:
+    stmt = (
+        select(Deployment)
+        .where(Deployment.project == project)
+        .where(Deployment.status == status)
+        .order_by(Deployment.number)
+    )
+    result = await dbsession.execute(stmt)
+    return result.scalars().all()
+
+
 def set_deployment_task_id(deployment: Deployment, task_id: str) -> None:
     deployment.task_id = task_id
 
 
-def cancel_deployment(deployment: Deployment) -> None:
+async def cancel_deployment(deployment: Deployment, by_api_key: ApiKey) -> None:
     from disco.utils.asyncworker import async_worker
 
     assert deployment.status in ["QUEUED", "PREPARING"]
+    log.info(
+        "Cancelling deployment %s (had status %s) by %s",
+        deployment.id,
+        deployment.status,
+        by_api_key.log(),
+    )
+    output_source = commandoutputs.deployment_source(deployment.id)
+    await commandoutputs.store_output(
+        output_source,
+        "Cancelling build - initiated by API key: "
+        f"{by_api_key.public_key} ({by_api_key.name})\n",
+    )
     if deployment.status == "QUEUED":
-        set_deployment_status(deployment, "SKIPPED")
+        await commandoutputs.store_output(output_source, "Cancelled\n")
+        await commandoutputs.terminate(output_source)
+        set_deployment_status(deployment, "CANCELLED")
     elif deployment.status == "PREPARING":
         assert deployment.task_id is not None
-        log.info("Cancelling deployment %s", deployment.id)
         async_worker.cancel_task(deployment.task_id)
 
 

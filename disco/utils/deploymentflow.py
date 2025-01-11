@@ -141,7 +141,10 @@ async def process_deployment(deployment_id: str) -> None:
             assert deployment is not None
             set_deployment_status(deployment, status)
 
-    try:
+    async def maybe_keep_queued_or_skip() -> bool:
+        # Defined as a function so that we can shield it from
+        # cancellation and avoid strange states when deployments
+        # are cancelled.
         async with AsyncSession.begin() as dbsession:
             deployment = await get_deployment_by_id(dbsession, deployment_id)
             assert deployment is not None
@@ -155,7 +158,7 @@ async def process_deployment(deployment_id: str) -> None:
                     "waiting for build to complete "
                     f"before processing deployment {deployment.number}.\n"
                 )
-                return
+                return False
             last_deployment = await get_last_deployment(dbsession, project)
             if last_deployment is not None and last_deployment.id != deployment_id:
                 await log_output(
@@ -165,8 +168,14 @@ async def process_deployment(deployment_id: str) -> None:
                 await set_current_deployment_status("SKIPPED")
                 await log_output_terminate()
                 await process_deployment_if_any(dbsession, deployment.project_id)
-                return
+                return False
+        return True
 
+    should_continue = await asyncio.shield(maybe_keep_queued_or_skip())
+    if not should_continue:
+        return
+
+    try:
         await set_current_deployment_status("PREPARING")
         await log_output("Starting deployment\n")
         async with AsyncSession.begin() as dbsession:
@@ -198,7 +207,7 @@ async def process_deployment(deployment_id: str) -> None:
         await log_output(f"Deployment complete {random.choice(['🪩', '🕺', '💃'])}\n")
         await set_current_deployment_status("COMPLETE")
     except asyncio.CancelledError:
-        await log_output("Cancelled")
+        await log_output("Cancelled\n")
         await set_current_deployment_status("CANCELLED")
     except Exception:
         await set_current_deployment_status("FAILED")
