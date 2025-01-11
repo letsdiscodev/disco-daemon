@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import random
@@ -16,7 +17,7 @@ from disco.models import (
 )
 from disco.models.db import AsyncSession
 from disco.utils import caddy, commandoutputs, docker, github, keyvalues
-from disco.utils.asyncworker import async_worker, enqueue
+from disco.utils.asyncworker import async_worker
 from disco.utils.deployments import (
     DEPLOYMENT_STATUS,
     get_deployment_by_id,
@@ -26,6 +27,7 @@ from disco.utils.deployments import (
     set_deployment_commit_hash,
     set_deployment_disco_file,
     set_deployment_status,
+    set_deployment_task_id,
 )
 from disco.utils.discofile import DiscoFile, ServiceType, get_disco_file_from_str
 from disco.utils.encryption import decrypt
@@ -98,7 +100,11 @@ async def enqueue_deployment(deployment_id) -> None:
     async def task() -> None:
         await process_deployment(deployment_id)
 
-    await enqueue(task)
+    task_id = await async_worker.enqueue(task)
+    async with AsyncSession.begin() as dbsession:
+        deployment = await get_deployment_by_id(dbsession, deployment_id)
+        assert deployment is not None
+        set_deployment_task_id(deployment, task_id)
 
 
 async def process_deployment_if_any(dbsession: AsyncDBSession, project_id: str) -> None:
@@ -135,32 +141,34 @@ async def process_deployment(deployment_id: str) -> None:
             assert deployment is not None
             set_deployment_status(deployment, status)
 
-    async with AsyncSession.begin() as dbsession:
-        deployment = await get_deployment_by_id(dbsession, deployment_id)
-        assert deployment is not None
-        project: Project = await deployment.awaitable_attrs.project
-        deployment_in_progress = await get_deployment_in_progress(dbsession, project)
-        if deployment_in_progress is not None:
-            await log_output(
-                f"Deployment {deployment_in_progress.number} in progress, "
-                "waiting for build to complete "
-                f"before processing deployment {deployment.number}.\n"
-            )
-            return
-        last_deployment = await get_last_deployment(dbsession, project)
-        if last_deployment is not None and last_deployment.id != deployment_id:
-            await log_output(
-                f"Deployment {last_deployment.number} is latest, "
-                f"skipping deployment {deployment.number}.\n"
-            )
-            await set_current_deployment_status("SKIPPED")
-            await log_output_terminate()
-            await process_deployment_if_any(dbsession, deployment.project_id)
-            return
-
-    await set_current_deployment_status("IN_PROGRESS")
-    await log_output("Starting deployment\n")
     try:
+        async with AsyncSession.begin() as dbsession:
+            deployment = await get_deployment_by_id(dbsession, deployment_id)
+            assert deployment is not None
+            project: Project = await deployment.awaitable_attrs.project
+            deployment_in_progress = await get_deployment_in_progress(
+                dbsession, project
+            )
+            if deployment_in_progress is not None:
+                await log_output(
+                    f"Deployment {deployment_in_progress.number} in progress, "
+                    "waiting for build to complete "
+                    f"before processing deployment {deployment.number}.\n"
+                )
+                return
+            last_deployment = await get_last_deployment(dbsession, project)
+            if last_deployment is not None and last_deployment.id != deployment_id:
+                await log_output(
+                    f"Deployment {last_deployment.number} is latest, "
+                    f"skipping deployment {deployment.number}.\n"
+                )
+                await set_current_deployment_status("SKIPPED")
+                await log_output_terminate()
+                await process_deployment_if_any(dbsession, deployment.project_id)
+                return
+
+        await set_current_deployment_status("PREPARING")
+        await log_output("Starting deployment\n")
         async with AsyncSession.begin() as dbsession:
             log.info("Getting data from database for deployment %s", deployment_id)
             deployment = await get_deployment_by_id(dbsession, deployment_id)
@@ -170,21 +178,37 @@ async def process_deployment(deployment_id: str) -> None:
             prev_deployment_id = (
                 prev_deployment.id if prev_deployment is not None else None
             )
+    except asyncio.CancelledError:
+        await log_output("Cancelled")
+        await set_current_deployment_status("CANCELLED")
     except Exception:
         log.exception("Deployment %s failed", deployment_id)
         await log_output("Deployment failed\n")
         await set_current_deployment_status("FAILED")
         raise
     try:
+        await prepare_deployment(
+            new_deployment_id=deployment_id,
+            prev_deployment_id=prev_deployment_id,
+            log_output=log_output,
+        )
+        await set_current_deployment_status("REPLACING")
+        await run_hook_deploy_start_before(
+            new_deployment_id=deployment_id,
+            prev_deployment_id=prev_deployment_id,
+            log_output=log_output,
+        )
         await replace_deployment(
             new_deployment_id=deployment_id,
             prev_deployment_id=prev_deployment_id,
             recovery=False,
             log_output=log_output,
         )
-
         await log_output(f"Deployment complete {random.choice(['🪩', '🕺', '💃'])}\n")
         await set_current_deployment_status("COMPLETE")
+    except asyncio.CancelledError:
+        await log_output("Cancelled")
+        await set_current_deployment_status("CANCELLED")
     except Exception:
         await set_current_deployment_status("FAILED")
         log.exception("Exception while deploying")
@@ -206,6 +230,98 @@ async def process_deployment(deployment_id: str) -> None:
         await process_deployment_if_any(dbsession, deployment.project_id)
 
 
+async def prepare_deployment(
+    new_deployment_id: str | None,
+    prev_deployment_id: str | None,
+    log_output: Callable[[str], Awaitable[None]],
+):
+    log.info("Preparing deployment %s", new_deployment_id)
+    new_deployment_info, _ = await get_deployment_info(
+        new_deployment_id, prev_deployment_id
+    )
+    assert new_deployment_info is not None
+    if new_deployment_info.commit_hash is not None:
+        await checkout_commit(new_deployment_info, log_output)
+    elif new_deployment_info.github_repo_full_name is not None:
+        new_deployment_info.commit_hash = await github.get_head_commit_hash(
+            new_deployment_info.project_name
+        )
+    if new_deployment_info.disco_file is None:
+        new_deployment_info.disco_file = await read_disco_file_for_deployment(
+            new_deployment_info, log_output
+        )
+    assert new_deployment_info.disco_file is not None
+    images = await build_images(
+        new_deployment_info=new_deployment_info,
+        log_output=log_output,
+    )
+    if new_deployment_info.registry_host is not None:
+        await push_images(images, log_output)
+    if "web" in new_deployment_info.disco_file.services:
+        if new_deployment_info.disco_file.services["web"].type == ServiceType.static:
+            await prepare_static_site(new_deployment_info, log_output)
+        elif (
+            new_deployment_info.disco_file.services["web"].type == ServiceType.generator
+        ):
+            await prepare_generator_site(new_deployment_info, log_output)
+
+
+async def run_hook_deploy_start_before(
+    new_deployment_id: str | None,
+    prev_deployment_id: str | None,
+    log_output: Callable[[str], Awaitable[None]],
+):
+    new_deployment_info, _ = await get_deployment_info(
+        new_deployment_id, prev_deployment_id
+    )
+    assert new_deployment_info is not None
+    assert new_deployment_info.disco_file is not None
+    if (
+        "hook:deploy:start:before" in new_deployment_info.disco_file.services
+        and new_deployment_info.disco_file.services["hook:deploy:start:before"].type
+        == ServiceType.command
+    ):
+        await log_output("Runnning hook:deploy:start:before command\n")
+        service_name = "hook:deploy:start:before"
+        service = new_deployment_info.disco_file.services[service_name]
+        image = docker.get_image_name_for_service(
+            disco_file=new_deployment_info.disco_file,
+            service_name=service_name,
+            registry_host=new_deployment_info.registry_host,
+            project_name=new_deployment_info.project_name,
+            deployment_number=new_deployment_info.number,
+        )
+        env_variables = new_deployment_info.env_variables + [
+            ("DISCO_PROJECT_NAME", new_deployment_info.project_name),
+            ("DISCO_SERVICE_NAME", service_name),
+            ("DISCO_HOST", new_deployment_info.disco_host),
+        ]
+        if new_deployment_info.commit_hash is not None:
+            env_variables += [
+                ("DISCO_COMMIT", new_deployment_info.commit_hash),
+            ]
+        volumes = [
+            (
+                "volume",
+                volume_name_for_project(v.name, new_deployment_info.project_id),
+                v.destination_path,
+            )
+            for v in new_deployment_info.disco_file.services[service_name].volumes
+        ]
+        await docker.run(
+            image=image,
+            project_name=new_deployment_info.project_name,
+            name=f"{new_deployment_info.project_name}-hook-deploy-start-before.{new_deployment_info.number}",
+            env_variables=env_variables,
+            volumes=volumes,
+            networks=["disco-main"],
+            command=service.command,
+            timeout=service.timeout,
+            stdout=log_output,
+            stderr=log_output,
+        )
+
+
 async def replace_deployment(
     new_deployment_id: str | None,
     prev_deployment_id: str | None,
@@ -221,80 +337,6 @@ async def replace_deployment(
     new_deployment_info, prev_deployment_info = await get_deployment_info(
         new_deployment_id, prev_deployment_id
     )
-    if not recovery:
-        assert new_deployment_info is not None
-        if new_deployment_info.commit_hash is not None:
-            await checkout_commit(new_deployment_info, log_output)
-        elif new_deployment_info.github_repo_full_name is not None:
-            new_deployment_info.commit_hash = await github.get_head_commit_hash(
-                new_deployment_info.project_name
-            )
-        if new_deployment_info.disco_file is None:
-            new_deployment_info.disco_file = await read_disco_file_for_deployment(
-                new_deployment_info, log_output
-            )
-        assert new_deployment_info.disco_file is not None
-        images = await build_images(
-            new_deployment_info=new_deployment_info,
-            log_output=log_output,
-        )
-        if new_deployment_info.registry_host is not None:
-            await push_images(images, log_output)
-        if "web" in new_deployment_info.disco_file.services:
-            if (
-                new_deployment_info.disco_file.services["web"].type
-                == ServiceType.static
-            ):
-                await prepare_static_site(new_deployment_info, log_output)
-            elif (
-                new_deployment_info.disco_file.services["web"].type
-                == ServiceType.generator
-            ):
-                await prepare_generator_site(new_deployment_info, log_output)
-        if (
-            "hook:deploy:start:before" in new_deployment_info.disco_file.services
-            and new_deployment_info.disco_file.services["hook:deploy:start:before"].type
-            == ServiceType.command
-        ):
-            await log_output("Runnning hook:deploy:start:before command\n")
-            service_name = "hook:deploy:start:before"
-            service = new_deployment_info.disco_file.services[service_name]
-            image = docker.get_image_name_for_service(
-                disco_file=new_deployment_info.disco_file,
-                service_name=service_name,
-                registry_host=new_deployment_info.registry_host,
-                project_name=new_deployment_info.project_name,
-                deployment_number=new_deployment_info.number,
-            )
-            env_variables = new_deployment_info.env_variables + [
-                ("DISCO_PROJECT_NAME", new_deployment_info.project_name),
-                ("DISCO_SERVICE_NAME", service_name),
-                ("DISCO_HOST", new_deployment_info.disco_host),
-            ]
-            if new_deployment_info.commit_hash is not None:
-                env_variables += [
-                    ("DISCO_COMMIT", new_deployment_info.commit_hash),
-                ]
-            volumes = [
-                (
-                    "volume",
-                    volume_name_for_project(v.name, new_deployment_info.project_id),
-                    v.destination_path,
-                )
-                for v in new_deployment_info.disco_file.services[service_name].volumes
-            ]
-            await docker.run(
-                image=image,
-                project_name=new_deployment_info.project_name,
-                name=f"{new_deployment_info.project_name}-hook-deploy-start-before.{new_deployment_info.number}",
-                env_variables=env_variables,
-                volumes=volumes,
-                networks=["disco-main"],
-                command=service.command,
-                timeout=service.timeout,
-                stdout=log_output,
-                stderr=log_output,
-            )
     if prev_deployment_info is not None:
         async_worker.pause_project_crons(prev_deployment_info.project_name)
     if new_deployment_info is not None:

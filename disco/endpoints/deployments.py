@@ -17,6 +17,7 @@ from disco.models.db import AsyncSession
 from disco.utils import commandoutputs
 from disco.utils.deploymentflow import enqueue_deployment
 from disco.utils.deployments import (
+    cancel_deployment,
     create_deployment_sync,
     get_deployment_by_number,
     get_last_deployment,
@@ -91,6 +92,34 @@ def deployments_post(
             "number": deployment.number,
         },
     }
+
+
+@router.get(
+    "/api/projects/{project_name}/deployments/{deployment_number}",
+    dependencies=[Depends(get_api_key_wo_tx)],
+)
+async def deployment_delete(
+    project_name: str,
+    deployment_number: int,
+):
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
+        if project is None:
+            raise HTTPException(status_code=404)
+        if deployment_number == 0:
+            deployment = await get_last_deployment(dbsession, project)
+        else:
+            deployment = await get_deployment_by_number(
+                dbsession, project, deployment_number
+            )
+        if deployment is None:
+            raise HTTPException(status_code=404)
+        if deployment.status not in ["QUEUED", "PREPARING"]:
+            raise HTTPException(
+                422,
+                f"Cannot cancel deployment {deployment.number}, status {deployment.status} not one of QUEUED or PREPARING",
+            )
+        cancel_deployment(deployment)
 
 
 @router.get(

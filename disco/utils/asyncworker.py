@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, Awaitable, Callable
@@ -212,6 +213,7 @@ class ProjectCron(Cron):
 
 @dataclass
 class QueueTask(WorkerTask):
+    id: str
     run: Callable[[], Awaitable[None]]
 
 
@@ -222,7 +224,20 @@ class AsyncWorker:
         self._project_crons: list[ProjectCron] = []
         # not threadsafe, only use in async code
         self.queue: asyncio.Queue[QueueTask] = asyncio.Queue()
+        self._queue_tasks: dict[str, asyncio.Task] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
+
+    async def enqueue(self, async_callable: Callable[[], Awaitable[None]]) -> str:
+        queue_task = QueueTask(id=uuid.uuid4().hex, run=async_callable)
+        await async_worker.queue.put(queue_task)
+        return queue_task.id
+
+    def cancel_task(self, task_id: str) -> None:
+        task = self._queue_tasks.get(task_id)
+        if task is None:
+            log.info("Tried to cancel task that didn't exist, skipping")
+            return
+        task.cancel()
 
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
@@ -316,8 +331,8 @@ class AsyncWorker:
     async def _get_tasks(self) -> AsyncGenerator[asyncio.Task, None]:
         while not self._stopped:
             worker_tasks = await self._get_worker_tasks()
-            for worker_task in worker_tasks:
-                yield asyncio.create_task(self._process_worker_task(worker_task))
+            for w_task in worker_tasks:
+                yield asyncio.create_task(self._process_worker_task(w_task))
             next_second_delta = (
                 1000000 - datetime.now(timezone.utc).microsecond
             ) / 1000000
@@ -325,7 +340,12 @@ class AsyncWorker:
                 worker_task = await asyncio.wait_for(
                     self.queue.get(), next_second_delta
                 )
-                yield asyncio.create_task(self._process_worker_task(worker_task))
+                aio_task = asyncio.create_task(self._process_worker_task(worker_task))
+                self._queue_tasks[worker_task.id] = aio_task
+                aio_task.add_done_callback(
+                    lambda _: self._queue_tasks.pop(worker_task.id, None)
+                )
+                yield aio_task
             except asyncio.TimeoutError:
                 pass
 
@@ -462,8 +482,3 @@ class AsyncWorker:
 
 
 async_worker = AsyncWorker()
-
-
-async def enqueue(async_callable: Callable[[], Awaitable[None]]):
-    queue_task = QueueTask(run=async_callable)
-    await async_worker.queue.put(queue_task)

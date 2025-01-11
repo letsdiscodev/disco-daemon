@@ -217,10 +217,12 @@ async def get_deployment_by_number(
 
 DEPLOYMENT_STATUS = Literal[
     "QUEUED",
-    "IN_PROGRESS",
+    "PREPARING",
+    "REPLACING",
     "COMPLETE",
     "SKIPPED",
     "FAILED",
+    "CANCELLED",
 ]
 
 
@@ -229,6 +231,22 @@ def set_deployment_status(deployment: Deployment, status: DEPLOYMENT_STATUS) -> 
         "Setting deployment status of deployment %s to %s", deployment.log(), status
     )
     deployment.status = status
+
+
+def set_deployment_task_id(deployment: Deployment, task_id: str) -> None:
+    deployment.task_id = task_id
+
+
+def cancel_deployment(deployment: Deployment) -> None:
+    from disco.utils.asyncworker import async_worker
+
+    assert deployment.status in ["QUEUED", "PREPARING"]
+    if deployment.status == "QUEUED":
+        set_deployment_status(deployment, "SKIPPED")
+    elif deployment.status == "PREPARING":
+        assert deployment.task_id is not None
+        log.info("Cancelling deployment %s", deployment.id)
+        async_worker.cancel_task(deployment.task_id)
 
 
 def set_deployment_disco_file(deployment: Deployment, disco_file: str) -> None:
@@ -286,7 +304,7 @@ async def get_deployment_in_progress(
     stmt = (
         select(Deployment)
         .where(Deployment.project == project)
-        .where(Deployment.status == "IN_PROGRESS")
+        .where(Deployment.status.in_(["PREPARING", "REPLACING"]))
         .order_by(Deployment.number.desc())
         .limit(1)
     )
