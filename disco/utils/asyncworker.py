@@ -233,10 +233,7 @@ class AsyncWorker:
         return queue_task.id
 
     def cancel_task(self, task_id: str) -> None:
-        task = self._queue_tasks.get(task_id)
-        if task is None:
-            log.info("Tried to cancel task that didn't exist, skipping")
-            return
+        task = self._queue_tasks[task_id]
         task.cancel()
 
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
@@ -342,9 +339,17 @@ class AsyncWorker:
                 )
                 aio_task = asyncio.create_task(self._process_worker_task(worker_task))
                 self._queue_tasks[worker_task.id] = aio_task
-                aio_task.add_done_callback(
-                    lambda _: self._queue_tasks.pop(worker_task.id, None)
-                )
+
+                def get_remove_task_func(task_id: str):
+                    # defining function that returns function to create closure
+                    # otherwise, it would just remove the last task
+                    # that was added
+                    def remove_task(_):
+                        self._queue_tasks.pop(task_id)
+
+                    return remove_task
+
+                aio_task.add_done_callback(get_remove_task_func(worker_task.id))
                 yield aio_task
             except asyncio.TimeoutError:
                 pass

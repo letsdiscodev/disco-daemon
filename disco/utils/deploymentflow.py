@@ -7,8 +7,6 @@ import random
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Sequence
 
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
-
 from disco.models import (
     Deployment,
     DeploymentEnvironmentVariable,
@@ -96,7 +94,13 @@ class DeploymentInfo:
         )
 
 
-async def enqueue_deployment(deployment_id) -> None:
+async def enqueue_deployment(deployment_id: str) -> None:
+    """Must be called outside of an SQL transaction.
+
+    Because it creates an SQL transaction of its own.
+
+    """
+
     async def task() -> None:
         await process_deployment(deployment_id)
 
@@ -107,22 +111,27 @@ async def enqueue_deployment(deployment_id) -> None:
         set_deployment_task_id(deployment, task_id)
 
 
-async def process_deployment_if_any(dbsession: AsyncDBSession, project_id: str) -> None:
+async def process_deployment_if_any(project_id: str) -> None:
+    """Must be called outside of an SQL transaction."""
     from disco.utils.deployments import get_oldest_queued_deployment
     from disco.utils.projects import get_project_by_id
 
-    project = await get_project_by_id(dbsession, project_id)
-    if project is None:
-        log.warning("Project %s not found, not processing next deployment", project_id)
-        return
-    deployment = await get_oldest_queued_deployment(dbsession, project)
-    if deployment is None or deployment.status != "QUEUED":
-        log.info(
-            "No more queued deployments for project %s, done for now.",
-            project.log(),
-        )
-        return
-    await enqueue_deployment(deployment.id)
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_id(dbsession, project_id)
+        if project is None:
+            log.warning(
+                "Project %s not found, not processing next deployment", project_id
+            )
+            return
+        deployment = await get_oldest_queued_deployment(dbsession, project)
+        if deployment is None or deployment.status != "QUEUED":
+            log.info(
+                "No more queued deployments for project %s, done for now.",
+                project.log(),
+            )
+            return
+        deployment_id = deployment.id
+    await enqueue_deployment(deployment_id)
 
 
 async def process_deployment(deployment_id: str) -> None:
@@ -159,9 +168,14 @@ async def process_deployment(deployment_id: str) -> None:
                     f"before processing deployment {deployment.number}.\n"
                 )
                 return False
+        async with AsyncSession.begin() as dbsession:
+            deployment = await get_deployment_by_id(dbsession, deployment_id)
+            assert deployment is not None
+            project = await deployment.awaitable_attrs.project
             last_deployment = await get_last_deployment(
                 dbsession, project, statuses=["QUEUED"]
             )
+            process_deployment_of_project_id = None
             if last_deployment is not None and last_deployment.id != deployment_id:
                 await log_output(
                     f"Deployment {last_deployment.number} is latest, "
@@ -169,8 +183,10 @@ async def process_deployment(deployment_id: str) -> None:
                 )
                 await set_current_deployment_status("SKIPPED")
                 await log_output_terminate()
-                await process_deployment_if_any(dbsession, deployment.project_id)
-                return False
+                process_deployment_of_project_id = deployment.project_id
+        if process_deployment_of_project_id is not None:
+            await process_deployment_if_any(process_deployment_of_project_id)
+            return False
         return True
 
     should_continue = await asyncio.shield(maybe_keep_queued_or_skip())
@@ -229,7 +245,8 @@ async def process_deployment(deployment_id: str) -> None:
     async with AsyncSession.begin() as dbsession:
         deployment = await get_deployment_by_id(dbsession, deployment_id)
         assert deployment is not None
-        await process_deployment_if_any(dbsession, deployment.project_id)
+        project_id = deployment.project_id
+    await process_deployment_if_any(project_id)
 
 
 async def prepare_deployment(

@@ -6,12 +6,16 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy.orm.session import Session as DBSession
+from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sse_starlette import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
-from disco.auth import get_api_key_sync, get_api_key_wo_tx
-from disco.endpoints.dependencies import get_project_from_url_sync, get_sync_db
+from disco.auth import get_api_key, get_api_key_sync, get_api_key_wo_tx
+from disco.endpoints.dependencies import (
+    get_db,
+    get_project_from_url,
+    get_project_from_url_sync,
+)
 from disco.models import ApiKey, Project
 from disco.models.db import AsyncSession
 from disco.utils import commandoutputs
@@ -19,7 +23,7 @@ from disco.utils.apikeys import get_valid_api_key_by_id
 from disco.utils.deploymentflow import enqueue_deployment
 from disco.utils.deployments import (
     cancel_deployment,
-    create_deployment_sync,
+    create_deployment,
     get_deployment_by_number,
     get_deployments_with_status,
     get_last_deployment,
@@ -74,14 +78,14 @@ class DeploymentRequestBody(BaseModel):
     status_code=201,
     dependencies=[Depends(get_api_key_sync)],
 )
-def deployments_post(
-    dbsession: Annotated[DBSession, Depends(get_sync_db)],
-    project: Annotated[Project, Depends(get_project_from_url_sync)],
-    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
+async def deployments_post(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+    project: Annotated[Project, Depends(get_project_from_url)],
+    api_key: Annotated[ApiKey, Depends(get_api_key)],
     req_body: DeploymentRequestBody,
     background_tasks: BackgroundTasks,
 ):
-    deployment = create_deployment_sync(
+    deployment = await create_deployment(
         dbsession=dbsession,
         project=project,
         commit_hash=req_body.commit if req_body.disco_file is None else None,

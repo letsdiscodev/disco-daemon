@@ -21,7 +21,7 @@ from disco.utils.deployments import (
 from disco.utils.discofile import get_disco_file_from_str
 from disco.utils.encryption import decrypt
 from disco.utils.envvariables import (
-    get_env_variables_for_project,
+    get_env_variables_for_project_sync,
     set_env_variables,
 )
 from disco.utils.filesystem import (
@@ -243,7 +243,7 @@ def export_get(
     api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
 ):
     log.info("Exporting project %s by %s", project.log(), api_key.log())
-    env_variables = get_env_variables_for_project(dbsession, project)
+    env_variables = get_env_variables_for_project_sync(dbsession, project)
     deployment = get_live_deployment_sync(dbsession, project)
     volume_names = []
     if deployment is not None:
