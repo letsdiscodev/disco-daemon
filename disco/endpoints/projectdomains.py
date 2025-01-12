@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from disco.auth import get_api_key
 from disco.endpoints.dependencies import get_db, get_project_from_url
 from disco.models import ApiKey, Project, ProjectDomain
+from disco.utils import keyvalues
 from disco.utils.projectdomains import (
     add_domain,
     get_domain_by_id,
@@ -58,7 +59,27 @@ async def domains_post(
                     [
                         InitErrorDetails(
                             type=PydanticCustomError(
-                                "value_error", "Domain name already exists"
+                                "value_error", "Domain already taken by a project"
+                            ),
+                            loc=("body", "domain"),
+                            input=req_body.domain,
+                        )
+                    ],
+                )
+            ).errors()
+        )
+    disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
+    assert disco_host is not None
+    if req_body.domain == disco_host:
+        raise RequestValidationError(
+            errors=(
+                ValidationError.from_exception_data(
+                    "ValueError",
+                    [
+                        InitErrorDetails(
+                            type=PydanticCustomError(
+                                "value_error",
+                                "Domain already taken by Disco",
                             ),
                             loc=("body", "domain"),
                             input=req_body.domain,

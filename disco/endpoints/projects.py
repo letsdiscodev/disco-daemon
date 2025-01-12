@@ -13,6 +13,7 @@ from disco.auth import get_api_key, get_api_key_sync
 from disco.endpoints.dependencies import get_db, get_project_from_url_sync, get_sync_db
 from disco.endpoints.envvariables import EnvVariable
 from disco.models import ApiKey, Project
+from disco.utils import keyvalues
 from disco.utils.deploymentflow import enqueue_deployment
 from disco.utils.deployments import (
     create_deployment,
@@ -104,7 +105,26 @@ async def validate_create_project(
                             InitErrorDetails(
                                 type=PydanticCustomError(
                                     "value_error",
-                                    "Domain already taken by other project",
+                                    "Domain already taken by a project",
+                                ),
+                                loc=("body", "domain"),
+                                input=req_body.domain,
+                            )
+                        ],
+                    )
+                ).errors()
+            )
+        disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
+        if req_body.domain == disco_host:
+            raise RequestValidationError(
+                errors=(
+                    ValidationError.from_exception_data(
+                        "ValueError",
+                        [
+                            InitErrorDetails(
+                                type=PydanticCustomError(
+                                    "value_error",
+                                    "Domain already taken by Disco",
                                 ),
                                 loc=("body", "domain"),
                                 input=req_body.domain,
