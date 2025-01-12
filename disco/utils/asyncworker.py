@@ -328,17 +328,15 @@ class AsyncWorker:
     async def _get_tasks(self) -> AsyncGenerator[asyncio.Task, None]:
         while not self._stopped:
             worker_tasks = await self._get_worker_tasks()
-            for w_task in worker_tasks:
-                yield asyncio.create_task(self._process_worker_task(w_task))
+            for worker_task in worker_tasks:
+                yield asyncio.create_task(self._process_worker_task(worker_task))
             next_second_delta = (
                 1000000 - datetime.now(timezone.utc).microsecond
             ) / 1000000
             try:
-                worker_task = await asyncio.wait_for(
-                    self.queue.get(), next_second_delta
-                )
-                aio_task = asyncio.create_task(self._process_worker_task(worker_task))
-                self._queue_tasks[worker_task.id] = aio_task
+                w_task = await asyncio.wait_for(self.queue.get(), next_second_delta)
+                aio_task = asyncio.create_task(self._process_worker_task(w_task))
+                self._queue_tasks[w_task.id] = aio_task
 
                 def get_remove_task_func(task_id: str):
                     # defining function that returns function to create closure
@@ -349,7 +347,7 @@ class AsyncWorker:
 
                     return remove_task
 
-                aio_task.add_done_callback(get_remove_task_func(worker_task.id))
+                aio_task.add_done_callback(get_remove_task_func(w_task.id))
                 yield aio_task
             except asyncio.TimeoutError:
                 pass
