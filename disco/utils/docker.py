@@ -1275,12 +1275,12 @@ async def run(
         async def read_stdout() -> None:
             assert process.stdout is not None
             async for line in process.stdout:
-                stdout(line.decode("utf-8"))
+                await stdout(line.decode("utf-8"))
 
         async def read_stderr() -> None:
             assert process.stderr is not None
             async for line in process.stderr:
-                stderr(line.decode("utf-8"))
+                await stderr(line.decode("utf-8"))
 
         tasks = [
             asyncio.create_task(write_stdin()),

@@ -654,7 +654,7 @@ async def start_services(
                     command=service.command,
                 )
         except Exception:
-            log_output(f"Failed to start service {internal_service_name}\n")
+            await log_output(f"Failed to start service {internal_service_name}\n")
             try:
                 service_log = await docker.get_log_for_service(
                     service_name=internal_service_name
