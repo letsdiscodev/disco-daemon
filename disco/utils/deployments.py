@@ -19,25 +19,6 @@ from disco.utils.discofile import DiscoFile
 log = logging.getLogger(__name__)
 
 
-def maybe_create_deployment_sync(
-    dbsession: DBSession,
-    project: Project,
-    commit_hash: str | None,
-    disco_file: DiscoFile | None,
-    by_api_key: ApiKey | None,
-) -> Deployment | None:
-    number = get_next_deployment_number_sync(dbsession, project)
-    if number == 1 and commit_hash is None and disco_file is None:
-        return None
-    return create_deployment_sync(
-        dbsession=dbsession,
-        project=project,
-        commit_hash=commit_hash,
-        disco_file=disco_file,
-        by_api_key=by_api_key,
-    )
-
-
 async def maybe_create_deployment(
     dbsession: AsyncDBSession,
     project: Project,
