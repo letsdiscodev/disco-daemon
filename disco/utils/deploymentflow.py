@@ -222,6 +222,11 @@ async def process_deployment(deployment_id: str) -> None:
             recovery=False,
             log_output=log_output,
         )
+        await run_hook_deploy_start_after(
+            new_deployment_id=deployment_id,
+            prev_deployment_id=prev_deployment_id,
+            log_output=log_output,
+        )
         await log_output(f"Deployment complete {random.choice(['🪩', '🕺', '💃'])}\n")
         await set_current_deployment_status("COMPLETE")
     except asyncio.CancelledError:
@@ -332,6 +337,63 @@ async def run_hook_deploy_start_before(
             image=image,
             project_name=new_deployment_info.project_name,
             name=f"{new_deployment_info.project_name}-hook-deploy-start-before.{new_deployment_info.number}",
+            env_variables=env_variables,
+            volumes=volumes,
+            networks=["disco-main"],
+            command=service.command,
+            timeout=service.timeout,
+            stdout=log_output,
+            stderr=log_output,
+        )
+
+
+async def run_hook_deploy_start_after(
+    new_deployment_id: str | None,
+    prev_deployment_id: str | None,
+    log_output: Callable[[str], Awaitable[None]],
+):
+    new_deployment_info, _ = await get_deployment_info(
+        new_deployment_id, prev_deployment_id
+    )
+    assert new_deployment_info is not None
+    assert new_deployment_info.disco_file is not None
+    if (
+        "hook:deploy:start:after" in new_deployment_info.disco_file.services
+        and new_deployment_info.disco_file.services["hook:deploy:start:after"].type
+        == ServiceType.command
+    ):
+        await log_output("Runnning hook:deploy:start:after command\n")
+        service_name = "hook:deploy:start:after"
+        service = new_deployment_info.disco_file.services[service_name]
+        image = docker.get_image_name_for_service(
+            disco_file=new_deployment_info.disco_file,
+            service_name=service_name,
+            registry_host=new_deployment_info.registry_host,
+            project_name=new_deployment_info.project_name,
+            deployment_number=new_deployment_info.number,
+        )
+        env_variables = new_deployment_info.env_variables + [
+            ("DISCO_PROJECT_NAME", new_deployment_info.project_name),
+            ("DISCO_SERVICE_NAME", service_name),
+            ("DISCO_HOST", new_deployment_info.disco_host),
+            ("DISCO_DEPLOYMENT_NUMBER", str(new_deployment_info.number)),
+        ]
+        if new_deployment_info.commit_hash is not None:
+            env_variables += [
+                ("DISCO_COMMIT", new_deployment_info.commit_hash),
+            ]
+        volumes = [
+            (
+                "volume",
+                volume_name_for_project(v.name, new_deployment_info.project_id),
+                v.destination_path,
+            )
+            for v in new_deployment_info.disco_file.services[service_name].volumes
+        ]
+        await docker.run(
+            image=image,
+            project_name=new_deployment_info.project_name,
+            name=f"{new_deployment_info.project_name}-hook-deploy-start-after.{new_deployment_info.number}",
             env_variables=env_variables,
             volumes=volumes,
             networks=["disco-main"],
