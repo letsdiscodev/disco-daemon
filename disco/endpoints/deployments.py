@@ -128,17 +128,23 @@ async def deployment_delete(
             for deployment in deployments_preparing:
                 await cancel_deployment(deployment, by_api_key=api_key)
                 cancelled_deployments.append(deployment.number)
+            deployments_replacing = await get_deployments_with_status(
+                dbsession, project, "REPLACING"
+            )
+            for deployment in deployments_replacing:
+                await cancel_deployment(deployment, by_api_key=api_key)
+                cancelled_deployments.append(deployment.number)
         else:
             single_deployment = await get_deployment_by_number(
                 dbsession, project, deployment_number
             )
             if single_deployment is None:
                 raise HTTPException(status_code=404)
-            if single_deployment.status not in ["QUEUED", "PREPARING"]:
+            if single_deployment.status not in ["QUEUED", "PREPARING", "REPLACING"]:
                 raise HTTPException(
                     422,
                     f"Cannot cancel deployment {single_deployment.number}, "
-                    f"status {single_deployment.status} not one of QUEUED or PREPARING",
+                    f"status {single_deployment.status} not one of QUEUED, PREPARING, REPLACING",
                 )
             await cancel_deployment(single_deployment, by_api_key=api_key)
             cancelled_deployments.append(single_deployment.number)

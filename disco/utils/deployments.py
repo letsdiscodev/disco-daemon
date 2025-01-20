@@ -222,6 +222,7 @@ DEPLOYMENT_STATUS = Literal[
     "COMPLETE",
     "SKIPPED",
     "FAILED",
+    "CANCELLING",
     "CANCELLED",
 ]
 
@@ -253,7 +254,7 @@ def set_deployment_task_id(deployment: Deployment, task_id: str) -> None:
 async def cancel_deployment(deployment: Deployment, by_api_key: ApiKey) -> None:
     from disco.utils.asyncworker import async_worker
 
-    assert deployment.status in ["QUEUED", "PREPARING"]
+    assert deployment.status in ["QUEUED", "PREPARING", "REPLACING"]
     log.info(
         "Cancelling deployment %s (had status %s) by %s",
         deployment.id,
@@ -270,9 +271,11 @@ async def cancel_deployment(deployment: Deployment, by_api_key: ApiKey) -> None:
         await commandoutputs.store_output(output_source, "Cancelled\n")
         await commandoutputs.terminate(output_source)
         set_deployment_status(deployment, "CANCELLED")
-    elif deployment.status == "PREPARING":
+    elif deployment.status in ["PREPARING", "REPLACING"]:
         assert deployment.task_id is not None
         async_worker.cancel_task(deployment.task_id)
+    else:
+        raise NotImplementedError(f"Status {deployment.status}")
 
 
 def set_deployment_disco_file(deployment: Deployment, disco_file: str) -> None:

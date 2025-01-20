@@ -230,6 +230,14 @@ async def process_deployment(deployment_id: str) -> None:
         await log_output(f"Deployment complete {random.choice(['🪩', '🕺', '💃'])}\n")
         await set_current_deployment_status("COMPLETE")
     except asyncio.CancelledError:
+        await log_output("Cancelling\n")
+        await set_current_deployment_status("CANCELLING")
+        await replace_deployment(
+            new_deployment_id=prev_deployment_id,
+            prev_deployment_id=deployment_id,
+            recovery=True,
+            log_output=log_output,
+        )
         await log_output("Cancelled\n")
         await set_current_deployment_status("CANCELLED")
     except Exception:
