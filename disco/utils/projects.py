@@ -145,10 +145,6 @@ def delete_project(dbsession: DBSession, project: Project, by_api_key: ApiKey) -
             docker.remove_network_from_container("disco-caddy", network)
         except Exception:
             pass
-        try:
-            docker.remove_network_sync(network)
-        except Exception:
-            log.info("Failed to remove network %s", network)
     async_worker.remove_project_crons(project.name)
     if project.github_repo is not None:
         dbsession.delete(project.github_repo)

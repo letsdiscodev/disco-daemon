@@ -448,8 +448,6 @@ async def replace_deployment(
     await stop_prev_services(
         new_deployment_info, prev_deployment_info, recovery, log_output
     )
-    if new_deployment_info is not None:
-        await remove_unused_networks(new_deployment_info)
 
 
 async def get_deployment_info(
@@ -874,27 +872,6 @@ async def stop_prev_services(
             await log_output(f"Failed to stop service {service}\n")
             if not recovery:
                 raise
-
-
-async def remove_unused_networks(
-    new_deployment_info: DeploymentInfo,
-) -> None:
-    try:
-        networks_to_keep = await docker.list_networks_for_deployment(
-            project_name=new_deployment_info.project_name,
-            deployment_number=new_deployment_info.number,
-        )
-        project_networks = await docker.list_networks_for_project(
-            project_name=new_deployment_info.project_name,
-        )
-        for network_name in project_networks:
-            if network_name not in networks_to_keep:
-                try:
-                    await docker.remove_network(network_name)
-                except Exception:
-                    log.error("Failed to remove network %s", network_name)
-    except Exception:
-        log.error("Failed to remove networks")
 
 
 async def prepare_static_site(

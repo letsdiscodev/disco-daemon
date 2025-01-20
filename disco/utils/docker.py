@@ -954,6 +954,8 @@ def pull(image: str) -> None:
 
 
 def remove_network_sync(name: str) -> None:
+    # XXX Do not remove networks, as Docker Swarm fails to free IP addresses
+    # https://github.com/moby/moby/issues/37338
     log.info("Removing network %s", name)
     args = [
         "docker",
@@ -974,29 +976,6 @@ def remove_network_sync(name: str) -> None:
         log.info("Output: %s", line_text)
 
     process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-
-
-async def remove_network(name: str) -> None:
-    log.info("Removing network %s", name)
-    args = [
-        "docker",
-        "network",
-        "rm",
-        name,
-    ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate()
-    if len(stdout) > 0:
-        log.info("Stdout: %s", stdout)
-    if len(stderr) > 0:
-        log.info("Stderr: %s", stderr)
-    await process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
 
