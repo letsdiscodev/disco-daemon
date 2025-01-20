@@ -90,7 +90,7 @@ async def env_variables_post(
 
 
 async def get_env_variable_from_url(
-    dbsession: Annotated[AsyncDBSession, Depends(get_sync_db)],
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
     project: Annotated[Project, Depends(get_project_from_url)],
     env_var_name: Annotated[str, Path()],
 ):
