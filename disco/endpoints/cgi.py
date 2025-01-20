@@ -196,6 +196,7 @@ async def request_cgi(
             ("DISCO_PROJECT_NAME", project_name),
             ("DISCO_SERVICE_NAME", service_name),
             ("DISCO_HOST", await keyvalues.get_value_str(dbsession, "DISCO_HOST")),
+            ("DISCO_DEPLOYMENT_NUMBER", str(deployment.number)),
         ]
         if include_api_key:
             log.info("Including DISCO_API_KEY env variable")

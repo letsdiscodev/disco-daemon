@@ -224,6 +224,7 @@ async def volume_set(
             ("DISCO_PROJECT_NAME", project_name),
             ("DISCO_SERVICE_NAME", service_name),
             ("DISCO_HOST", disco_host),
+            ("DISCO_DEPLOYMENT_NUMBER", str(deployment_number)),
         ]
         if commit_hash is not None:
             env_variables += [

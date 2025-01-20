@@ -314,6 +314,7 @@ async def run_hook_deploy_start_before(
             ("DISCO_PROJECT_NAME", new_deployment_info.project_name),
             ("DISCO_SERVICE_NAME", service_name),
             ("DISCO_HOST", new_deployment_info.disco_host),
+            ("DISCO_DEPLOYMENT_NUMBER", str(new_deployment_info.number)),
         ]
         if new_deployment_info.commit_hash is not None:
             env_variables += [
@@ -496,6 +497,7 @@ async def build_images(
     env_variables = new_deployment_info.env_variables + [
         ("DISCO_PROJECT_NAME", new_deployment_info.project_name),
         ("DISCO_HOST", new_deployment_info.disco_host),
+        ("DISCO_DEPLOYMENT_NUMBER", str(new_deployment_info.number)),
     ]
     if new_deployment_info.commit_hash is not None:
         env_variables += [
@@ -612,6 +614,7 @@ async def start_services(
             ("DISCO_PROJECT_NAME", new_deployment_info.project_name),
             ("DISCO_SERVICE_NAME", service_name),
             ("DISCO_HOST", new_deployment_info.disco_host),
+            ("DISCO_DEPLOYMENT_NUMBER", str(new_deployment_info.number)),
         ]
         if new_deployment_info.commit_hash is not None:
             env_variables += [

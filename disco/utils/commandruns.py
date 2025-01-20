@@ -58,6 +58,7 @@ def create_command_run(
         ("DISCO_PROJECT_NAME", project_name),
         ("DISCO_SERVICE_NAME", service),
         ("DISCO_HOST", keyvalues.get_value_str_sync(dbsession, "DISCO_HOST")),
+        ("DISCO_DEPLOYMENT_NUMBER", str(deployment.number)),
     ]
     if deployment.commit_hash is not None:
         env_variables += [
