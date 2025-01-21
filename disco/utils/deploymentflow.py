@@ -431,7 +431,7 @@ async def replace_deployment(
         async_worker.pause_project_crons(prev_deployment_info.project_name)
     if new_deployment_info is not None:
         assert new_deployment_info.disco_file is not None
-        await create_networks(new_deployment_info, recovery)
+        await create_network(new_deployment_info, recovery)
         await stop_conflicting_port_services(
             new_deployment_info, prev_deployment_info, recovery, log_output
         )
@@ -631,7 +631,7 @@ async def push_images(
         await docker.push_image(image)
 
 
-async def create_networks(
+async def create_network(
     new_deployment_info: DeploymentInfo,
     recovery: bool,
 ) -> None:
@@ -639,12 +639,14 @@ async def create_networks(
         network_name = docker.deployment_network_name(
             new_deployment_info.project_name, new_deployment_info.number
         )
-        if not recovery or not await docker.network_exists(network_name):
-            await docker.create_network(
-                network_name,
-                project_name=new_deployment_info.project_name,
-                deployment_number=new_deployment_info.number,
-            )
+        if await docker.network_exists(network_name):
+            log.info("Network %s existed, not creating", network_name)
+            return
+        await docker.create_network(
+            network_name,
+            project_name=new_deployment_info.project_name,
+            deployment_number=new_deployment_info.number,
+        )
     except Exception:
         if recovery:
             log.error("Failed to create network %s", network_name)
