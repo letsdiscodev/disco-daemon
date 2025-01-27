@@ -1,4 +1,7 @@
+import json
 import logging
+import time
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated
 
@@ -7,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_core import InitErrorDetails, PydanticCustomError
 from sqlalchemy.orm.session import Session as DBSession
+from sse_starlette import EventSourceResponse, ServerSentEvent
 
 import disco
 from disco.auth import get_api_key_sync
@@ -15,6 +19,7 @@ from disco.models import ApiKey
 from disco.utils import docker, keyvalues
 from disco.utils.meta import set_disco_host, update_disco
 from disco.utils.projects import get_project_by_domain_sync
+from disco.utils.stats import AsyncDockerStats
 
 log = logging.getLogger(__name__)
 
@@ -115,3 +120,28 @@ def host_post(
         "discoHost": keyvalues.get_value_sync(dbsession, "DISCO_HOST"),
         "registryHost": keyvalues.get_value_sync(dbsession, "REGISTRY_HOST"),
     }
+
+
+@router.get("/api/disco/stats-experimental")
+async def stats_experimental():
+    return EventSourceResponse(read_stats())
+
+
+async def read_stats():
+    log.info("Starting stats")
+    stats_blah = AsyncDockerStats()
+    try:
+        while True:
+            containers_stats = await stats_blah.get_all_container_stats()
+            node_stats = {
+                "node_name": "leader",
+                "read": datetime.now(timezone.utc).isoformat(),
+                "stats": containers_stats,
+            }
+            yield ServerSentEvent(
+                event="stats",
+                data=json.dumps(node_stats),
+            )
+            time.sleep(3)
+    finally:
+        log.info("Stopping stats")

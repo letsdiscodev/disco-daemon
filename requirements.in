@@ -1,3 +1,4 @@
+aiohttp==3.11.11
 aiofiles==24.1.0
 aiosqlite==0.20.0
 alembic==1.13.1

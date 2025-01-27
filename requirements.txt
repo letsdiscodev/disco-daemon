@@ -2,6 +2,12 @@
 #    uv pip compile requirements.in -o requirements.txt
 aiofiles==24.1.0
     # via -r requirements.in
+aiohappyeyeballs==2.4.4
+    # via aiohttp
+aiohttp==3.11.11
+    # via -r requirements.in
+aiosignal==1.3.2
+    # via aiohttp
 aiosqlite==0.20.0
     # via -r requirements.in
 alembic==1.13.1
@@ -14,6 +20,8 @@ anyio==4.3.0
     #   sse-starlette
     #   starlette
     #   watchfiles
+attrs==25.1.0
+    # via aiohttp
 bcrypt==4.1.3
     # via -r requirements.in
 certifi==2024.2.2
@@ -47,6 +55,10 @@ fastapi-cli==0.0.2
     # via fastapi
 fire==0.5.0
     # via randomname
+frozenlist==1.5.0
+    # via
+    #   aiohttp
+    #   aiosignal
 greenlet==3.0.3
     # via sqlalchemy
 h11==0.14.0
@@ -65,6 +77,7 @@ idna==3.6
     #   email-validator
     #   httpx
     #   requests
+    #   yarl
 jinja2==3.1.4
     # via fastapi
 mako==1.3.2
@@ -77,12 +90,20 @@ markupsafe==2.1.5
     #   mako
 mdurl==0.1.2
     # via markdown-it-py
+multidict==6.1.0
+    # via
+    #   aiohttp
+    #   yarl
 mypy==1.10.0
     # via -r requirements.in
 mypy-extensions==1.0.0
     # via mypy
 orjson==3.10.3
     # via fastapi
+propcache==0.2.1
+    # via
+    #   aiohttp
+    #   yarl
 pycparser==2.21
     # via cffi
 pydantic==2.7.1
@@ -163,3 +184,5 @@ watchfiles==0.21.0
     # via uvicorn
 websockets==12.0
     # via uvicorn
+yarl==1.18.3
+    # via aiohttp
