@@ -114,7 +114,13 @@ async def get_projects_by_github_app_repo(
     return result.scalars().all()
 
 
-def get_all_projects(dbsession: DBSession) -> list[Project]:
+async def get_all_projects(dbsession: AsyncDBSession) -> Sequence[Project]:
+    stmt = select(Project).order_by(Project.name)
+    result = await dbsession.execute(stmt)
+    return result.scalars().all()
+
+
+def get_all_projects_sync(dbsession: DBSession) -> list[Project]:
     return dbsession.query(Project).order_by(Project.name).all()
 
 

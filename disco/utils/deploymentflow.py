@@ -701,7 +701,7 @@ async def start_services(
         try:
             if not recovery or not await docker.service_exists(internal_service_name):
                 await log_output(f"Starting service {internal_service_name}\n")
-                await docker.start_service(
+                await docker.start_project_service(
                     image=image,
                     name=internal_service_name,
                     project_name=new_deployment_info.project_name,

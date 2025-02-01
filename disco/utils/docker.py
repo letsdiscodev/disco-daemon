@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import signal
@@ -7,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from multiprocessing import cpu_count
 from typing import AsyncGenerator, Awaitable, Callable
 
+import disco
 from disco.utils.discofile import DiscoFile, Service
 from disco.utils.filesystem import project_path
 
@@ -193,7 +195,7 @@ def start_service_sync(
         raise Exception(f"Docker returned status {process.returncode}")
 
 
-async def start_service(
+async def start_project_service(
     image: str,
     name: str,
     project_name: str,
@@ -413,17 +415,15 @@ async def stop_service(name: str) -> None:
     process = await asyncio.create_subprocess_exec(
         *args,
         stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        stderr=subprocess.PIPE,
     )
-    assert process.stdout is not None
-    async for line in process.stdout:
-        line_text = line.decode("utf-8")
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-
+    stdout, stderr = await process.communicate()
     await process.wait()
     if process.returncode != 0:
+        if len(stdout) > 0:
+            log.info("Stdout: %s", stdout)
+        if len(stderr) > 0:
+            log.info("Stderr: %s", stderr)
         raise Exception(f"Docker returned status {process.returncode}")
 
 
@@ -720,7 +720,7 @@ async def _start_syslog_service(disco_host: str, syslog_urls: list[str]) -> None
         f"SYSLOG_HOSTNAME={disco_host}",
         "--mode",
         "global",
-        "gliderlabs/logspout",
+        "gliderlabs/logspout:latest",
         ",".join(syslog_urls),
     ]
     process = await asyncio.create_subprocess_exec(
@@ -1590,6 +1590,86 @@ async def start_container(
     await process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
+
+
+async def ls_images_swarm() -> list[tuple[str, str]]:
+    LS_SERVICE_NAME = "disco-ls-images"
+    images = set()
+    try:
+        args = [
+            "docker",
+            "service",
+            "create",
+            "--name",
+            LS_SERVICE_NAME,
+            "--mode",
+            "global-job",
+            "--mount",
+            "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+            f"letsdiscodev/daemon:{disco.__version__}",
+            "docker",
+            "image",
+            "ls",
+            "--format",
+            '{"repository": "{{.Repository}}", "tag": "{{.Tag}}"}',
+        ]
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+        await process.wait()
+        if process.returncode != 0:
+            if len(stdout) > 0:
+                log.info("Stdout: %s", stdout)
+            if len(stderr) > 0:
+                log.info("Stderr: %s", stderr)
+            raise Exception(f"Docker returned status {process.returncode}")
+        output = await get_log_for_service(LS_SERVICE_NAME)
+        for line in output.split("\n"):
+            if len(line.strip()) == 0:
+                continue
+            image = json.loads(line)
+            images.add((image["repository"], image["tag"]))
+    finally:
+        await stop_service(LS_SERVICE_NAME)
+    return list(images)
+
+
+async def rm_image_swarm(image: str) -> None:
+    RM_SERVICE_NAME = "disco-rm-images"
+    try:
+        args = [
+            "docker",
+            "service",
+            "create",
+            "--name",
+            RM_SERVICE_NAME,
+            "--mode",
+            "global-job",
+            "--mount",
+            "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+            f"letsdiscodev/daemon:{disco.__version__}",
+            "sh",
+            "-c",
+            f"docker image rm {image} 2>/dev/null || true",
+        ]
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+        await process.wait()
+        if process.returncode != 0:
+            if len(stdout) > 0:
+                log.info("Stdout: %s", stdout)
+            if len(stderr) > 0:
+                log.info("Stderr: %s", stderr)
+            raise Exception(f"Docker returned status {process.returncode}")
+    finally:
+        await stop_service(RM_SERVICE_NAME)
 
 
 EASY_MODE_DOCKERFILE = """

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm.session import Session as DBSession
 
+from disco import config
 from disco.auth import get_api_key_sync, get_api_key_wo_tx
 from disco.endpoints.dependencies import get_project_from_url_sync, get_sync_db
 from disco.models import ApiKey, Project
@@ -74,7 +75,7 @@ def volume_get(
             "/volume",
             "--mount",
             f"type=volume,source={source},destination=/volume",
-            "busybox",
+            f"busybox:{config.BUSYBOX_VERSION}",
             "tar",
             "--create",
             "--gzip",
@@ -181,7 +182,7 @@ async def volume_set(
         "/volume",
         "--mount",
         f"type=volume,source={source},destination=/volume",
-        "busybox",
+        f"busybox:{config.BUSYBOX_VERSION}",
         "tar",
         "--extract",
         "--gzip",
@@ -239,7 +240,7 @@ async def volume_set(
             deployment_number=deployment_number,
         )
         log.info("Starting %s", internal_service_name)
-        await docker.start_service(
+        await docker.start_project_service(
             image=image,
             name=internal_service_name,
             project_name=project_name,

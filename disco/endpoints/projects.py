@@ -35,7 +35,7 @@ from disco.utils.projectdomains import add_domain
 from disco.utils.projects import (
     create_project,
     delete_project,
-    get_all_projects,
+    get_all_projects_sync,
     get_project_by_domain,
     get_project_by_name,
     set_project_github_repo,
@@ -229,7 +229,7 @@ async def projects_post(
 
 @router.get("/api/projects")
 def projects_get(dbsession: Annotated[DBSession, Depends(get_sync_db)]):
-    projects = get_all_projects(dbsession)
+    projects = get_all_projects_sync(dbsession)
     return {
         "projects": [
             {

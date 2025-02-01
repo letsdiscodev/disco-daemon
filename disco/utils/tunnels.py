@@ -4,6 +4,7 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from disco import config
 from disco.utils import docker
 
 log = logging.getLogger(__name__)
@@ -32,7 +33,7 @@ TUNNEL_CMD = [
     "disco-main",
     "--label",
     "disco.tunnels",
-    "letsdiscodev/sshtunnel",
+    f"letsdiscodev/sshtunnel:{config.DISCO_TUNNEL_VERSION}",
 ]
 
 

@@ -14,6 +14,7 @@ from disco.models.db import Session
 from disco.utils import docker, keyvalues
 from disco.utils.discofile import DiscoFile, ServiceType, get_disco_file_from_str
 from disco.utils.encryption import decrypt
+from disco.utils.imagecleanup import remove_unused_images
 from disco.utils.projects import volume_name_for_project
 
 log = logging.getLogger(__name__)
@@ -60,6 +61,7 @@ async def cron_day() -> None:
 
     log.info("Disco day cron")
     await clean_up_rogue_syslogs()
+    await remove_unused_images()
 
 
 @dataclass
@@ -453,13 +455,13 @@ class AsyncWorker:
 
     def _load_project_crons(self) -> list[ProjectCron]:
         from disco.utils.deployments import get_live_deployment_sync
-        from disco.utils.projects import get_all_projects
+        from disco.utils.projects import get_all_projects_sync
 
         crons: list[ProjectCron] = []
         with Session.begin() as dbsession:
             disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
             assert disco_host is not None
-            projects = get_all_projects(dbsession)
+            projects = get_all_projects_sync(dbsession)
             for project in projects:
                 deployment = get_live_deployment_sync(dbsession, project)
                 if deployment is None:

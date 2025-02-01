@@ -42,7 +42,7 @@ LOGSPOUT_CMD = [
     "ALLOW_TTY=true",
     "--label",
     "disco.syslogs",
-    "gliderlabs/logspout",
+    "gliderlabs/logspout:latest",
     "raw://disco:{port}",
 ]
 
