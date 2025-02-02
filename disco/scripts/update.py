@@ -137,15 +137,21 @@ def alembic_upgrade(version_hash: str) -> None:
     command.upgrade(config, version_hash)
 
 
+def task_0_18_x(image: str) -> None:
+    print("Updating from 0.18.x to 0.19.0")
+    with Session.begin() as dbsession:
+        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.19.0")
+
+
 def task_0_17_x(image: str) -> None:
-    print("Upating from 0.17.x to 0.18.x")
+    print("Updating from 0.17.x to 0.18.0")
     alembic_upgrade("9087484963d4")
     with Session.begin() as dbsession:
         keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.18.0")
 
 
 def task_0_16_x(image: str) -> None:
-    print("Upating from 0.16.x to 0.17.x")
+    print("Updating from 0.16.x to 0.17.0")
     with Session.begin() as dbsession:
         host_home = keyvalues.get_value_sync(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
@@ -213,19 +219,19 @@ def task_0_16_x(image: str) -> None:
 
 
 def task_0_15_x(image: str) -> None:
-    print("Upating from 0.15.x to 0.16.x")
+    print("Updating from 0.15.x to 0.16.0")
     with Session.begin() as dbsession:
         keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.16.0")
 
 
 def task_0_14_x(image: str) -> None:
-    print("Upating from 0.14.x to 0.15.x")
+    print("Updating from 0.14.x to 0.15.0")
     with Session.begin() as dbsession:
         keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.15.0")
 
 
 def task_0_13_x(image: str) -> None:
-    print("Upating from 0.13.x to 0.14.x")
+    print("Updating from 0.13.x to 0.14.0")
     alembic_upgrade("b2c4ac1469de")
     with Session.begin() as dbsession:
         keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.14.0")
@@ -234,7 +240,7 @@ def task_0_13_x(image: str) -> None:
 def task_0_12_x(image: str) -> None:
     from disco.scripts.init import start_caddy
 
-    print("Upating from 0.12.x to 0.13.x")
+    print("Updating from 0.12.x to 0.13.0")
     with Session.begin() as dbsession:
         host_home = keyvalues.get_value_sync(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
@@ -260,7 +266,7 @@ def task_0_12_x(image: str) -> None:
 def task_0_11_x(image: str) -> None:
     from disco.utils import docker
 
-    print("Upating from 0.11.x to 0.12.x")
+    print("Updating from 0.11.x to 0.12.0")
     alembic_upgrade("b570b8c2424d")
     docker.create_network_sync("disco-main")
     services_output = _run_cmd(
@@ -313,7 +319,7 @@ def task_0_11_x(image: str) -> None:
 
 
 def task_0_10_x(image: str) -> None:
-    print("Upating from 0.10.x to 0.11.x")
+    print("Updating from 0.10.x to 0.11.0")
     directory = "/disco/data/commandoutputs"
     if not os.path.isdir(directory):
         os.makedirs(directory)
@@ -367,13 +373,13 @@ def task_0_10_x(image: str) -> None:
 
 
 def task_0_9_x(image: str) -> None:
-    print("Upating from 0.9.x to 0.10.x")
+    print("Updating from 0.9.x to 0.10.0")
     with Session.begin() as dbsession:
         keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.10.0")
 
 
 def task_0_8_x(image: str) -> None:
-    print("Upating from 0.8.x to 0.9.x")
+    print("Updating from 0.8.x to 0.9.0")
     from disco.scripts.init import start_caddy
 
     with Session.begin() as dbsession:
@@ -429,7 +435,7 @@ def task_0_8_x(image: str) -> None:
 def task_0_7_x(image: str) -> None:
     from disco.models import ProjectGithubRepo
 
-    print("Upating from 0.7.x to 0.8.x")
+    print("Updating from 0.7.x to 0.8.0")
     alembic_upgrade("3fe4af6efa33")
     with Session.begin() as dbsession:
         sql = """
@@ -455,7 +461,7 @@ def task_0_6_x(image: str) -> None:
     from disco.models import GithubApp, ProjectDomain
     from disco.utils.projectdomains import _get_apex_www_redirect_for_domain
 
-    print("Upating from 0.6.x to 0.7.x")
+    print("Updating from 0.6.x to 0.7.0")
     alembic_upgrade("97e98737cba8")
     with Session.begin() as dbsession:
         rows = dbsession.execute(text("SELECT id, domain FROM projects;")).all()
@@ -507,14 +513,14 @@ def task_0_6_x(image: str) -> None:
 
 
 def task_0_5_x(image: str) -> None:
-    print("Upating from 0.5.x to 0.6.x")
+    print("Updating from 0.5.x to 0.6.0")
     alembic_upgrade("5540c20f9acd")
     with Session.begin() as dbsession:
         keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.6.0")
 
 
 def task_0_4_x(image: str) -> None:
-    print("Upating from 0.4.x to 0.5.x")
+    print("Updating from 0.4.x to 0.5.0")
     alembic_upgrade("87c62632dfd1")
     with Session.begin() as dbsession:
         disco_ip = keyvalues.get_value_sync(dbsession=dbsession, key="DISCO_IP")
@@ -579,21 +585,21 @@ def task_0_4_x(image: str) -> None:
 
 
 def task_0_3_x(image: str) -> None:
-    print("Upating from 0.3.x to 0.4.x")
+    print("Updating from 0.3.x to 0.4.0")
     alembic_upgrade("3eb8871ccb85")
     with Session.begin() as dbsession:
         keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.4.0")
 
 
 def task_0_2_x(image: str) -> None:
-    print("Upating from 0.2.x to 0.3.x")
+    print("Updating from 0.2.x to 0.3.0")
     alembic_upgrade("d0cba3cd3238")
     with Session.begin() as dbsession:
         keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.3.0")
 
 
 def task_0_1_x(image: str) -> None:
-    print("Upating from 0.1.x to 0.2.x")
+    print("Updating from 0.1.x to 0.2.0")
     alembic_upgrade("eba27af20db2")
     with Session.begin() as dbsession:
         keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.2.0")
@@ -601,6 +607,7 @@ def task_0_1_x(image: str) -> None:
 
 def task_patch(image: str) -> None:
     with Session.begin() as dbsession:
+        print(f"Updating to {disco.__version__}")
         keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value=disco.__version__
         )
@@ -642,6 +649,8 @@ def get_update_function_for_version(version: str) -> Callable[[str], None]:
     if version.startswith("0.17."):
         return task_0_17_x
     if version.startswith("0.18."):
-        assert disco.__version__.startswith("0.18.")
+        return task_0_18_x
+    if version.startswith("0.19."):
+        assert disco.__version__.startswith("0.19.")
         return task_patch
     raise NotImplementedError(f"Update missing for version {version}")
