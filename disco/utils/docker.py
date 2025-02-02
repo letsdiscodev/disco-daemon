@@ -9,6 +9,7 @@ from multiprocessing import cpu_count
 from typing import AsyncGenerator, Awaitable, Callable
 
 import disco
+from disco.errors import ProcessStatusError
 from disco.utils.discofile import DiscoFile, Service
 from disco.utils.filesystem import project_path
 
@@ -1064,96 +1065,8 @@ def remove_network_from_container(container: str, network: str) -> None:
         raise Exception(f"Docker returned status {process.returncode}")
 
 
-def run_sync(
-    image: str,
-    project_name: str,
-    name: str,
-    env_variables: list[tuple[str, str]],
-    volumes: list[tuple[str, str, str]],
-    networks: list[str],
-    command: str | None,
-    log_output: Callable[[str], None],
-    workdir: str | None = None,
-    timeout: int = 600,
-) -> None:
-    try:
-        more_args = []
-        for var_name, var_value in env_variables:
-            more_args.append("--env")
-            more_args.append(f"{var_name}={var_value}")
-        for volume_type, source, destination in volumes:
-            assert volume_type in ["bind", "volume"]
-            more_args.append("--mount")
-            more_args.append(
-                f"type={volume_type},source={source},destination={destination}"
-            )
-        if workdir is not None:
-            more_args.append("--workdir")
-            more_args.append(workdir)
-        args = [
-            "docker",
-            "container",
-            "create",
-            "--name",
-            name,
-            "--label",
-            f"disco.project.name={project_name}",
-            "--label",
-            f"disco.service.name={name}",
-            *more_args,
-            image,
-            *(command.split() if command is not None else []),
-        ]
-        process = subprocess.Popen(
-            args=args,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        assert process.stdout is not None
-        timeout_dt = datetime.now(timezone.utc) + timedelta(seconds=timeout)
-        for line in process.stdout:
-            line_text = line.decode("utf-8")
-            if line_text.endswith("\n"):
-                line_text = line_text[:-1]
-            log.info("Output: %s", line_text)
-            if datetime.now(timezone.utc) > timeout_dt:
-                process.terminate()
-                raise Exception(
-                    f"Running command failed, timeout after {timeout} seconds"
-                )
-
-        process.wait()
-        if process.returncode != 0:
-            raise Exception(f"Docker returned status {process.returncode}")
-        for network in networks:
-            add_network_to_container(container=name, network=network)
-        args = [
-            "docker",
-            "container",
-            "start",
-            "--attach",
-            name,
-        ]
-        process = subprocess.Popen(
-            args=args,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
-        assert process.stdout is not None
-        timeout_dt = datetime.now(timezone.utc) + timedelta(seconds=timeout)
-        for line in process.stdout:
-            log_output(line.decode("utf-8"))
-            if datetime.now(timezone.utc) > timeout_dt:
-                process.terminate()
-                raise Exception(
-                    f"Running command failed, timeout after {timeout} seconds"
-                )
-
-        process.wait()
-        if process.returncode != 0:
-            raise Exception(f"Docker returned status {process.returncode}")
-    finally:
-        remove_container_sync(name)
+class CommandRunProcessStatusError(ProcessStatusError):
+    pass
 
 
 async def run(
@@ -1205,23 +1118,25 @@ async def run(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
-        assert process.stdout is not None
 
-        timeout_dt = datetime.now(timezone.utc) + timedelta(seconds=timeout)
-        async for line in process.stdout:
-            line_text = line.decode("utf-8")
-            if line_text.endswith("\n"):
-                line_text = line_text[:-1]
-            log.info("Output: %s", line_text)
-            if datetime.now(timezone.utc) > timeout_dt:
-                process.terminate()
-                raise Exception(
-                    f"Running command failed, timeout after {timeout} seconds"
-                )
+        async def read_create_container_stdout() -> None:
+            assert process.stdout is not None
+            async for line in process.stdout:
+                line_text = line.decode("utf-8")
+                if line_text.endswith("\n"):
+                    line_text = line_text[:-1]
+                log.info("Output: %s", line_text)
+
+        try:
+            async with asyncio.timeout(timeout):
+                await asyncio.wait_for(read_create_container_stdout(), timeout)
+        except TimeoutError:
+            process.terminate()
+            raise
 
         await process.wait()
         if process.returncode != 0:
-            raise Exception(f"Docker returned status {process.returncode}")
+            raise ProcessStatusError(status=process.returncode)
         for network in networks:
             await add_network_to_container_async(container=name, network=network)
         more_args = []
@@ -1272,11 +1187,11 @@ async def run(
                 await asyncio.gather(*tasks)
         except TimeoutError:
             process.terminate()
-            raise Exception(f"Running command failed, timeout after {timeout} seconds")
+            raise
 
         await process.wait()
         if process.returncode != 0:
-            raise Exception(f"Docker returned status {process.returncode}")
+            raise CommandRunProcessStatusError(status=process.returncode)
     finally:
         await remove_container(name)
 

@@ -136,7 +136,10 @@ async def process_deployment_if_any(project_id: str) -> None:
 
 async def process_deployment(deployment_id: str) -> None:
     async def log_output(output: str) -> None:
-        log.info("Deployment %s: %s", deployment_id, output)
+        output_for_log = output
+        if output_for_log.endswith("\n"):
+            output_for_log = output_for_log[:-1]
+        log.info("Deployment %s: %s", deployment_id, output_for_log)
         await commandoutputs.store_output(
             commandoutputs.deployment_source(deployment_id), output
         )

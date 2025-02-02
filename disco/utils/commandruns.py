@@ -1,7 +1,6 @@
-import asyncio
 import logging
 import uuid
-from typing import Callable
+from typing import Awaitable, Callable
 
 from sqlalchemy.orm.session import Session as DBSession
 
@@ -22,7 +21,7 @@ def create_command_run(
     command: str,
     timeout: int,
     by_api_key: ApiKey,
-) -> tuple[CommandRun, Callable[[], None]]:
+) -> tuple[CommandRun, Callable[[], Awaitable[None]]]:
     disco_file: DiscoFile = get_disco_file_from_str(deployment.disco_file)
     assert deployment.status == "COMPLETE"
     assert service in disco_file.services
@@ -71,41 +70,42 @@ def create_command_run(
         for v in disco_file.services[service].volumes
     ]
 
-    def func() -> None:
-        asyncio.run(commandoutputs.init(commandoutputs.run_source(run_id)))
+    async def func() -> None:
+        await commandoutputs.init(commandoutputs.run_source(run_id))
 
-        def log_output(output: str) -> None:
-            log.info("Command run %s %s: %s", project_name, run_number, output)
+        async def log_output(output: str) -> None:
+            output_for_log = output
+            if output_for_log.endswith("\n"):
+                output_for_log = output_for_log[:-1]
+            log.info("Command run %s %s: %s", project_name, run_number, output_for_log)
+            await commandoutputs.store_output(commandoutputs.run_source(run_id), output)
 
-            async def async_log_output():
-                await commandoutputs.store_output(
-                    commandoutputs.run_source(run_id), output
-                )
+        async def log_output_terminate():
+            await commandoutputs.terminate(commandoutputs.run_source(run_id))
 
-            asyncio.run(async_log_output())
-
-        def log_output_terminate():
-            async def async_log_output():
-                await commandoutputs.terminate(commandoutputs.run_source(run_id))
-
-            asyncio.run(async_log_output())
-
+        name = f"{project_name}-run.{run_number}"
         try:
-            docker.run_sync(
+            await docker.run(
                 image=image,
                 project_name=project_name,
-                name=f"{project_name}-run.{run_number}",
+                name=name,
                 env_variables=env_variables,
                 volumes=volumes,
                 networks=[network, "disco-main"],
                 command=command,
                 timeout=timeout,
-                log_output=log_output,
+                stdout=log_output,
+                stderr=log_output,
             )
+        except TimeoutError:
+            await log_output(f"Timed out after {timeout} seconds\n")
+        except docker.CommandRunProcessStatusError as ex:
+            await log_output(f"Exited with code {ex.status}\n")
         except Exception:
-            log_output("Failed")
+            log.exception("Error when running command %s (%s)", command, name)
+            await log_output("Iternal Disco error\n")
         finally:
-            log_output_terminate()
+            await log_output_terminate()
 
     return command_run, func
 
