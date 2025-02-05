@@ -5,18 +5,47 @@ from fastapi import APIRouter, Depends
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ValidationError
 from pydantic_core import InitErrorDetails, PydanticCustomError
+from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.auth import get_api_key_sync
-from disco.endpoints.dependencies import get_project_from_url_sync, get_sync_db
+from disco.endpoints.dependencies import (
+    get_db,
+    get_project_from_url,
+    get_project_from_url_sync,
+    get_sync_db,
+)
 from disco.models import ApiKey, Project
 from disco.utils import docker
-from disco.utils.deployments import get_live_deployment_sync
+from disco.utils.deployments import get_live_deployment, get_live_deployment_sync
 from disco.utils.discofile import ServiceType, get_disco_file_from_str
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(get_api_key_sync)])
+
+
+@router.get("/api/projects/{project_name}/scale")
+async def scale_get(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+    project: Annotated[Project, Depends(get_project_from_url)],
+):
+    deployment = await get_live_deployment(dbsession, project)
+    if deployment is None:
+        services = []
+    else:
+        services = await docker.list_services_for_deployment(
+            project.name, deployment.number
+        )
+    return {
+        "services": [
+            {
+                "name": service.name,
+                "scale": service.replicas,
+            }
+            for service in services
+        ]
+    }
 
 
 class ScaleRequestBody(BaseModel):

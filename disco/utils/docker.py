@@ -2,15 +2,18 @@ import asyncio
 import json
 import logging
 import os
+import re
 import signal
 import subprocess
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from multiprocessing import cpu_count
 from typing import AsyncGenerator, Awaitable, Callable
 
 import disco
 from disco.errors import ProcessStatusError
-from disco.utils.discofile import DiscoFile, Service
+from disco.utils.discofile import DiscoFile
+from disco.utils.discofile import Service as DiscoService
 from disco.utils.filesystem import project_path
 
 log = logging.getLogger(__name__)
@@ -272,7 +275,11 @@ async def start_project_service(
         log.info("Output: %s", line_text)
         if datetime.now(timezone.utc) > next_check:
             states = await get_service_nodes_desired_state_async(name)
-            if len([state for state in states if state == "Shutdown"]) >= 3 * replicas:
+            if (
+                replicas > 0
+                and len([state for state in states if state == "Shutdown"])
+                >= 3 * replicas
+            ):
                 # 3 attempts to start the service failed
                 process.terminate()
                 raise Exception("Starting task failed, too many failed attempts")
@@ -585,9 +592,15 @@ def list_containers_for_project(project_name: str) -> list[str]:
     return containers
 
 
+@dataclass
+class Service:
+    name: str
+    replicas: int
+
+
 async def list_services_for_deployment(
     project_name: str, deployment_number: int
-) -> list[str]:
+) -> list[Service]:
     args = [
         "docker",
         "service",
@@ -597,7 +610,7 @@ async def list_services_for_deployment(
         "--filter",
         f"label=disco.deployment.number={deployment_number}",
         "--format",
-        "{{ .Name }}",
+        '{"name":"{{.Name}}", "replicas":"{{.Replicas}}"}',
     ]
     process = await asyncio.create_subprocess_exec(
         *args,
@@ -608,9 +621,21 @@ async def list_services_for_deployment(
     services = []
     async for line in process.stdout:
         line_text = line.decode("utf-8")
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        services.append(line_text)
+        try:
+            service_data = json.loads(line_text)
+        except json.decoder.JSONDecodeError:
+            log.error("Could not JSON info for service: '%s'", line_text)
+            continue
+        service = Service(
+            name=re.sub(
+                f"^{re.escape(project_name)}-{deployment_number}-",
+                "",
+                service_data["name"],
+            ),
+            replicas=int(service_data["replicas"].split("/")[1]),
+        )
+        services.append(service)
+
     await process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
@@ -1595,5 +1620,5 @@ RUN --mount=type=secret,id=.env env $(cat /run/secrets/.env | xargs) {command}
 """
 
 
-def easy_mode_dockerfile(service: Service) -> str:
+def easy_mode_dockerfile(service: DiscoService) -> str:
     return EASY_MODE_DOCKERFILE.format(image=service.image, command=service.build)

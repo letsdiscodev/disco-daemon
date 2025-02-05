@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import subprocess
+from collections import defaultdict
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
@@ -129,6 +130,19 @@ async def volume_set(
         api_key_log = api_key.log()
 
     assert disco_file is not None
+    if deployment_number is not None:
+        scale = defaultdict(
+            lambda: 1,
+            [
+                (service.name, service.replicas)
+                for service in await docker.list_services_for_deployment(
+                    project_name=project_name,
+                    deployment_number=deployment_number,
+                )
+            ],
+        )
+    else:
+        scale = defaultdict(lambda: 1)
     log.info(
         "Importing volume for project %s %s by %s",
         project_name,
@@ -260,7 +274,7 @@ async def volume_set(
                 for p in service.published_ports
             ],
             networks=networks,
-            replicas=1,  # TODO set same number that was running before removing
+            replicas=scale[service_name],
             command=service.command,
         )
     log.info("Done importing volume %s", volume_name)

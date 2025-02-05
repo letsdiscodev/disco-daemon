@@ -4,8 +4,9 @@ import asyncio
 import logging
 import os
 import random
+from collections import defaultdict
 from dataclasses import dataclass
-from typing import Awaitable, Callable, Sequence
+from typing import Awaitable, Callable, Mapping, Sequence
 
 from disco.models import (
     Deployment,
@@ -63,12 +64,14 @@ class DeploymentInfo:
     host_home: str
     disco_host: str
     env_variables: list[tuple[str, str]]
+    scale: Mapping[str, int]
 
     @staticmethod
     async def from_deployment(
         deployment: Deployment,
         host_home: str,
         disco_host: str,
+        scale: Mapping[str, int],
     ) -> DeploymentInfo:
         env_variables: Sequence[
             DeploymentEnvironmentVariable
@@ -91,6 +94,7 @@ class DeploymentInfo:
             env_variables=[
                 (env_var.name, decrypt(env_var.value)) for env_var in env_variables
             ],
+            scale=scale,
         )
 
 
@@ -203,31 +207,53 @@ async def process_deployment(deployment_id: str) -> None:
             log.info("Getting data from database for deployment %s", deployment_id)
             deployment = await get_deployment_by_id(dbsession, deployment_id)
             assert deployment is not None
-            project = await deployment.awaitable_attrs.project
+            project: Project = await deployment.awaitable_attrs.project
+            assert project is not None
+            project_name = project.name
             prev_deployment = await get_live_deployment(dbsession, project)
             prev_deployment_id = (
                 prev_deployment.id if prev_deployment is not None else None
             )
+            prev_deployment_number = (
+                prev_deployment.number if prev_deployment is not None else None
+            )
+        if prev_deployment_number is not None:
+            scale = defaultdict(
+                lambda: 1,
+                [
+                    (service.name, service.replicas)
+                    for service in await docker.list_services_for_deployment(
+                        project_name=project_name,
+                        deployment_number=prev_deployment_number,
+                    )
+                ],
+            )
+        else:
+            scale = defaultdict(lambda: 1)
         await prepare_deployment(
             new_deployment_id=deployment_id,
             prev_deployment_id=prev_deployment_id,
+            scale=scale,
             log_output=log_output,
         )
         await set_current_deployment_status("REPLACING")
         await run_hook_deploy_start_before(
             new_deployment_id=deployment_id,
             prev_deployment_id=prev_deployment_id,
+            scale=scale,
             log_output=log_output,
         )
         await replace_deployment(
             new_deployment_id=deployment_id,
             prev_deployment_id=prev_deployment_id,
             recovery=False,
+            scale=scale,
             log_output=log_output,
         )
         await run_hook_deploy_start_after(
             new_deployment_id=deployment_id,
             prev_deployment_id=prev_deployment_id,
+            scale=scale,
             log_output=log_output,
         )
         await log_output(f"Deployment complete {random.choice(['🪩', '🕺', '💃'])}\n")
@@ -239,6 +265,7 @@ async def process_deployment(deployment_id: str) -> None:
             new_deployment_id=prev_deployment_id,
             prev_deployment_id=deployment_id,
             recovery=True,
+            scale=scale,
             log_output=log_output,
         )
         await log_output("Cancelled\n")
@@ -252,6 +279,7 @@ async def process_deployment(deployment_id: str) -> None:
             new_deployment_id=prev_deployment_id,
             prev_deployment_id=deployment_id,
             recovery=True,
+            scale=scale,
             log_output=log_output,
         )
     finally:
@@ -268,11 +296,14 @@ async def process_deployment(deployment_id: str) -> None:
 async def prepare_deployment(
     new_deployment_id: str | None,
     prev_deployment_id: str | None,
+    scale: Mapping[str, int],
     log_output: Callable[[str], Awaitable[None]],
 ):
     log.info("Preparing deployment %s", new_deployment_id)
     new_deployment_info, _ = await get_deployment_info(
-        new_deployment_id, prev_deployment_id
+        new_deployment_id=new_deployment_id,
+        prev_deployment_id=prev_deployment_id,
+        scale=scale,
     )
     assert new_deployment_info is not None
     if new_deployment_info.commit_hash is not None:
@@ -304,10 +335,13 @@ async def prepare_deployment(
 async def run_hook_deploy_start_before(
     new_deployment_id: str | None,
     prev_deployment_id: str | None,
+    scale: Mapping[str, int],
     log_output: Callable[[str], Awaitable[None]],
 ):
     new_deployment_info, _ = await get_deployment_info(
-        new_deployment_id, prev_deployment_id
+        new_deployment_id=new_deployment_id,
+        prev_deployment_id=prev_deployment_id,
+        scale=scale,
     )
     assert new_deployment_info is not None
     assert new_deployment_info.disco_file is not None
@@ -361,10 +395,13 @@ async def run_hook_deploy_start_before(
 async def run_hook_deploy_start_after(
     new_deployment_id: str | None,
     prev_deployment_id: str | None,
+    scale: Mapping[str, int],
     log_output: Callable[[str], Awaitable[None]],
 ):
     new_deployment_info, _ = await get_deployment_info(
-        new_deployment_id, prev_deployment_id
+        new_deployment_id=new_deployment_id,
+        prev_deployment_id=prev_deployment_id,
+        scale=scale,
     )
     assert new_deployment_info is not None
     assert new_deployment_info.disco_file is not None
@@ -419,6 +456,7 @@ async def replace_deployment(
     new_deployment_id: str | None,
     prev_deployment_id: str | None,
     recovery: bool,
+    scale: Mapping[str, int],
     log_output: Callable[[str], Awaitable[None]],
 ):
     log.info(
@@ -428,7 +466,9 @@ async def replace_deployment(
         str(recovery),
     )
     new_deployment_info, prev_deployment_info = await get_deployment_info(
-        new_deployment_id, prev_deployment_id
+        new_deployment_id=new_deployment_id,
+        prev_deployment_id=prev_deployment_id,
+        scale=scale,
     )
     if prev_deployment_info is not None:
         async_worker.pause_project_crons(prev_deployment_info.project_name)
@@ -438,7 +478,12 @@ async def replace_deployment(
         await stop_conflicting_port_services(
             new_deployment_info, prev_deployment_info, recovery, log_output
         )
-        await start_services(new_deployment_info, recovery, log_output)
+        await start_services(
+            new_deployment_info=new_deployment_info,
+            recovery=recovery,
+            scale=scale,
+            log_output=log_output,
+        )
         if "web" in new_deployment_info.disco_file.services:
             async with AsyncSession.begin() as dbsession:
                 project = await get_project_by_id(
@@ -462,7 +507,9 @@ async def replace_deployment(
 
 
 async def get_deployment_info(
-    new_deployment_id: str | None, prev_deployment_id: str | None
+    new_deployment_id: str | None,
+    prev_deployment_id: str | None,
+    scale=Mapping[str, int],
 ) -> tuple[DeploymentInfo | None, DeploymentInfo | None]:
     async with AsyncSession.begin() as dbsession:
         disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
@@ -476,6 +523,7 @@ async def get_deployment_info(
                     deployment=new_deployment,
                     host_home=host_home,
                     disco_host=disco_host,
+                    scale=scale,
                 )
         else:
             new_deployment_info = None
@@ -486,6 +534,7 @@ async def get_deployment_info(
                 prev_deployment,
                 host_home=host_home,
                 disco_host=disco_host,
+                scale=scale,
             )
         else:
             prev_deployment_info = None
@@ -660,6 +709,7 @@ async def create_network(
 async def start_services(
     new_deployment_info: DeploymentInfo,
     recovery: bool,
+    scale: Mapping[str, int],
     log_output: Callable[[str], Awaitable[None]],
 ) -> None:
     assert new_deployment_info.disco_file is not None
@@ -726,7 +776,7 @@ async def start_services(
                         for p in service.published_ports
                     ],
                     networks=networks,
-                    replicas=1,
+                    replicas=scale[service_name],
                     command=service.command,
                 )
         except Exception:
@@ -868,9 +918,16 @@ async def stop_prev_services(
                     )
                 )
             current_services = set(
-                await docker.list_services_for_deployment(
-                    new_deployment_info.project_name, new_deployment_info.number
-                )
+                [
+                    docker.service_name(
+                        new_deployment_info.project_name,
+                        service.name,
+                        new_deployment_info.number,
+                    )
+                    for service in await docker.list_services_for_deployment(
+                        new_deployment_info.project_name, new_deployment_info.number
+                    )
+                ]
             )
     except Exception:
         log_output("Failed to retrieve list of services to stop\n")
