@@ -1,39 +1,17 @@
-import asyncio
 import json
 import logging
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header
 from sse_starlette import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
 from disco.auth import get_api_key_wo_tx
+from disco.utils.events import DiscoEvent, get_events_since, subscribe, unsubscribe
 
 log = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-@dataclass
-class DiscoEvent:
-    id: str
-    timestamp: datetime
-    type: str
-    data: dict[str, Any]
-
-
-_subscribers: list[asyncio.Queue[DiscoEvent]] = []
-_events: list[DiscoEvent] = []
-
-
-def publish_event(event: DiscoEvent) -> None:
-    _events.append(event)
-    while len(_events) > 0 and _events[0].timestamp < datetime.now(
-        timezone.utc
-    ) - timedelta(hours=1):
-        _events.pop(0)
 
 
 @router.get(
@@ -59,19 +37,14 @@ async def events_get(
 
     async def get_events():
         if last_event_id is not None:
-            found = False
-            for event in _events:
-                if not found and event.id != last_event_id:
-                    continue
+            for event in get_events_since(last_event_id):
                 yield sse_from_event(event)
         try:
-            subscriber = asyncio.Queue[DiscoEvent]()
-            _subscribers.append(subscriber)
+            subscriber = subscribe()
             while True:
                 event = await subscriber.get()
                 yield sse_from_event(event)
         finally:
-            if subscriber in _subscribers:
-                _subscribers.remove(subscriber)
+            unsubscribe(subscriber)
 
     return EventSourceResponse(get_events())
