@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import ApiKey, Project, ProjectDomain
-from disco.utils import caddy, docker
+from disco.utils import caddy, docker, events
 from disco.utils.deployments import get_live_deployment
 from disco.utils.discofile import ServiceType, get_disco_file_from_str
 
@@ -64,7 +64,7 @@ async def add_domain(
         # just added first domain, need to set what it's serving
         assert project_domains[0] == domain
         await serve_live_deployment(dbsession, project)
-
+    events.domain_created(project_name=project.name, domain=domain.name)
     return domain
 
 
@@ -83,6 +83,7 @@ async def remove_domain(
     domains = await project.awaitable_attrs.domains
     domains.remove(domain)
     project.domains = domains
+    events.domain_removed(project_name=project.name, domain=domain.name)
     await dbsession.delete(domain)
     await _update_caddy_domains_for_project(project)
     www_apex_domain_name = _get_apex_www_redirect_for_domain(domain_name)

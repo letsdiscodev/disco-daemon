@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import ApiKey, Project, ProjectEnvironmentVariable
+from disco.utils import events
 from disco.utils.encryption import encrypt
 
 
@@ -47,6 +48,7 @@ async def set_env_variables(
                 existed = True
                 env_variable.value = encrypt(value)
                 env_variable.by_api_key = by_api_key
+                events.env_variable_updated(project_name=project.name, env_var=name)
         if not existed:
             env_variable = ProjectEnvironmentVariable(
                 id=uuid.uuid4().hex,
@@ -56,10 +58,13 @@ async def set_env_variables(
                 by_api_key=by_api_key,
             )
             dbsession.add(env_variable)
+            events.env_variable_created(project_name=project.name, env_var=name)
 
 
 async def delete_env_variable(
     dbsession: AsyncDBSession,
     env_variable: ProjectEnvironmentVariable,
 ) -> None:
+    project: Project = await env_variable.awaitable_attrs.project
+    events.env_variable_removed(project_name=project.name, env_var=env_variable.name)
     await dbsession.delete(env_variable)

@@ -155,7 +155,7 @@ async def process_deployment(deployment_id: str) -> None:
         async with AsyncSession.begin() as dbsession:
             deployment = await get_deployment_by_id(dbsession, deployment_id)
             assert deployment is not None
-            set_deployment_status(deployment, status)
+            await set_deployment_status(deployment, status)
 
     async def maybe_keep_queued_or_skip() -> bool:
         # Defined as a function so that we can shield it from

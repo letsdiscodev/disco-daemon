@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import ApiKey, ApiKeyUsage
+from disco.utils import events
 
 log = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ def create_api_key(dbsession: DBSession, name: str) -> ApiKey:
     )
     dbsession.add(api_key)
     log.info("Created API key %s", api_key.log())
+    events.api_key_created(public_key=api_key.public_key, name=name)
     return api_key
 
 
@@ -91,6 +93,7 @@ def delete_api_key(api_key: ApiKey, by_api_key: ApiKey) -> None:
     assert api_key.deleted is None
     log.info("Marking API key as deleted %s by %s", api_key.log(), by_api_key.log())
     api_key.deleted = datetime.now(timezone.utc)
+    events.api_key_removed(public_key=api_key.public_key, name=api_key.name)
 
 
 def record_api_key_usage_sync(dbsession: DBSession, api_key: ApiKey) -> None:

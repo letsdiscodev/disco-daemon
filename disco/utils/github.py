@@ -27,6 +27,7 @@ from disco.models import (
     ProjectGithubRepo,
 )
 from disco.models.db import AsyncSession, Session
+from disco.utils import events
 from disco.utils.filesystem import project_path, projects_root
 
 log = logging.getLogger(__name__)
@@ -501,6 +502,7 @@ async def process_github_app_webhook(
                 await remove_repository_from_installation(
                     dbsession, installation, repo["full_name"]
                 )
+        events.github_repos_updated()
     elif x_github_event == "installation":
         # user installed/uninstalled app
         try:
@@ -539,6 +541,8 @@ async def process_github_app_webhook(
                 log.warning(
                     "Github App webhook action not handled %s, skipping", action
                 )
+        events.github_apps_updated()
+        events.github_repos_updated()
     else:
         log.warning("Github App webhook event not handled %s, skipping", x_github_event)
 
@@ -849,6 +853,8 @@ async def prune() -> None:
                     app.owner_type,
                 )
                 await delete_github_app(dbsession, app)
+    events.github_apps_updated()
+    events.github_repos_updated()
 
 
 async def app_still_exists(app_id: int) -> bool:
