@@ -13,7 +13,7 @@ from disco.models import (
     DeploymentEnvironmentVariable,
     Project,
 )
-from disco.utils import commandoutputs, keyvalues
+from disco.utils import commandoutputs, events, keyvalues
 from disco.utils.discofile import DiscoFile
 
 log = logging.getLogger(__name__)
@@ -88,6 +88,11 @@ async def create_deployment(
         commandoutputs.deployment_source(deployment.id),
         f"Deployment {deployment.number} enqueued\n",
     )
+    events.deployment_created(
+        project_name=project.name,
+        deployment_number=deployment.number,
+        status="QUEUED",
+    )
     return deployment
 
 
@@ -145,6 +150,11 @@ def create_deployment_sync(
         )
 
     asyncio.run(create_cmd_output())
+    events.deployment_created(
+        project_name=project.name,
+        deployment_number=deployment.number,
+        status="QUEUED",
+    )
     return deployment
 
 
@@ -227,11 +237,19 @@ DEPLOYMENT_STATUS = Literal[
 ]
 
 
-def set_deployment_status(deployment: Deployment, status: DEPLOYMENT_STATUS) -> None:
+async def set_deployment_status(
+    deployment: Deployment, status: DEPLOYMENT_STATUS
+) -> None:
     log.info(
         "Setting deployment status of deployment %s to %s", deployment.log(), status
     )
     deployment.status = status
+    project: Project = await deployment.awaitable_attrs.project
+    events.deployment_status(
+        project_name=project.name,
+        deployment_number=deployment.number,
+        status=deployment.status,
+    )
 
 
 async def get_deployments_with_status(
@@ -270,7 +288,7 @@ async def cancel_deployment(deployment: Deployment, by_api_key: ApiKey) -> None:
     if deployment.status == "QUEUED":
         await commandoutputs.store_output(output_source, "Cancelled\n")
         await commandoutputs.terminate(output_source)
-        set_deployment_status(deployment, "CANCELLED")
+        await set_deployment_status(deployment, "CANCELLED")
     elif deployment.status in ["PREPARING", "REPLACING"]:
         assert deployment.task_id is not None
         async_worker.cancel_task(deployment.task_id)

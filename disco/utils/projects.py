@@ -13,7 +13,7 @@ from disco.models import (
     ProjectDomain,
     ProjectGithubRepo,
 )
-from disco.utils import docker, github
+from disco.utils import docker, events, github
 from disco.utils.commandoutputs import delete_output_for_source, deployment_source
 from disco.utils.filesystem import remove_project_static_deployments_if_any
 from disco.utils.projectdomains import remove_domain_sync
@@ -32,6 +32,7 @@ def create_project(
     )
     dbsession.add(project)
     log.info("%s created project %s", by_api_key.log(), project.log())
+    events.project_created(project_name=name)
     return project
 
 
@@ -165,6 +166,7 @@ def delete_project(dbsession: DBSession, project: Project, by_api_key: ApiKey) -
         dbsession.delete(keyvalue)
     for run in project.command_runs:
         dbsession.delete(run)
+    events.project_removed(project_name=project.name)
     dbsession.delete(project)
 
 

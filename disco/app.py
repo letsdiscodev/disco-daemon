@@ -11,6 +11,7 @@ from disco.endpoints import (
     corsorigins,
     deployments,
     envvariables,
+    events,
     githubapps,
     logs,
     meta,
@@ -64,6 +65,7 @@ app.include_router(tunnels.router)
 app.include_router(corsorigins.router)
 app.include_router(cgi.router)
 app.include_router(githubapps.router)
+app.include_router(events.router)
 
 
 @app.get("/")
