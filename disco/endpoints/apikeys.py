@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.auth import get_api_key_sync
-from disco.endpoints.dependencies import get_sync_db
+from disco.endpoints.dependencies import get_db_sync
 from disco.models import ApiKey
 from disco.utils.apikeys import (
     delete_api_key,
@@ -21,7 +21,7 @@ router = APIRouter(dependencies=[Depends(get_api_key_sync)])
 
 
 def get_api_key_from_url(
-    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+    dbsession: Annotated[DBSession, Depends(get_db_sync)],
     public_key: Annotated[str, Path()],
 ):
     api_key = get_api_key_by_public_key_sync(dbsession, public_key)
@@ -31,7 +31,7 @@ def get_api_key_from_url(
 
 
 @router.get("/api/api-keys")
-def api_keys_get(dbsession: Annotated[DBSession, Depends(get_sync_db)]):
+def api_keys_get(dbsession: Annotated[DBSession, Depends(get_db_sync)]):
     api_keys = get_all_api_keys(dbsession)
     return {
         "apiKeys": [
@@ -54,7 +54,7 @@ class NewApiKeyRequestBody(BaseModel):
 
 @router.delete("/api/api-keys/{public_key}", status_code=200)
 def api_key_delete(
-    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+    dbsession: Annotated[DBSession, Depends(get_db_sync)],
     api_key: Annotated[ApiKey, Depends(get_api_key_from_url)],
     by_api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
 ):

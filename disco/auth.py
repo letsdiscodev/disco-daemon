@@ -11,7 +11,7 @@ from fastapi.security import (
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
-from disco.endpoints.dependencies import get_db, get_sync_db
+from disco.endpoints.dependencies import get_db, get_db_sync
 from disco.models.db import AsyncSession
 from disco.utils import keyvalues
 from disco.utils.apikeys import (
@@ -32,7 +32,7 @@ def get_api_key_sync(
     bearer_credentials: Annotated[
         HTTPAuthorizationCredentials | None, Depends(bearer_header)
     ],
-    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+    dbsession: Annotated[DBSession, Depends(get_db_sync)],
 ):
     api_key_str = None
     if basic_credentials is not None:

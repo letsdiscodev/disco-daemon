@@ -140,26 +140,34 @@ def alembic_upgrade(version_hash: str) -> None:
 def task_0_20_x(image: str) -> None:
     print("Updating from 0.20.x to 0.21.0")
     with Session.begin() as dbsession:
-        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.21.0")
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.21.0"
+        )
 
 
 def task_0_19_x(image: str) -> None:
     print("Updating from 0.19.x to 0.20.0")
     with Session.begin() as dbsession:
-        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.20.0")
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.20.0"
+        )
 
 
 def task_0_18_x(image: str) -> None:
     print("Updating from 0.18.x to 0.19.0")
     with Session.begin() as dbsession:
-        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.19.0")
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.19.0"
+        )
 
 
 def task_0_17_x(image: str) -> None:
     print("Updating from 0.17.x to 0.18.0")
     alembic_upgrade("9087484963d4")
     with Session.begin() as dbsession:
-        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.18.0")
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.18.0"
+        )
 
 
 def task_0_16_x(image: str) -> None:
@@ -227,26 +235,34 @@ def task_0_16_x(image: str) -> None:
     )
     alembic_upgrade("26877eda6774")
     with Session.begin() as dbsession:
-        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.17.0")
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.17.0"
+        )
 
 
 def task_0_15_x(image: str) -> None:
     print("Updating from 0.15.x to 0.16.0")
     with Session.begin() as dbsession:
-        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.16.0")
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.16.0"
+        )
 
 
 def task_0_14_x(image: str) -> None:
     print("Updating from 0.14.x to 0.15.0")
     with Session.begin() as dbsession:
-        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.15.0")
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.15.0"
+        )
 
 
 def task_0_13_x(image: str) -> None:
     print("Updating from 0.13.x to 0.14.0")
     alembic_upgrade("b2c4ac1469de")
     with Session.begin() as dbsession:
-        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.14.0")
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.14.0"
+        )
 
 
 def task_0_12_x(image: str) -> None:
@@ -272,7 +288,9 @@ def task_0_12_x(image: str) -> None:
     )
     start_caddy(host_home=host_home, tunnel=False)
     with Session.begin() as dbsession:
-        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.13.0")
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.13.0"
+        )
 
 
 def task_0_11_x(image: str) -> None:
@@ -327,7 +345,9 @@ def task_0_11_x(image: str) -> None:
     docker.remove_network_from_container("disco-caddy", "disco-caddy-daemon")
     docker.remove_network_sync("disco-caddy-daemon")
     with Session.begin() as dbsession:
-        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.12.0")
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.12.0"
+        )
 
 
 def task_0_10_x(image: str) -> None:
@@ -381,13 +401,17 @@ def task_0_10_x(image: str) -> None:
                     )
     alembic_upgrade("41a2f999a3e9")
     with Session.begin() as dbsession:
-        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.11.0")
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.11.0"
+        )
 
 
 def task_0_9_x(image: str) -> None:
     print("Updating from 0.9.x to 0.10.0")
     with Session.begin() as dbsession:
-        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.10.0")
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.10.0"
+        )
 
 
 def task_0_8_x(image: str) -> None:
@@ -441,7 +465,9 @@ def task_0_8_x(image: str) -> None:
     )
     start_caddy(host_home=host_home, tunnel=False)
     with Session.begin() as dbsession:
-        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.9.0")
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.9.0"
+        )
 
 
 def task_0_7_x(image: str) -> None:
@@ -466,7 +492,9 @@ def task_0_7_x(image: str) -> None:
         )
     alembic_upgrade("7867432539d9")
     with Session.begin() as dbsession:
-        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.8.0")
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.8.0"
+        )
 
 
 def task_0_6_x(image: str) -> None:
@@ -521,14 +549,18 @@ def task_0_6_x(image: str) -> None:
             github_app.owner_type = app_meta["owner"]["type"]
     alembic_upgrade("47da35039f6f")
     with Session.begin() as dbsession:
-        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.7.0")
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.7.0"
+        )
 
 
 def task_0_5_x(image: str) -> None:
     print("Updating from 0.5.x to 0.6.0")
     alembic_upgrade("5540c20f9acd")
     with Session.begin() as dbsession:
-        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.6.0")
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.6.0"
+        )
 
 
 def task_0_4_x(image: str) -> None:
@@ -588,39 +620,47 @@ def task_0_4_x(image: str) -> None:
                 set_caddy_config_cmd,
             ]
         )
-        keyvalues.set_value(
+        keyvalues.set_value_sync(
             dbsession=dbsession, key="DISCO_ADVERTISE_ADDR", value=disco_ip
         )
-        keyvalues.delete_value(dbsession=dbsession, key="DISCO_IP")
-        keyvalues.delete_value(dbsession=dbsession, key="PUBLIC_CA_CERT")
-        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.5.0")
+        keyvalues.delete_value_sync(dbsession=dbsession, key="DISCO_IP")
+        keyvalues.delete_value_sync(dbsession=dbsession, key="PUBLIC_CA_CERT")
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.5.0"
+        )
 
 
 def task_0_3_x(image: str) -> None:
     print("Updating from 0.3.x to 0.4.0")
     alembic_upgrade("3eb8871ccb85")
     with Session.begin() as dbsession:
-        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.4.0")
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.4.0"
+        )
 
 
 def task_0_2_x(image: str) -> None:
     print("Updating from 0.2.x to 0.3.0")
     alembic_upgrade("d0cba3cd3238")
     with Session.begin() as dbsession:
-        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.3.0")
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.3.0"
+        )
 
 
 def task_0_1_x(image: str) -> None:
     print("Updating from 0.1.x to 0.2.0")
     alembic_upgrade("eba27af20db2")
     with Session.begin() as dbsession:
-        keyvalues.set_value(dbsession=dbsession, key="DISCO_VERSION", value="0.2.0")
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.2.0"
+        )
 
 
 def task_patch(image: str) -> None:
     with Session.begin() as dbsession:
         print(f"Updating to {disco.__version__}")
-        keyvalues.set_value(
+        keyvalues.set_value_sync(
             dbsession=dbsession, key="DISCO_VERSION", value=disco.__version__
         )
 

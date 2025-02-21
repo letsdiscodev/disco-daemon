@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.auth import get_api_key_sync
-from disco.endpoints.dependencies import get_sync_db
+from disco.endpoints.dependencies import get_db_sync
 from disco.models import ApiKey
 from disco.utils import docker, keyvalues
 from disco.utils.syslog import add_syslog_url, get_syslog_urls, remove_syslog_url
@@ -29,7 +29,7 @@ class AddRemoveSyslogReqBody(BaseModel):
 
 @router.post("/api/syslog")
 def syslog_post(
-    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+    dbsession: Annotated[DBSession, Depends(get_db_sync)],
     api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
     add_remove_syslog: AddRemoveSyslogReqBody,
     background_tasks: BackgroundTasks,
@@ -49,7 +49,7 @@ def syslog_post(
 
 @router.get("/api/syslog")
 def syslog_get(
-    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+    dbsession: Annotated[DBSession, Depends(get_db_sync)],
 ):
     return {
         "urls": get_syslog_urls(dbsession),

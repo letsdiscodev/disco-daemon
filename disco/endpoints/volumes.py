@@ -10,7 +10,7 @@ from sqlalchemy.orm.session import Session as DBSession
 
 from disco import config
 from disco.auth import get_api_key_sync, get_api_key_wo_tx
-from disco.endpoints.dependencies import get_project_from_url_sync, get_sync_db
+from disco.endpoints.dependencies import get_db_sync, get_project_from_url_sync
 from disco.models import ApiKey, Project
 from disco.models.db import Session
 from disco.utils import docker, keyvalues
@@ -29,7 +29,7 @@ router = APIRouter()
     "/api/projects/{project_name}/volumes", dependencies=[Depends(get_api_key_sync)]
 )
 def volumes_get(
-    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+    dbsession: Annotated[DBSession, Depends(get_db_sync)],
     project: Annotated[Project, Depends(get_project_from_url_sync)],
 ):
     deployment = get_live_deployment_sync(dbsession, project)
@@ -44,7 +44,7 @@ def volumes_get(
 
 @router.get("/api/projects/{project_name}/volumes/{volume_name}")
 def volume_get(
-    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+    dbsession: Annotated[DBSession, Depends(get_db_sync)],
     project: Annotated[Project, Depends(get_project_from_url_sync)],
     volume_name: str,
     api_key: Annotated[ApiKey, Depends(get_api_key_sync)],

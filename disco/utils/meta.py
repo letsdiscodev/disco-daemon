@@ -58,11 +58,11 @@ def is_updating(dbsession: DBSession) -> bool:
 
 
 def save_is_updating(dbsession: DBSession) -> None:
-    keyvalues.set_value(dbsession, "DISCO_IS_UPDATING", "true")
+    keyvalues.set_value_sync(dbsession, "DISCO_IS_UPDATING", "true")
 
 
 def save_done_updating(dbsession: DBSession) -> None:
-    keyvalues.delete_value(dbsession, "DISCO_IS_UPDATING")
+    keyvalues.delete_value_sync(dbsession, "DISCO_IS_UPDATING")
 
 
 def set_disco_host(dbsession: DBSession, host: str, by_api_key: ApiKey) -> None:
@@ -71,4 +71,4 @@ def set_disco_host(dbsession: DBSession, host: str, by_api_key: ApiKey) -> None:
         "Setting Disco host from %s to %s by %s", prev_host, host, by_api_key.log()
     )
     caddy.update_disco_host(host)
-    keyvalues.set_value(dbsession=dbsession, key="DISCO_HOST", value=host)
+    keyvalues.set_value_sync(dbsession=dbsession, key="DISCO_HOST", value=host)

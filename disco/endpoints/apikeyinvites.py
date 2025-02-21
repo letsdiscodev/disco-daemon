@@ -8,7 +8,7 @@ from sqlalchemy.orm.session import Session as DBSession
 
 import disco
 from disco.auth import get_api_key_sync
-from disco.endpoints.dependencies import get_sync_db
+from disco.endpoints.dependencies import get_db_sync
 from disco.models import ApiKey, ApiKeyInvite
 from disco.utils import keyvalues
 from disco.utils.apikeyinvites import (
@@ -29,7 +29,7 @@ class NewApiKeyRequestBody(BaseModel):
 
 @router.post("/api/api-key-invites", status_code=201)
 def api_keys_post(
-    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+    dbsession: Annotated[DBSession, Depends(get_db_sync)],
     api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
     req_body: NewApiKeyRequestBody,
 ):
@@ -49,7 +49,7 @@ def api_keys_post(
 
 def get_api_key_invite_from_url(
     invite_id: Annotated[str, Path()],
-    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+    dbsession: Annotated[DBSession, Depends(get_db_sync)],
 ):
     invite = get_api_key_invite_by_id(dbsession, invite_id)
     if invite is None:
@@ -66,7 +66,7 @@ RESP_TXT = (
 
 @router.get("/api-key-invites/{invite_id}", response_class=PlainTextResponse)
 def api_key_invite_get(
-    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+    dbsession: Annotated[DBSession, Depends(get_db_sync)],
     invite: Annotated[ApiKey, Depends(get_api_key_invite_from_url)],
 ):
     disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
@@ -75,7 +75,7 @@ def api_key_invite_get(
 
 @router.post("/api-key-invites/{invite_id}")
 def api_key_invite_post(
-    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+    dbsession: Annotated[DBSession, Depends(get_db_sync)],
     invite: Annotated[ApiKeyInvite, Depends(get_api_key_invite_from_url)],
 ):
     if not invite_is_active(invite):

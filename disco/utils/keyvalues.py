@@ -38,7 +38,7 @@ def get_value_sync(dbsession: DBSession, key: str) -> str | None:
     return key_value.value
 
 
-def set_value(dbsession: DBSession, key: str, value: str | None) -> None:
+def set_value_sync(dbsession: DBSession, key: str, value: str | None) -> None:
     key_value = dbsession.query(KeyValue).get(key)
     if key_value is not None:
         key_value.value = value
@@ -50,7 +50,7 @@ def set_value(dbsession: DBSession, key: str, value: str | None) -> None:
         dbsession.add(key_value)
 
 
-def delete_value(dbsession: DBSession, key: str) -> None:
+def delete_value_sync(dbsession: DBSession, key: str) -> None:
     key_value = dbsession.query(KeyValue).get(key)
     if key_value is not None:
         dbsession.delete(key_value)

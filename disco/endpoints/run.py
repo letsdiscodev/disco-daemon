@@ -13,7 +13,7 @@ from sse_starlette import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
 from disco.auth import get_api_key_sync, get_api_key_wo_tx
-from disco.endpoints.dependencies import get_project_from_url_sync, get_sync_db
+from disco.endpoints.dependencies import get_db_sync, get_project_from_url_sync
 from disco.models import ApiKey, Project
 from disco.models.db import Session
 from disco.utils import commandoutputs
@@ -39,7 +39,7 @@ class RunReqBody(BaseModel):
     dependencies=[Depends(get_api_key_sync)],
 )
 def run_post(
-    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+    dbsession: Annotated[DBSession, Depends(get_db_sync)],
     project: Annotated[Project, Depends(get_project_from_url_sync)],
     api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
     req_body: RunReqBody,
