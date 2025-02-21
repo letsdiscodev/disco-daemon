@@ -864,6 +864,201 @@ async def get_node_count() -> int:
     return node_count
 
 
+async def get_node_list() -> list[str]:
+    log.info("Getting Docker Swarm node ID list")
+    args = [
+        "docker",
+        "node",
+        "ls",
+        "--format",
+        "{{ .ID }}",
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    await process.wait()
+    if process.returncode != 0:
+        if len(stdout) > 0:
+            log.info("Stdout: %s", stdout)
+        if len(stderr) > 0:
+            log.info("Stderr: %s", stderr)
+        raise Exception(f"Docker returned status {process.returncode}")
+
+    node_ids = []
+    for line in stdout.decode("utf-8").split("\n"):
+        if len(line.strip()) == 0:
+            continue
+        node_ids.append(line.strip())
+    return node_ids
+
+
+@dataclass
+class NodeDetails:
+    id: str
+    created: str
+    labels: dict[str, str]
+    role: str
+    availability: str
+    architecture: str
+    state: str
+    address: str
+
+
+async def get_node_details(node_ids: list[str]) -> list[NodeDetails]:
+    log.info("Getting Docker Swarm nodes details")
+    args = [
+        "docker",
+        "node",
+        "inspect",
+    ] + node_ids
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    await process.wait()
+    if process.returncode != 0:
+        if len(stdout) > 0:
+            log.info("Stdout: %s", stdout)
+        if len(stderr) > 0:
+            log.info("Stderr: %s", stderr)
+        raise Exception(f"Docker returned status {process.returncode}")
+
+    nodes = json.loads(stdout.decode("utf-8"))
+    return [
+        NodeDetails(
+            id=node["ID"],
+            created=node["CreatedAt"],
+            labels=node["Spec"]["Labels"],
+            role=node["Spec"]["Role"],
+            availability=node["Spec"]["Availability"],
+            architecture=node["Description"]["Platform"],
+            state=node["Status"]["State"],
+            address=node["Status"]["Addr"],
+        )
+        for node in nodes
+    ]
+
+
+async def set_node_label(node_id: str, key: str, value: str) -> None:
+    log.info("Setting Docker node label %s=%s for node %s", key, value, node_id)
+    args = [
+        "docker",
+        "node",
+        "update",
+        "--label-add",
+        f"{key}={value}",
+        node_id,
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    await process.wait()
+    if process.returncode != 0:
+        if len(stdout) > 0:
+            log.info("Stdout: %s", stdout)
+        if len(stderr) > 0:
+            log.info("Stderr: %s", stderr)
+        raise Exception(f"Docker returned status {process.returncode}")
+
+
+async def leave_swarm(node_id: str) -> str:
+    service_name = f"leave-swarm-{node_id}"
+    args = [
+        "docker",
+        "service",
+        "create",
+        "--name",
+        service_name,
+        "--mode",
+        "replicated-job",
+        "--constraint",
+        f"node.id=={node_id}",
+        "--mount",
+        "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+        f"letsdiscodev/daemon:{disco.__version__}",
+        "docker",
+        "run",
+        "--rm",
+        "--detach",
+        "--mount",
+        "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+        f"letsdiscodev/daemon:{disco.__version__}",
+        "disco_leave_swarm",
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    await process.wait()
+    if process.returncode != 0:
+        if len(stdout) > 0:
+            log.info("Stdout: %s", stdout)
+        if len(stderr) > 0:
+            log.info("Stderr: %s", stderr)
+        raise Exception(f"Docker returned status {process.returncode}")
+    return service_name
+
+
+async def remove_node(node_id: str, force: bool = False) -> None:
+    log.info("Removing Docker node %s", node_id)
+    args = [
+        "docker",
+        "node",
+        "rm",
+        node_id,
+    ]
+    if force:
+        args.append("--force")
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    await process.wait()
+    if process.returncode != 0:
+        if len(stdout) > 0:
+            log.info("Stdout: %s", stdout)
+        if len(stderr) > 0:
+            log.info("Stderr: %s", stderr)
+        raise Exception(f"Docker returned status {process.returncode}")
+
+
+async def drain_node(node_id: str) -> None:
+    log.info("Removing Docker node %s", node_id)
+    args = [
+        "docker",
+        "node",
+        "update",
+        "--availability",
+        "drain",
+        node_id,
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    await process.wait()
+    if process.returncode != 0:
+        if len(stdout) > 0:
+            log.info("Stdout: %s", stdout)
+        if len(stderr) > 0:
+            log.info("Stderr: %s", stderr)
+        raise Exception(f"Docker returned status {process.returncode}")
+
+
 def create_network_sync(
     name: str, project_name: str | None = None, deployment_number: int | None = None
 ) -> None:
@@ -1310,7 +1505,7 @@ def get_image_name_for_service(
         return service.image
 
 
-def login(disco_host_home: str, host: str, username: str, password: str) -> None:
+async def login(disco_host_home: str, host: str, username: str, password: str) -> None:
     import disco
 
     log.info("Docker login to %s", host)
@@ -1327,28 +1522,58 @@ def login(disco_host_home: str, host: str, username: str, password: str) -> None
         "login",
         "--username",
         username,
-        "--password",
-        password,
+        "--password-stdin",
         f"https://{host}",
     ]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
-    assert process.stdout is not None
-    for line in process.stdout:
-        line_text = line.decode("utf-8")
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-
-    process.wait()
+    stdout, stderr = await process.communicate(input=password.encode("utf-8"))
+    await process.wait()
     if process.returncode != 0:
+        if len(stdout) > 0:
+            log.info("Stdout: %s", stdout)
+        if len(stderr) > 0:
+            log.info("Stderr: %s", stderr)
         raise Exception(f"Docker returned status {process.returncode}")
 
 
-def get_swarm_join_token() -> str:
+async def logout(disco_host_home: str, host: str) -> None:
+    import disco
+
+    log.info("Docker logout from %s", host)
+    args = [
+        "docker",
+        "run",
+        "--rm",
+        "--mount",
+        "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+        "--mount",
+        f"type=bind,source={disco_host_home},target=/root",
+        f"letsdiscodev/daemon:{disco.__version__}",
+        "docker",
+        "logout",
+        f"https://{host}",
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    await process.wait()
+    if process.returncode != 0:
+        if len(stdout) > 0:
+            log.info("Stdout: %s", stdout)
+        if len(stderr) > 0:
+            log.info("Stderr: %s", stderr)
+        raise Exception(f"Docker returned status {process.returncode}")
+
+
+async def get_swarm_join_token() -> str:
     log.info("Getting Docker Swarm join token")
     args = [
         "docker",
@@ -1357,20 +1582,20 @@ def get_swarm_join_token() -> str:
         "--quiet",
         "worker",
     ]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
-    assert process.stdout is not None
-    output = ""
-    for line in process.stdout:
-        output += line.decode("utf-8")
-
-    process.wait()
+    stdout, stderr = await process.communicate()
+    await process.wait()
     if process.returncode != 0:
+        if len(stdout) > 0:
+            log.info("Stdout: %s", stdout)
+        if len(stderr) > 0:
+            log.info("Stderr: %s", stderr)
         raise Exception(f"Docker returned status {process.returncode}")
-    token = output.split("\n")[0]
+    token = stdout.decode("utf-8").split("\n")[0]
     return token
 
 
@@ -1610,6 +1835,30 @@ async def rm_image_swarm(image: str) -> None:
             raise Exception(f"Docker returned status {process.returncode}")
     finally:
         await stop_service(RM_SERVICE_NAME)
+
+
+async def get_docker_version() -> str:
+    args = [
+        "docker",
+        "version",
+        "--format",
+        "{{ .Server.Version }}",
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    await process.wait()
+    if process.returncode != 0:
+        if len(stdout) > 0:
+            log.info("Stdout: %s", stdout)
+        if len(stderr) > 0:
+            log.info("Stderr: %s", stderr)
+        raise Exception(f"Docker returned status {process.returncode}")
+    stdout_str = stdout.decode("utf-8")
+    return stdout_str.replace("\n", "").strip()
 
 
 EASY_MODE_DOCKERFILE = """

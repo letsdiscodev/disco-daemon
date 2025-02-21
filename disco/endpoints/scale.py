@@ -11,9 +11,9 @@ from sqlalchemy.orm.session import Session as DBSession
 from disco.auth import get_api_key_sync
 from disco.endpoints.dependencies import (
     get_db,
+    get_db_sync,
     get_project_from_url,
     get_project_from_url_sync,
-    get_sync_db,
 )
 from disco.models import ApiKey, Project
 from disco.utils import docker
@@ -54,7 +54,7 @@ class ScaleRequestBody(BaseModel):
 
 @router.post("/api/projects/{project_name}/scale")
 def scale_post(
-    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+    dbsession: Annotated[DBSession, Depends(get_db_sync)],
     project: Annotated[Project, Depends(get_project_from_url_sync)],
     api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
     req_body: ScaleRequestBody,

@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.auth import get_api_key, get_api_key_sync
-from disco.endpoints.dependencies import get_db, get_sync_db
+from disco.endpoints.dependencies import get_db, get_db_sync
 from disco.models import ApiKey, PendingGithubApp
 from disco.models.db import Session
 from disco.utils import keyvalues
@@ -74,7 +74,7 @@ class NewGithubAppRequestBody(BaseModel):
 
 @router.post("/api/github-apps/create", status_code=201)
 def github_app_prune_post(
-    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+    dbsession: Annotated[DBSession, Depends(get_db_sync)],
     api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
     req_body: NewGithubAppRequestBody,
 ):
@@ -114,7 +114,7 @@ CREATE_APP_HTML = """<!DOCTYPE html>
     response_class=HTMLResponse,
 )
 def github_app_create_get(
-    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+    dbsession: Annotated[DBSession, Depends(get_db_sync)],
     pending_app: Annotated[PendingGithubApp, Depends(get_pending_app_from_url)],
 ):
     disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
@@ -230,7 +230,7 @@ async def github_webhook_service_post(
 
 @router.get("/api/github-app-repos", dependencies=[Depends(get_api_key_sync)])
 def list_github_repos(
-    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+    dbsession: Annotated[DBSession, Depends(get_db_sync)],
 ):
     repos = get_all_repos_sync(dbsession)
     return {

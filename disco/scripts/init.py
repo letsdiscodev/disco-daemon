@@ -34,19 +34,21 @@ def main() -> None:
     create_database()
     print("Setting initial state in internal database")
     with Session.begin() as dbsession:
-        keyvalues.set_value(
+        keyvalues.set_value_sync(
             dbsession=dbsession, key="DISCO_VERSION", value=disco.__version__
         )
-        keyvalues.set_value(
+        keyvalues.set_value_sync(
             dbsession=dbsession,
             key="DISCO_ADVERTISE_ADDR",
             value=disco_advertise_addr,
         )
-        keyvalues.set_value(dbsession=dbsession, key="DISCO_HOST", value=disco_host)
-        keyvalues.set_value(dbsession=dbsession, key="HOST_HOME", value=host_home)
-        keyvalues.set_value(dbsession=dbsession, key="REGISTRY_HOST", value=None)
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_HOST", value=disco_host
+        )
+        keyvalues.set_value_sync(dbsession=dbsession, key="HOST_HOME", value=host_home)
+        keyvalues.set_value_sync(dbsession=dbsession, key="REGISTRY_HOST", value=None)
         if cloudflare_tunnel_token is not None:
-            keyvalues.set_value(
+            keyvalues.set_value_sync(
                 dbsession=dbsession,
                 key="CLOUDFLARE_TUNNEL_TOKEN",
                 value=cloudflare_tunnel_token,

@@ -38,4 +38,4 @@ def get_syslog_urls(dbsession: DBSession) -> list[str]:
 
 
 def _save_syslog_urls(dbsession: DBSession, urls: list[str]) -> None:
-    keyvalues.set_value(dbsession, SYSLOG_URLS_KEY, json.dumps(urls))
+    keyvalues.set_value_sync(dbsession, SYSLOG_URLS_KEY, json.dumps(urls))

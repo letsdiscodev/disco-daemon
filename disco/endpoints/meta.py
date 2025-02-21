@@ -5,16 +5,17 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_core import InitErrorDetails, PydanticCustomError
+from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 from sse_starlette import EventSourceResponse, ServerSentEvent
 
 import disco
-from disco.auth import get_api_key_sync
-from disco.endpoints.dependencies import get_sync_db
+from disco.auth import get_api_key, get_api_key_sync
+from disco.endpoints.dependencies import get_db, get_db_sync
 from disco.models import ApiKey
 from disco.utils import docker, keyvalues
 from disco.utils.meta import set_disco_host, update_disco
@@ -27,15 +28,16 @@ router = APIRouter(dependencies=[Depends(get_api_key_sync)])
 
 
 @router.get("/api/disco/meta")
-def meta_get(
-    dbsession: Annotated[DBSession, Depends(get_sync_db)],
-    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
+async def meta_get(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+    api_key: Annotated[ApiKey, Depends(get_api_key)],
 ):
     return {
         "version": disco.__version__,
-        "discoHost": keyvalues.get_value_sync(dbsession, "DISCO_HOST"),
-        "registryHost": keyvalues.get_value_sync(dbsession, "REGISTRY_HOST"),
+        "discoHost": await keyvalues.get_value(dbsession, "DISCO_HOST"),
+        "registryHost": await keyvalues.get_value(dbsession, "REGISTRY_HOST"),
         "publicKey": api_key.public_key,
+        "docker": {"version": await docker.get_docker_version()},
     }
 
 
@@ -46,7 +48,7 @@ class UpdateRequestBody(BaseModel):
 
 @router.post("/api/disco/upgrade")
 def upgrade_post(
-    dbsession: Annotated[DBSession, Depends(get_sync_db)], req_body: UpdateRequestBody
+    dbsession: Annotated[DBSession, Depends(get_db_sync)], req_body: UpdateRequestBody
 ):
     update_disco(dbsession=dbsession, image=req_body.image, pull=req_body.pull)
     return {"updating": True}
@@ -64,23 +66,55 @@ class SetRegistryRequestBody(BaseModel):
 
 
 @router.post("/api/disco/registry")
-def registry_post(
-    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+async def registry_post(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
     req_body: SetRegistryRequestBody,
 ):
-    disco_host_home = keyvalues.get_value_sync(dbsession, "HOST_HOME")
+    disco_host_home = await keyvalues.get_value(dbsession, "HOST_HOME")
     assert disco_host_home is not None
-    docker.login(
+    registry_host = await keyvalues.get_value(dbsession, "REGISTRY_HOST")
+    if registry_host is not None:
+        await docker.logout(
+            disco_host_home=disco_host_home,
+            host=registry_host,
+        )
+        await keyvalues.set_value(dbsession=dbsession, key="REGISTRY_HOST", value=None)
+    await docker.login(
         disco_host_home=disco_host_home,
         host=req_body.host,
         username=req_body.username,
         password=req_body.password,
     )
-    keyvalues.set_value(dbsession=dbsession, key="REGISTRY_HOST", value=req_body.host)
+    await keyvalues.set_value(
+        dbsession=dbsession, key="REGISTRY_HOST", value=req_body.host
+    )
     return {
         "version": disco.__version__,
-        "discoHost": keyvalues.get_value_sync(dbsession, "DISCO_HOST"),
-        "registryHost": keyvalues.get_value_sync(dbsession, "REGISTRY_HOST"),
+        "discoHost": await keyvalues.get_value(dbsession, "DISCO_HOST"),
+        "registryHost": await keyvalues.get_value(dbsession, "REGISTRY_HOST"),
+    }
+
+
+@router.delete("/api/disco/registry")
+async def registry_delete(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+):
+    disco_host_home = await keyvalues.get_value(dbsession, "HOST_HOME")
+    assert disco_host_home is not None
+    registry_host = await keyvalues.get_value(dbsession, "REGISTRY_HOST")
+    if registry_host is not None:
+        node_ids = await docker.get_node_list()
+        if len(node_ids) > 1:
+            raise HTTPException(422, "Can't unset registry with many nodes running")
+        await docker.logout(
+            disco_host_home=disco_host_home,
+            host=registry_host,
+        )
+    await keyvalues.set_value(dbsession=dbsession, key="REGISTRY_HOST", value=None)
+    return {
+        "version": disco.__version__,
+        "discoHost": await keyvalues.get_value(dbsession, "DISCO_HOST"),
+        "registryHost": await keyvalues.get_value(dbsession, "REGISTRY_HOST"),
     }
 
 
@@ -90,7 +124,7 @@ class SetDiscoHostRequestBody(BaseModel):
 
 @router.post("/api/disco/host")
 def host_post(
-    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+    dbsession: Annotated[DBSession, Depends(get_db_sync)],
     req_body: SetDiscoHostRequestBody,
     api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
 ):

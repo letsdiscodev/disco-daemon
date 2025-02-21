@@ -1,5 +1,5 @@
 FROM python:3.12.3
-ENV PYTHONUNBUFFERED 0
+ENV PYTHONUNBUFFERED=0
 RUN apt-get update
 RUN apt-get install -y ssh docker.io
 RUN pip install uv

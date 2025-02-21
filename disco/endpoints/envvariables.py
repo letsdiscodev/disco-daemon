@@ -9,9 +9,9 @@ from sqlalchemy.orm.session import Session as DBSession
 from disco.auth import get_api_key, get_api_key_sync
 from disco.endpoints.dependencies import (
     get_db,
+    get_db_sync,
     get_project_from_url,
     get_project_from_url_sync,
-    get_sync_db,
 )
 from disco.models import ApiKey, Project, ProjectEnvironmentVariable
 from disco.utils.deploymentflow import enqueue_deployment
@@ -31,7 +31,7 @@ router = APIRouter(dependencies=[Depends(get_api_key_sync)])
 
 @router.get("/api/projects/{project_name}/env")
 def env_variables_get(
-    dbsession: Annotated[DBSession, Depends(get_sync_db)],
+    dbsession: Annotated[DBSession, Depends(get_db_sync)],
     project: Annotated[Project, Depends(get_project_from_url_sync)],
 ):
     env_variables = get_env_variables_for_project_sync(dbsession, project)
