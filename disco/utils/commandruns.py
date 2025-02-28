@@ -103,7 +103,7 @@ def create_command_run(
             await log_output(f"Exited with code {ex.status}\n")
         except Exception:
             log.exception("Error when running command %s (%s)", command, name)
-            await log_output("Iternal Disco error\n")
+            await log_output("Internal Disco error\n")
         finally:
             await log_output_terminate()
 
