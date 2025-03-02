@@ -58,27 +58,29 @@ async def node_delete(node_name: str):
     node_id = None
     for node in nodes:
         if node.labels.get("disco-name") == node_name:
+            if node.labels.get("disco-role") == "main":
+                raise HTTPException(422, "Can't remove main node")
             node_id = node.id
     if node_id is None:
         log.info("Didn't find node %s", node_name)
         raise HTTPException(status_code=404)
     log.info("Starting swarm leaver job for node %s", node_name)
-    service_name = await docker.leave_swarm(node_id=node.id)
+    service_name = await docker.leave_swarm(node_id=node_id)
     log.info("Draining node %s", node_name)
-    await docker.drain_node(node_id=node.id)
+    await docker.drain_node(node_id=node_id)
     log.info("Removing swarm leaver service for node %s", node_name)
     await docker.stop_service(service_name)
     timeout = datetime.now(timezone.utc) + timedelta(minutes=20)
     while datetime.now(timezone.utc) < timeout:
         try:
             log.info("Removing node %s", node_name)
-            await docker.remove_node(node_id=node.id)
+            await docker.remove_node(node_id=node_id)
             log.info("Removed node %s", node_name)
             return {}
         except Exception:
             log.info("Failed to remove, node, waiting 5 seconds")
             await asyncio.sleep(5)
     log.info("Removing node --force %s", node_name)
-    await docker.remove_node(node_id=node.id, force=True)
+    await docker.remove_node(node_id=node_id, force=True)
     log.info("Removed node --force %s", node_name)
     return {}
