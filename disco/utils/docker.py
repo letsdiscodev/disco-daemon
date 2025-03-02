@@ -1505,7 +1505,7 @@ def get_image_name_for_service(
         return service.image
 
 
-def login(disco_host_home: str, host: str, username: str, password: str) -> None:
+async def login(disco_host_home: str, host: str, username: str, password: str) -> None:
     import disco
 
     log.info("Docker login to %s", host)
@@ -1522,28 +1522,26 @@ def login(disco_host_home: str, host: str, username: str, password: str) -> None
         "login",
         "--username",
         username,
-        "--password",
-        password,
+        "--password-stdin",
         f"https://{host}",
     ]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
-    assert process.stdout is not None
-    for line in process.stdout:
-        line_text = line.decode("utf-8")
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-
-    process.wait()
+    stdout, stderr = await process.communicate(input=password.encode("utf-8"))
+    await process.wait()
     if process.returncode != 0:
+        if len(stdout) > 0:
+            log.info("Stdout: %s", stdout)
+        if len(stderr) > 0:
+            log.info("Stderr: %s", stderr)
         raise Exception(f"Docker returned status {process.returncode}")
 
 
-def logout(disco_host_home: str, host: str) -> None:
+async def logout(disco_host_home: str, host: str) -> None:
     import disco
 
     log.info("Docker logout from %s", host)
@@ -1560,20 +1558,18 @@ def logout(disco_host_home: str, host: str) -> None:
         "logout",
         f"https://{host}",
     ]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
-    assert process.stdout is not None
-    for line in process.stdout:
-        line_text = line.decode("utf-8")
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-
-    process.wait()
+    stdout, stderr = await process.communicate()
+    await process.wait()
     if process.returncode != 0:
+        if len(stdout) > 0:
+            log.info("Stdout: %s", stdout)
+        if len(stderr) > 0:
+            log.info("Stderr: %s", stderr)
         raise Exception(f"Docker returned status {process.returncode}")
 
 

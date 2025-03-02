@@ -50,6 +50,18 @@ def set_value_sync(dbsession: DBSession, key: str, value: str | None) -> None:
         dbsession.add(key_value)
 
 
+async def set_value(dbsession: AsyncDBSession, key: str, value: str | None) -> None:
+    key_value = await dbsession.get(KeyValue, key)
+    if key_value is not None:
+        key_value.value = value
+    else:
+        key_value = KeyValue(
+            key=key,
+            value=value,
+        )
+        dbsession.add(key_value)
+
+
 def delete_value_sync(dbsession: DBSession, key: str) -> None:
     key_value = dbsession.query(KeyValue).get(key)
     if key_value is not None:
