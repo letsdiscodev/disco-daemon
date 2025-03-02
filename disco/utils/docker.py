@@ -1517,6 +1517,7 @@ async def login(disco_host_home: str, host: str, username: str, password: str) -
         "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
         "--mount",
         f"type=bind,source={disco_host_home},target=/root",
+        "--interactive",
         f"letsdiscodev/daemon:{disco.__version__}",
         "docker",
         "login",
