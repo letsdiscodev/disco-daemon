@@ -72,6 +72,13 @@ def registry_post(
 ):
     disco_host_home = keyvalues.get_value_sync(dbsession, "HOST_HOME")
     assert disco_host_home is not None
+    registry_host = keyvalues.get_value_sync(dbsession, "REGISTRY_HOST")
+    if registry_host is not None:
+        docker.logout(
+            disco_host_home=disco_host_home,
+            host=registry_host,
+        )
+        keyvalues.set_value_sync(dbsession=dbsession, key="REGISTRY_HOST", value=None)
     docker.login(
         disco_host_home=disco_host_home,
         host=req_body.host,
@@ -81,6 +88,27 @@ def registry_post(
     keyvalues.set_value_sync(
         dbsession=dbsession, key="REGISTRY_HOST", value=req_body.host
     )
+    return {
+        "version": disco.__version__,
+        "discoHost": keyvalues.get_value_sync(dbsession, "DISCO_HOST"),
+        "registryHost": keyvalues.get_value_sync(dbsession, "REGISTRY_HOST"),
+    }
+
+
+@router.delete("/api/disco/registry")
+def registry_delete(
+    dbsession: Annotated[DBSession, Depends(get_db_sync)],
+):
+    disco_host_home = keyvalues.get_value_sync(dbsession, "HOST_HOME")
+    assert disco_host_home is not None
+    registry_host = keyvalues.get_value_sync(dbsession, "REGISTRY_HOST")
+    if registry_host is not None:
+        docker.logout(
+            disco_host_home=disco_host_home,
+            host=registry_host,
+        )
+
+    keyvalues.set_value_sync(dbsession=dbsession, key="REGISTRY_HOST", value=None)
     return {
         "version": disco.__version__,
         "discoHost": keyvalues.get_value_sync(dbsession, "DISCO_HOST"),

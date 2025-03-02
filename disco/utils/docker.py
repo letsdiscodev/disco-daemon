@@ -969,7 +969,47 @@ async def set_node_label(node_id: str, key: str, value: str) -> None:
         raise Exception(f"Docker returned status {process.returncode}")
 
 
-async def remove_node(node_id: str) -> None:
+async def leave_swarm(node_id: str) -> str:
+    service_name = f"leave-swarm-{node_id}"
+    args = [
+        "docker",
+        "service",
+        "create",
+        "--name",
+        service_name,
+        "--mode",
+        "replicated-job",
+        "--constraint",
+        f"node.id=={node_id}",
+        "--mount",
+        "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+        f"letsdiscodev/daemon:{disco.__version__}",
+        "docker",
+        "run",
+        "--rm",
+        "--detach",
+        "--mount",
+        "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+        f"letsdiscodev/daemon:{disco.__version__}",
+        "disco_leave_swarm",
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    await process.wait()
+    if process.returncode != 0:
+        if len(stdout) > 0:
+            log.info("Stdout: %s", stdout)
+        if len(stderr) > 0:
+            log.info("Stderr: %s", stderr)
+        raise Exception(f"Docker returned status {process.returncode}")
+    return service_name
+
+
+async def remove_node(node_id: str, force: bool = False) -> None:
     log.info("Removing Docker node %s", node_id)
     args = [
         "docker",
@@ -977,6 +1017,8 @@ async def remove_node(node_id: str) -> None:
         "rm",
         node_id,
     ]
+    if force:
+        args.append("--force")
     process = await asyncio.create_subprocess_exec(
         *args,
         stdout=subprocess.PIPE,
@@ -1482,6 +1524,40 @@ def login(disco_host_home: str, host: str, username: str, password: str) -> None
         username,
         "--password",
         password,
+        f"https://{host}",
+    ]
+    process = subprocess.Popen(
+        args=args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        line_text = line.decode("utf-8")
+        if line_text.endswith("\n"):
+            line_text = line_text[:-1]
+        log.info("Output: %s", line_text)
+
+    process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Docker returned status {process.returncode}")
+
+
+def logout(disco_host_home: str, host: str) -> None:
+    import disco
+
+    log.info("Docker logout from %s", host)
+    args = [
+        "docker",
+        "run",
+        "--rm",
+        "--mount",
+        "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+        "--mount",
+        f"type=bind,source={disco_host_home},target=/root",
+        f"letsdiscodev/daemon:{disco.__version__}",
+        "docker",
+        "logout",
         f"https://{host}",
     ]
     process = subprocess.Popen(

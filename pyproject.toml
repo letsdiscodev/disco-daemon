@@ -12,6 +12,7 @@ version = {attr = "disco.__version__"}
 disco_worker = "disco.worker:main"
 disco_init = "disco.scripts.init:main"
 disco_update = "disco.scripts.update:main"
+disco_leave_swarm = "disco.scripts.leave_swarm:main"
 
 [tool.ruff.lint]
 # Enable the isort rules.
