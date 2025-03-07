@@ -4,185 +4,124 @@ aiofiles==24.1.0
     # via -r requirements.in
 aiohappyeyeballs==2.4.4
     # via aiohttp
-aiohttp==3.11.11
+aiohttp==3.11.13
     # via -r requirements.in
 aiosignal==1.3.2
     # via aiohttp
-aiosqlite==0.20.0
+aiosqlite==0.21.0
     # via -r requirements.in
-alembic==1.13.1
+alembic==1.15.1
     # via -r requirements.in
 annotated-types==0.6.0
     # via pydantic
-anyio==4.3.0
+anyio==4.8.0
     # via
-    #   httpx
     #   sse-starlette
     #   starlette
-    #   watchfiles
 attrs==25.1.0
     # via aiohttp
-bcrypt==4.1.3
+bcrypt==4.3.0
     # via -r requirements.in
 certifi==2024.2.2
-    # via
-    #   httpcore
-    #   httpx
-    #   requests
+    # via requests
 cffi==1.16.0
     # via cryptography
 charset-normalizer==3.3.2
     # via requests
 click==8.1.7
-    # via
-    #   typer
-    #   uvicorn
-croniter==2.0.5
+    # via uvicorn
+croniter==6.0.0
     # via -r requirements.in
-cryptography==42.0.7
+cryptography==44.0.2
     # via
     #   -r requirements.in
     #   pyjwt
-dnspython==2.6.1
-    # via email-validator
-email-validator==2.1.1
-    # via fastapi
-fastapi==0.111.0
-    # via
-    #   -r requirements.in
-    #   fastapi-cli
-fastapi-cli==0.0.2
-    # via fastapi
+fastapi==0.115.11
+    # via -r requirements.in
 fire==0.5.0
     # via randomname
 frozenlist==1.5.0
     # via
     #   aiohttp
     #   aiosignal
-greenlet==3.0.3
-    # via sqlalchemy
-h11==0.14.0
+greenlet==3.1.1
     # via
-    #   httpcore
-    #   uvicorn
-httpcore==1.0.5
-    # via httpx
-httptools==0.6.1
+    #   -r requirements.in
+    #   sqlalchemy
+h11==0.14.0
     # via uvicorn
-httpx==0.27.0
-    # via fastapi
 idna==3.6
     # via
     #   anyio
-    #   email-validator
-    #   httpx
     #   requests
     #   yarl
-jinja2==3.1.4
-    # via fastapi
 mako==1.3.2
     # via alembic
-markdown-it-py==3.0.0
-    # via rich
 markupsafe==2.1.5
-    # via
-    #   jinja2
-    #   mako
-mdurl==0.1.2
-    # via markdown-it-py
+    # via mako
 multidict==6.1.0
     # via
     #   aiohttp
     #   yarl
-mypy==1.10.0
+mypy==1.15.0
     # via -r requirements.in
 mypy-extensions==1.0.0
     # via mypy
-orjson==3.10.3
-    # via fastapi
 propcache==0.2.1
     # via
     #   aiohttp
     #   yarl
 pycparser==2.21
     # via cffi
-pydantic==2.7.1
+pydantic==2.10.6
     # via
     #   -r requirements.in
     #   fastapi
-pydantic-core==2.18.2
+pydantic-core==2.27.2
     # via pydantic
-pygments==2.18.0
-    # via rich
-pyjwt==2.9.0
+pyjwt==2.10.1
     # via -r requirements.in
 python-dateutil==2.9.0.post0
     # via croniter
-python-dotenv==1.0.1
-    # via uvicorn
-python-multipart==0.0.9
-    # via fastapi
 pytz==2024.1
     # via croniter
-pyyaml==6.0.1
-    # via uvicorn
 randomname==0.2.1
     # via -r requirements.in
-requests==2.31.0
+requests==2.32.3
     # via -r requirements.in
-rich==13.7.1
-    # via typer
-ruff==0.4.3
+ruff==0.9.9
     # via -r requirements.in
-shellingham==1.5.4
-    # via typer
 six==1.16.0
     # via
     #   fire
     #   python-dateutil
 sniffio==1.3.1
-    # via
-    #   anyio
-    #   httpx
-sqlalchemy==2.0.30
+    # via anyio
+sqlalchemy==2.0.38
     # via
     #   -r requirements.in
     #   alembic
-sse-starlette==2.1.0
+sse-starlette==2.2.1
     # via -r requirements.in
-starlette==0.37.2
+starlette==0.46.0
     # via
     #   fastapi
     #   sse-starlette
 termcolor==2.4.0
     # via fire
-typer==0.12.3
-    # via fastapi-cli
-typing-extensions==4.10.0
+typing-extensions==4.12.2
     # via
     #   aiosqlite
     #   alembic
+    #   anyio
     #   fastapi
     #   mypy
     #   pydantic
     #   pydantic-core
     #   sqlalchemy
-    #   typer
-ujson==5.9.0
-    # via fastapi
 urllib3==2.2.1
     # via requests
-uvicorn==0.29.0
-    # via
-    #   -r requirements.in
-    #   fastapi
-    #   fastapi-cli
-    #   sse-starlette
-uvloop==0.19.0
-    # via uvicorn
-watchfiles==0.21.0
-    # via uvicorn
-websockets==12.0
-    # via uvicorn
+uvicorn==0.34.0
+    # via -r requirements.in
 yarl==1.18.3
     # via aiohttp

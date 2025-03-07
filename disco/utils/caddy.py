@@ -32,7 +32,7 @@ class CaddyConnectionPool(HTTPConnectionPool):
 
 
 class CaddyAdapter(HTTPAdapter):
-    def get_connection(self, url, proxies=None):
+    def get_connection_with_tls_context(self, request, verify, proxies=None, cert=None):
         return CaddyConnectionPool()
 
 

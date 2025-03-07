@@ -885,7 +885,7 @@ async def serve_new_deployment(
                 raise
     else:
         raise NotImplementedError(
-            f"Deployment type not handled {new_deployment_info.disco_file.services["web"].type}"
+            f"Deployment type not handled {new_deployment_info.disco_file.services['web'].type}"
         )
 
 
