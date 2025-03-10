@@ -2,10 +2,26 @@ import asyncio
 import logging
 import os
 import shutil
+from pathlib import Path
 
 import aiofiles.os
 
 log = logging.getLogger(__name__)
+
+
+async def rmtree(path: str) -> None:
+    def inner_rmtree() -> None:
+        shutil.rmtree(path)
+
+    await asyncio.get_event_loop().run_in_executor(None, inner_rmtree)
+
+
+async def path_unlink(path: str, missing_ok: bool = False) -> None:
+    def inner_path_unlink() -> None:
+        f = Path(path)
+        f.unlink(missing_ok=missing_ok)
+
+    await asyncio.get_event_loop().run_in_executor(None, inner_path_unlink)
 
 
 def projects_root() -> str:
@@ -73,10 +89,10 @@ async def create_static_site_deployment_directory(
     )
 
 
-def remove_project_static_deployments_if_any(project_name: str) -> None:
+async def remove_project_static_deployments_if_any(project_name: str) -> None:
     path = static_site_deployments_path(project_name)
-    if os.path.isdir(path):
-        shutil.rmtree(path)
+    if await aiofiles.os.path.isdir(path):
+        await rmtree(path)
 
 
 def static_site_src_public_path(project_name: str, public_path: str) -> str:

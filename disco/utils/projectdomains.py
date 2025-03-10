@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import uuid
 
@@ -32,7 +31,6 @@ async def add_domain(
         project.log(),
         domain.log(),
     )
-
     www_apex_domain_name = _get_apex_www_redirect_for_domain(domain_name)
     www_apex_domain = (
         (await get_domain_by_name(dbsession, www_apex_domain_name))
@@ -48,7 +46,10 @@ async def add_domain(
             www_apex_domain.name,
         )
         await caddy.remove_apex_www_redirects(www_apex_domain.id)
-    await _update_caddy_domains_for_project(project)
+    domains: list[ProjectDomain] = await project.awaitable_attrs.domains
+    await caddy.set_domains_for_project(
+        project_name=project.name, domains=[d.name for d in domains]
+    )
     if www_apex_domain_name is not None and www_apex_domain is None:
         # we're adding www.example.com and example.com is free
         log.info(
@@ -80,12 +81,12 @@ async def remove_domain(
         project.log(),
         domain.log(),
     )
-    domains = await project.awaitable_attrs.domains
+    domains: list[ProjectDomain] = await project.awaitable_attrs.domains
     domains.remove(domain)
-    project.domains = domains
-    events.domain_removed(project_name=project.name, domain=domain.name)
     await dbsession.delete(domain)
-    await _update_caddy_domains_for_project(project)
+    await caddy.set_domains_for_project(
+        project_name=project.name, domains=[d.name for d in domains]
+    )
     www_apex_domain_name = _get_apex_www_redirect_for_domain(domain_name)
     www_apex_domain = (
         (await get_domain_by_name(dbsession, www_apex_domain_name))
@@ -110,55 +111,7 @@ async def remove_domain(
                 from_domain=domain_name,
                 to_domain=www_apex_domain.name,
             )
-
-
-def remove_domain_sync(dbsession: DBSession, domain: ProjectDomain, by_api_key: ApiKey):
-    project = domain.project
-    domain_id = domain.id
-    domain_name = domain.name
-    log.info(
-        "%s is removing domain from project: %s %s",
-        by_api_key.log(),
-        project.log(),
-        domain.log(),
-    )
-    project.domains.remove(domain)
-    dbsession.delete(domain)
-    www_apex_domain_name = _get_apex_www_redirect_for_domain(domain_name)
-    www_apex_domain = (
-        get_domain_by_name_sync(dbsession, www_apex_domain_name)
-        if www_apex_domain_name is not None
-        else None
-    )
-
-    async def update_caddy_async():
-        await _update_caddy_domains_for_project(project)
-        if www_apex_domain_name is not None:
-            if www_apex_domain is None:
-                # removing www.example.com and example.com doesn't exist,
-                # meaning we had a redirect we should remove
-                log.info(
-                    "Removing domain redirect from %s to %s",
-                    www_apex_domain_name,
-                    domain_name,
-                )
-                await caddy.remove_apex_www_redirects(domain_id)
-            else:
-                # removing www.example.com and example.com exists,
-                # meaning we're freeing www.example.com so we should create a redirect
-                await caddy.add_apex_www_redirects(
-                    domain_id=www_apex_domain.id,
-                    from_domain=domain_name,
-                    to_domain=www_apex_domain.name,
-                )
-
-    asyncio.run(update_caddy_async())
-
-
-async def _update_caddy_domains_for_project(project: Project) -> None:
-    project_domains = await project.awaitable_attrs.domains
-    domains = [d.name for d in project_domains]
-    await caddy.set_domains_for_project(project_name=project.name, domains=domains)
+    events.domain_removed(project_name=project.name, domain=domain_name)
 
 
 def _get_apex_www_redirect_for_domain(domain_name: str) -> str | None:

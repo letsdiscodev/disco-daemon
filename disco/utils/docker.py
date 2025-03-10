@@ -387,31 +387,6 @@ async def push_image(image: str) -> None:
         raise
 
 
-def stop_service_sync(name: str) -> None:
-    log.info("Stopping service %s", name)
-    args = [
-        "docker",
-        "service",
-        "rm",
-        name,
-    ]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    for line in process.stdout:
-        line_text = line.decode("utf-8")
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-
-    process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-
-
 async def stop_service(name: str) -> None:
     log.info("Stopping service %s", name)
     args = [
@@ -515,29 +490,6 @@ async def service_exists(service_name: str) -> bool:
     return process.returncode == 0
 
 
-def list_services_for_project_sync(project_name: str) -> list[str]:
-    args = [
-        "docker",
-        "service",
-        "ls",
-        "--filter",
-        f"label=disco.project.name={project_name}",
-        "--format",
-        "{{ .Name }}",
-    ]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    services = [line.decode("utf-8")[:-1] for line in process.stdout.readlines()]
-    process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-    return services
-
-
 async def list_services_for_project(project_name: str) -> list[str]:
     args = [
         "docker",
@@ -566,7 +518,7 @@ async def list_services_for_project(project_name: str) -> list[str]:
     return services
 
 
-def list_containers_for_project(project_name: str) -> list[str]:
+async def list_containers_for_project(project_name: str) -> list[str]:
     args = [
         "docker",
         "container",
@@ -577,16 +529,15 @@ def list_containers_for_project(project_name: str) -> list[str]:
         "--format",
         "{{ .Names }}",
     ]
-    process = subprocess.Popen(
-        args=args,
+    process = await asyncio.create_subprocess_exec(
+        *args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
-    assert process.stdout is not None
-    containers = [
-        line.decode("utf-8")[:-1].split(",")[0] for line in process.stdout.readlines()
-    ]
-    process.wait()
+    stdout, _ = await process.communicate()
+    lines = stdout.decode("utf-8").split("\n")
+    containers = [line[:-1].split(",")[0] for line in lines if line.strip() != ""]
+    await process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
     return containers
@@ -1201,7 +1152,7 @@ def remove_network_sync(name: str) -> None:
         raise Exception(f"Docker returned status {process.returncode}")
 
 
-def add_network_to_container(
+def add_network_to_container_sync(
     container: str, network: str, alias: str | None = None
 ) -> None:
     log.info("Adding network to container: %s to %s", network, container)
@@ -1233,7 +1184,7 @@ def add_network_to_container(
         raise Exception(f"Docker returned status {process.returncode}")
 
 
-async def add_network_to_container_async(container: str, network: str) -> None:
+async def add_network_to_container(container: str, network: str) -> None:
     log.info("Adding network to container: %s to %s", network, container)
     args = [
         "docker",
@@ -1259,7 +1210,7 @@ async def add_network_to_container_async(container: str, network: str) -> None:
         raise Exception(f"Docker returned status {process.returncode}")
 
 
-def remove_network_from_container(container: str, network: str) -> None:
+async def remove_network_from_container(container: str, network: str) -> None:
     log.info("Removing network from container: %s from %s", network, container)
     args = [
         "docker",
@@ -1268,19 +1219,16 @@ def remove_network_from_container(container: str, network: str) -> None:
         network,
         container,
     ]
-    process = subprocess.Popen(
-        args=args,
+    process = await asyncio.create_subprocess_exec(
+        *args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
-    assert process.stdout is not None
-    for line in process.stdout:
-        line_text = line.decode("utf-8")
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
+    stdout, _ = await process.communicate()
+    for line in stdout.decode("utf-8").split("\n"):
+        log.info("Output: %s", line)
 
-    process.wait()
+    await process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
 
@@ -1358,7 +1306,7 @@ async def run(
         if process.returncode != 0:
             raise ProcessStatusError(status=process.returncode)
         for network in networks:
-            await add_network_to_container_async(container=name, network=network)
+            await add_network_to_container(container=name, network=network)
         more_args = []
         if stdin is not None:
             more_args.append("--interactive")
@@ -1735,7 +1683,7 @@ async def start_container(
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
     for network in networks:
-        await add_network_to_container_async(container=name, network=network)
+        await add_network_to_container(container=name, network=network)
     args = [
         "docker",
         "container",

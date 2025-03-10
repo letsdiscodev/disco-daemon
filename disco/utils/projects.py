@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import uuid
 from typing import Sequence
@@ -9,14 +8,19 @@ from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import (
     ApiKey,
+    CommandRun,
+    Deployment,
+    DeploymentEnvironmentVariable,
     Project,
     ProjectDomain,
+    ProjectEnvironmentVariable,
     ProjectGithubRepo,
+    ProjectKeyValue,
 )
 from disco.utils import docker, events, github
 from disco.utils.commandoutputs import delete_output_for_source, deployment_source
 from disco.utils.filesystem import remove_project_static_deployments_if_any
-from disco.utils.projectdomains import remove_domain_sync
+from disco.utils.projectdomains import remove_domain
 
 log = logging.getLogger(__name__)
 
@@ -125,49 +129,62 @@ def get_all_projects_sync(dbsession: DBSession) -> list[Project]:
     return dbsession.query(Project).order_by(Project.name).all()
 
 
-def delete_project(dbsession: DBSession, project: Project, by_api_key: ApiKey) -> None:
+async def delete_project(
+    dbsession: AsyncDBSession, project: Project, by_api_key: ApiKey
+) -> None:
     from disco.utils.asyncworker import async_worker
 
     log.info("%s is deleting project %s", by_api_key.log(), project.log())
-    if project.github_repo is not None:
+    github_repo: ProjectGithubRepo | None = await project.awaitable_attrs.github_repo
+    if github_repo is not None:
         try:
-            github.remove_repo(project.name)
+            await github.remove_repo_from_filesystem(project.name)
         except Exception:
             log.info("Failed to remove Github repo for project %s", project.name)
-    remove_project_static_deployments_if_any(project.name)
-    for domain in project.domains:
-        remove_domain_sync(dbsession=dbsession, domain=domain, by_api_key=by_api_key)
-    services = docker.list_services_for_project_sync(project.name)
+    await remove_project_static_deployments_if_any(project.name)
+    p_domains: list[ProjectDomain] = list(await project.awaitable_attrs.domains)
+    for domain in p_domains:
+        await remove_domain(dbsession=dbsession, domain=domain, by_api_key=by_api_key)
+    services = await docker.list_services_for_project(project.name)
     for service_name in services:
         try:
-            docker.stop_service_sync(service_name)
+            await docker.stop_service(service_name)
         except Exception:
             log.info("Failed to stop service %s", service_name)
-    containers = docker.list_containers_for_project(project.name)
+    containers = await docker.list_containers_for_project(project.name)
     for container in containers:
-        docker.remove_container_sync(container)
-    networks = asyncio.run(docker.list_networks_for_project(project.name))
+        await docker.remove_container(container)
+    networks = await docker.list_networks_for_project(project.name)
     for network in networks:
         try:
-            docker.remove_network_from_container("disco-caddy", network)
+            await docker.remove_network_from_container("disco-caddy", network)
         except Exception:
             pass
     async_worker.remove_project_crons(project.name)
-    if project.github_repo is not None:
-        dbsession.delete(project.github_repo)
-    for p_env_var in project.env_variables:
-        dbsession.delete(p_env_var)
-    for deployment in project.deployments:
-        delete_output_for_source(deployment_source(deployment.id))
-        for d_env_var in deployment.env_variables:
-            dbsession.delete(d_env_var)
-        dbsession.delete(deployment)
-    for keyvalue in project.key_values:
-        dbsession.delete(keyvalue)
-    for run in project.command_runs:
-        dbsession.delete(run)
+    if github_repo is not None:
+        await dbsession.delete(github_repo)
+    p_env_vars: Sequence[
+        ProjectEnvironmentVariable
+    ] = await project.awaitable_attrs.env_variables
+    for p_env_var in p_env_vars:
+        await dbsession.delete(p_env_var)
+    deployments: Sequence[Deployment] = await project.awaitable_attrs.deployments
+    for deployment in deployments:
+        await delete_output_for_source(deployment_source(deployment.id))
+        d_env_vars: Sequence[
+            DeploymentEnvironmentVariable
+        ] = await deployment.awaitable_attrs.env_variables
+        for d_env_var in d_env_vars:
+            await dbsession.delete(d_env_var)
+        await dbsession.delete(deployment)
+    p_key_values: Sequence[ProjectKeyValue] = await project.awaitable_attrs.key_values
+    for keyvalue in p_key_values:
+        await dbsession.delete(keyvalue)
+    command_runs: Sequence[CommandRun] = await project.awaitable_attrs.command_runs
+    for run in command_runs:
+        await dbsession.delete(run)
     events.project_removed(project_name=project.name)
-    dbsession.delete(project)
+    await dbsession.delete(project)
 
 
 def volume_name_for_project(name: str, project_id: str) -> str:

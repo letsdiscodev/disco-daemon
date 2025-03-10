@@ -230,7 +230,7 @@ def create_docker_config(host_home: str) -> None:
 
 def setup_cloudflare_tunnel(cloudflare_tunnel_token: str) -> None:
     docker.create_network_sync("disco-cloudflare-tunnel")
-    docker.add_network_to_container(
+    docker.add_network_to_container_sync(
         "disco-caddy", "disco-cloudflare-tunnel", alias="disco-server"
     )
     _run_cmd(
