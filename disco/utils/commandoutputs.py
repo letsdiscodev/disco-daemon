@@ -4,7 +4,6 @@ import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from sqlalchemy import String, UnicodeText, select
 from sqlalchemy.ext.asyncio import (
@@ -18,6 +17,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.schema import MetaData
 
 from disco.models.meta import NAMING_CONVENTION, DateTimeTzAware
+from disco.utils.filesystem import path_unlink
 
 log = logging.getLogger(__name__)
 
@@ -142,9 +142,8 @@ async def get_next(source: str, after: datetime | None = None) -> Output | None:
         )
 
 
-def delete_output_for_source(source: str) -> None:
-    f = Path(_db_file_path(source))
-    f.unlink(missing_ok=True)
+async def delete_output_for_source(source: str) -> None:
+    await path_unlink(path=_db_file_path(source), missing_ok=True)
 
 
 async def get_by_id(source: str, output_id: str) -> Output | None:

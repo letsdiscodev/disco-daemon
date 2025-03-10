@@ -1,5 +1,6 @@
 """Script that runs when updating Disco to the latest version"""
 
+import asyncio
 import json
 import logging
 import os
@@ -380,11 +381,13 @@ def task_0_11_x(image: str) -> None:
         if not network.endswith("-caddy"):
             continue
         try:
-            docker.remove_network_from_container("disco-caddy", network)
+            asyncio.run(docker.remove_network_from_container("disco-caddy", network))
         except Exception:
             log.info("Couldn't remove network %s from disco-caddy", network)
-    docker.add_network_to_container("disco-caddy", "disco-main")
-    docker.remove_network_from_container("disco-caddy", "disco-caddy-daemon")
+    docker.add_network_to_container_sync("disco-caddy", "disco-main")
+    asyncio.run(
+        docker.remove_network_from_container("disco-caddy", "disco-caddy-daemon")
+    )
     docker.remove_network_sync("disco-caddy-daemon")
     with Session.begin() as dbsession:
         keyvalues.set_value_sync(

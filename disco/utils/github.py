@@ -4,7 +4,6 @@ import hmac
 import json
 import logging
 import re
-import shutil
 import subprocess
 import time
 import uuid
@@ -28,7 +27,7 @@ from disco.models import (
 )
 from disco.models.db import AsyncSession, Session
 from disco.utils import events
-from disco.utils.filesystem import project_path, projects_root
+from disco.utils.filesystem import project_path, projects_root, rmtree
 
 log = logging.getLogger(__name__)
 
@@ -156,9 +155,9 @@ def _branch_from_refs(refs: str) -> str:
     return match.group("branch")
 
 
-def remove_repo(project_name: str) -> None:
+async def remove_repo_from_filesystem(project_name: str) -> None:
     log.info("Removing Github repo of project %s from filesystem", project_name)
-    shutil.rmtree(project_path(project_name))
+    await rmtree(project_path(project_name))
 
 
 async def fetch(project_name: str, repo_full_name: str) -> None:

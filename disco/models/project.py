@@ -53,7 +53,7 @@ class Project(Base):
         "ProjectKeyValue",
         back_populates="project",
     )
-    github_repo: Mapped[ProjectGithubRepo] = relationship(
+    github_repo: Mapped[ProjectGithubRepo | None] = relationship(
         "ProjectGithubRepo",
         back_populates="project",
         uselist=False,
