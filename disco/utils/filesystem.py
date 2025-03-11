@@ -40,8 +40,10 @@ async def project_folder_exists(project_name: str):
     return await aiofiles.os.path.isdir(project_path(project_name))
 
 
-async def read_disco_file(project_name: str) -> str | None:
-    path = f"{project_path(project_name)}/disco.json"
+async def read_disco_file(
+    project_name: str, disco_json_path: str = "disco.json"
+) -> str | None:
+    path = f"{project_path(project_name)}/{disco_json_path}"
     log.info("Reading disco file %s", path)
     if not await aiofiles.os.path.isfile(path):
         log.info("Disco file does not exist, not reading %s", path)

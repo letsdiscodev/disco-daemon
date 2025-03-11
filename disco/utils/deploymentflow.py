@@ -597,7 +597,12 @@ async def read_disco_file_for_deployment(
     new_deployment_info: DeploymentInfo,
     log_output: Callable[[str], Awaitable[None]],
 ) -> DiscoFile | None:
-    disco_file_str = await read_disco_file(new_deployment_info.project_name)
+    disco_json_path = dict(new_deployment_info.env_variables).get(
+        "DISCO_JSON_PATH", "disco.json"
+    )
+    disco_file_str = await read_disco_file(
+        project_name=new_deployment_info.project_name, disco_json_path=disco_json_path
+    )
     if disco_file_str is not None:
         async with AsyncSession.begin() as dbsession:
             deployment = await get_deployment_by_id(dbsession, new_deployment_info.id)
