@@ -754,6 +754,8 @@ def get_update_function_for_version(version: str) -> Callable[[str], None]:
     if version.startswith("0.21."):
         return task_0_21_x
     if version.startswith("0.22."):
-        assert disco.__version__.startswith("0.22.")
+        return task_0_22_x
+    if version.startswith("0.23."):
+        assert disco.__version__.startswith("0.23.")
         return task_patch
     raise NotImplementedError(f"Update missing for version {version}")
