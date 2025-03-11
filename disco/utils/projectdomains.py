@@ -32,7 +32,6 @@ async def add_domain(
         project.log(),
         domain.log(),
     )
-
     www_apex_domain_name = _get_apex_www_redirect_for_domain(domain_name)
     www_apex_domain = (
         (await get_domain_by_name(dbsession, www_apex_domain_name))
@@ -48,7 +47,10 @@ async def add_domain(
             www_apex_domain.name,
         )
         await caddy.remove_apex_www_redirects(www_apex_domain.id)
-    await _update_caddy_domains_for_project(dbsession, project)
+    domains: list[ProjectDomain] = await project.awaitable_attrs.domains
+    await caddy.set_domains_for_project(
+        project_name=project.name, domains=[d.name for d in domains]
+    )
     if www_apex_domain_name is not None and www_apex_domain is None:
         # we're adding www.example.com and example.com is free
         log.info(
@@ -80,9 +82,12 @@ async def remove_domain(
         project.log(),
         domain.log(),
     )
+    domains: list[ProjectDomain] = await project.awaitable_attrs.domains
+    domains.remove(domain)
     await dbsession.delete(domain)
-    events.domain_removed(project_name=project.name, domain=domain_name)
-    await _update_caddy_domains_for_project(dbsession, project)
+    await caddy.set_domains_for_project(
+        project_name=project.name, domains=[d.name for d in domains]
+    )
     www_apex_domain_name = _get_apex_www_redirect_for_domain(domain_name)
     www_apex_domain = (
         (await get_domain_by_name(dbsession, www_apex_domain_name))
@@ -107,6 +112,7 @@ async def remove_domain(
                 from_domain=domain_name,
                 to_domain=www_apex_domain.name,
             )
+    events.domain_removed(project_name=project.name, domain=domain_name)
 
 
 async def get_domains_for_project(
@@ -120,7 +126,7 @@ async def get_domains_for_project(
 async def _update_caddy_domains_for_project(
     dbsession: AsyncDBSession, project: Project
 ) -> None:
-    project_domains = await get_domains_for_project(dbsession, project)
+    project_domains = await project.awaitable_attrs.domains
     domains = [d.name for d in project_domains]
     log.info("\n\n\n\n\n\n\n\nDomains: %s\n\n\n\n\n", domains)
     await caddy.set_domains_for_project(project_name=project.name, domains=domains)
