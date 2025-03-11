@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from html import escape
 from typing import Annotated
 
-import randomname
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -35,6 +34,7 @@ from disco.utils.github import (
     process_github_app_webhook,
     prune,
 )
+from disco.utils.randomname import generate_random_name_sync
 
 log = logging.getLogger(__name__)
 
@@ -125,7 +125,7 @@ def github_app_create_get(
     else:
         github_url = f"https://github.com/settings/apps/new?state={pending_app.state}"
     manifest = {
-        "name": f"Disco {randomname.get_name()}",
+        "name": f"Disco {generate_random_name_sync()}",
         "url": f"https://{disco_host}/github-apps/home",
         "redirect_url": f"https://{disco_host}/github-apps/{pending_app.id}/created",
         "callback_urls": [],

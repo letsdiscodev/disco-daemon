@@ -1,7 +1,6 @@
 import logging
 from typing import Annotated
 
-import randomname
 from fastapi import APIRouter, BackgroundTasks, Depends
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError
@@ -45,6 +44,7 @@ from disco.utils.projects import (
     get_project_by_name,
     set_project_github_repo,
 )
+from disco.utils.randomname import generate_random_name
 
 log = logging.getLogger(__name__)
 
@@ -170,7 +170,8 @@ async def projects_post(
     background_tasks: BackgroundTasks,
 ):
     if req_body.generate_suffix:
-        req_body.name = f"{req_body.name}-{randomname.get_name()}"
+        suffix = await generate_random_name()
+        req_body.name = f"{req_body.name}-{suffix}"
     await validate_create_project(dbsession=dbsession, req_body=req_body)
     if req_body.caddy is not None and req_body.domain is not None:
         # TODO rewrite with await
