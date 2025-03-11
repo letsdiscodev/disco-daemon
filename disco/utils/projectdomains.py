@@ -1,6 +1,5 @@
 import logging
 import uuid
-from typing import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
@@ -113,23 +112,6 @@ async def remove_domain(
                 to_domain=www_apex_domain.name,
             )
     events.domain_removed(project_name=project.name, domain=domain_name)
-
-
-async def get_domains_for_project(
-    dbsession: AsyncDBSession, project: Project
-) -> Sequence[ProjectDomain]:
-    stmt = select(ProjectDomain).where(ProjectDomain.project == project)
-    result = await dbsession.execute(stmt)
-    return result.scalars().all()
-
-
-async def _update_caddy_domains_for_project(
-    dbsession: AsyncDBSession, project: Project
-) -> None:
-    project_domains = await project.awaitable_attrs.domains
-    domains = [d.name for d in project_domains]
-    log.info("\n\n\n\n\n\n\n\nDomains: %s\n\n\n\n\n", domains)
-    await caddy.set_domains_for_project(project_name=project.name, domains=domains)
 
 
 def _get_apex_www_redirect_for_domain(domain_name: str) -> str | None:
