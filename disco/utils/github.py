@@ -28,6 +28,7 @@ from disco.models import (
 from disco.models.db import AsyncSession, Session
 from disco.utils import events
 from disco.utils.filesystem import project_path, projects_root, rmtree
+from disco.utils.subprocess import decode_text
 
 log = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ async def checkout_commit(project_name: str, commit_hash: str) -> None:
     )
     assert process.stdout is not None
     async for line in process.stdout:
-        line_text = line.decode("utf-8")
+        line_text = decode_text(line)
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
@@ -72,7 +73,7 @@ async def checkout_latest(project_name: str, branch: str | None) -> None:
     )
     assert process.stdout is not None
     async for line in process.stdout:
-        line_text = line.decode("utf-8")
+        line_text = decode_text(line)
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
@@ -93,7 +94,7 @@ async def get_head_commit_hash(project_name: str) -> str:
     )
     assert process.stdout is not None
     async for line in process.stdout:
-        decoded_line = line.decode("utf-8")
+        decoded_line = decode_text(line)
         hash = decoded_line.replace("\n", "")
 
     await process.wait()
@@ -125,9 +126,9 @@ async def main_or_master(project_name: str) -> str:
     main_exists = False
     master_exists = False
     async for line in process.stdout:
-        if "origin/main" in line.decode("utf-8"):
+        if "origin/main" in decode_text(line):
             main_exists = True
-        if "origin/master" in line.decode("utf-8"):
+        if "origin/master" in decode_text(line):
             master_exists = True
     await process.wait()
     if process.returncode != 0:
@@ -178,7 +179,7 @@ async def fetch(project_name: str, repo_full_name: str) -> None:
     )
     assert process.stdout is not None
     async for line in process.stdout:
-        line_text = line.decode("utf-8")
+        line_text = decode_text(line)
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
@@ -194,7 +195,7 @@ async def fetch(project_name: str, repo_full_name: str) -> None:
     )
     assert process.stdout is not None
     async for line in process.stdout:
-        line_text = line.decode("utf-8")
+        line_text = decode_text(line)
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
@@ -224,7 +225,7 @@ async def clone(
     )
     assert process.stdout is not None
     async for line in process.stdout:
-        line_text = line.decode("utf-8")
+        line_text = decode_text(line)
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)

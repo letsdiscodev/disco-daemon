@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import subprocess
 
@@ -5,6 +6,7 @@ from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import ApiKey
 from disco.utils import caddy, docker, keyvalues
+from disco.utils.subprocess import decode_text
 
 log = logging.getLogger(__name__)
 
@@ -16,7 +18,7 @@ def update_disco(
         raise Exception("An update is already in progress")
     save_is_updating(dbsession)
     if pull:
-        docker.pull(image)
+        asyncio.run(docker.pull(image))
     _run_cmd(
         [
             "docker",
@@ -44,7 +46,7 @@ def _run_cmd(args: list[str], timeout=600) -> str:
     assert process.stdout is not None
     output = ""
     for line in process.stdout:
-        decoded_line = line.decode("utf-8")
+        decoded_line = decode_text(line)
         output += decoded_line
     process.wait()
     if process.returncode != 0:

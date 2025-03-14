@@ -20,6 +20,7 @@ from disco.models.db import Session
 from disco.scripts.init import start_disco_daemon
 from disco.utils import keyvalues
 from disco.utils.meta import save_done_updating
+from disco.utils.subprocess import decode_text
 
 log = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ def _run_cmd(args: list[str], timeout=600) -> str:
     timeout_dt = datetime.now(timezone.utc) + timedelta(seconds=timeout)
     output = ""
     for line in process.stdout:
-        decoded_line = line.decode("utf-8")
+        decoded_line = decode_text(line)
         output += decoded_line
         print(decoded_line, end="", flush=True)
         if datetime.now(timezone.utc) > timeout_dt:
@@ -341,7 +342,7 @@ def task_0_11_x(image: str) -> None:
 
     print("Updating from 0.11.x to 0.12.0")
     alembic_upgrade("b570b8c2424d")
-    docker.create_network_sync("disco-main")
+    asyncio.run(docker.create_network("disco-main"))
     services_output = _run_cmd(
         [
             "docker",
