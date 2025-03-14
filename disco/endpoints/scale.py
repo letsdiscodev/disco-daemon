@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Annotated
 
@@ -111,4 +112,4 @@ def scale_post(
             )
             for service, scale in req_body.services.items()
         )
-        docker.scale(internal_name_scale)
+        asyncio.run(docker.scale(internal_name_scale))

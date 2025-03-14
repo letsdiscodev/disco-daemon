@@ -193,10 +193,10 @@ class ProjectCron(Cron):
 
     async def run(self) -> None:
         async def log_stdout(stdout: str) -> None:
-            log.info("Output (stdout): %s", stdout.replace("\n", ""))
+            pass
 
         async def log_stderr(stderr: str) -> None:
-            log.info("Output (stderr): %s", stderr.replace("\n", ""))
+            pass
 
         await docker.run(
             image=self.image,

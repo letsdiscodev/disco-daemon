@@ -15,6 +15,7 @@ from disco.utils import docker
 from disco.utils.deployments import get_live_deployment
 from disco.utils.discofile import get_disco_file_from_str
 from disco.utils.projects import get_project_by_name
+from disco.utils.subprocess import decode_text
 from disco.utils.tunnels import (
     TUNNEL_CMD,
     close_tunnel,
@@ -105,12 +106,12 @@ async def tunnels_post(req_body: CreateTunnelReqBody):
     async def read_stdout() -> None:
         assert process.stdout is not None
         async for line in process.stdout:
-            log.info(line.decode("utf-8")[:-1])
+            log.info(decode_text(line)[:-1])
 
     async def read_stderr() -> None:
         assert process.stderr is not None
         async for line in process.stderr:
-            log.info(line.decode("utf-8")[:-1])
+            log.info(decode_text(line)[:-1])
 
     tasks = [
         asyncio.create_task(read_stdout()),

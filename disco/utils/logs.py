@@ -1,11 +1,11 @@
 import asyncio
 import json
 import logging
-import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from disco.utils import docker
+from disco.utils.subprocess import check_call
 
 log = logging.getLogger(__name__)
 
@@ -118,16 +118,8 @@ async def get_running_syslogs() -> list[str]:
         "--format",
         "{{ .Name }}",
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    stdout, _ = await process.communicate()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-    services = stdout.decode("utf-8").split("\n")[:-1]
-    return services
+    stdout, _, _ = await check_call(args)
+    return stdout
 
 
 async def clean_up_rogue_syslogs() -> None:

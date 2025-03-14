@@ -15,6 +15,7 @@ from disco.errors import ProcessStatusError
 from disco.utils.discofile import DiscoFile
 from disco.utils.discofile import Service as DiscoService
 from disco.utils.filesystem import project_path
+from disco.utils.subprocess import check_call, decode_text
 
 log = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ async def build_image(
     dockerfile_str: str | None = None,
     timeout: int = 3600,
 ) -> None:
+    log.info("Building Docker image %s", image)
     assert (dockerfile_path is None) != (dockerfile_str is None)
     # include all env variables individually, and also include a .env with all variables
     env_var_args = []
@@ -76,12 +78,12 @@ async def build_image(
         async def read_stdout() -> None:
             assert process.stdout is not None
             async for line in process.stdout:
-                await stdout(line.decode("utf-8"))
+                await stdout(decode_text(line))
 
         async def read_stderr() -> None:
             assert process.stderr is not None
             async for line in process.stderr:
-                await stderr(line.decode("utf-8"))
+                await stderr(decode_text(line))
 
         tasks = [
             asyncio.create_task(write_stdin()),
@@ -120,6 +122,7 @@ def start_service_sync(
     replicas: int,
     command: str | None,
 ) -> None:
+    log.info("Starting Docker service %s", name)
     more_args = []
     for var_name, var_value in env_variables:
         more_args.append("--env")
@@ -177,12 +180,12 @@ def start_service_sync(
     timeout = datetime.now(timezone.utc) + timedelta(seconds=timeout_seconds)
     next_check = datetime.now(timezone.utc) + timedelta(seconds=3)
     for line in process.stdout:
-        line_text = line.decode("utf-8")
+        line_text = decode_text(line)
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
         if datetime.now(timezone.utc) > next_check:
-            states = get_service_nodes_desired_state(name)
+            states = get_service_nodes_desired_state_sync(name)
             if len([state for state in states if state == "Shutdown"]) >= 3 * replicas:
                 # 3 attempts to start the service failed
                 process.terminate()
@@ -212,6 +215,7 @@ async def start_project_service(
     replicas: int,
     command: str | None,
 ) -> None:
+    log.info("Starting Docker project service %s", name)
     more_args = []
     for var_name, var_value in env_variables:
         more_args.append("--env")
@@ -269,12 +273,12 @@ async def start_project_service(
     timeout = datetime.now(timezone.utc) + timedelta(seconds=timeout_seconds)
     next_check = datetime.now(timezone.utc) + timedelta(seconds=3)
     async for line in process.stdout:
-        line_text = line.decode("utf-8")
+        line_text = decode_text(line)
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
         if datetime.now(timezone.utc) > next_check:
-            states = await get_service_nodes_desired_state_async(name)
+            states = await get_service_nodes_desired_state(name)
             if (
                 replicas > 0
                 and len([state for state in states if state == "Shutdown"])
@@ -295,7 +299,8 @@ async def start_project_service(
         raise Exception(f"Docker returned status {process.returncode}")
 
 
-def get_service_nodes_desired_state(service_name: str) -> list[str]:
+def get_service_nodes_desired_state_sync(service_name: str) -> list[str]:
+    log.info("Getting Docker service nodes desired states: %s", service_name)
     args = [
         "docker",
         "service",
@@ -310,14 +315,15 @@ def get_service_nodes_desired_state(service_name: str) -> list[str]:
         stderr=subprocess.STDOUT,
     )
     assert process.stdout is not None
-    states = [line.decode("utf-8")[:-1] for line in process.stdout.readlines()]
+    states = [decode_text(line)[:-1] for line in process.stdout.readlines()]
     process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
     return states
 
 
-async def get_service_nodes_desired_state_async(service_name: str) -> list[str]:
+async def get_service_nodes_desired_state(service_name: str) -> list[str]:
+    log.info("Getting Docker service nodes desired states: %s", service_name)
     args = [
         "docker",
         "service",
@@ -326,17 +332,8 @@ async def get_service_nodes_desired_state_async(service_name: str) -> list[str]:
         "--format",
         "{{ .DesiredState }}",
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    states = [line.decode("utf-8")[:-1] async for line in process.stdout]
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-    return states
+    stdout, _, _ = await check_call(args)
+    return stdout
 
 
 async def push_image(image: str) -> None:
@@ -357,12 +354,12 @@ async def push_image(image: str) -> None:
         async def read_stdout() -> None:
             assert process.stdout is not None
             async for line in process.stdout:
-                log.info("Stdout: %s", line.decode("utf-8").replace("\n", ""))
+                log.info("Stdout: %s", decode_text(line).replace("\n", ""))
 
         async def read_stderr() -> None:
             assert process.stderr is not None
             async for line in process.stderr:
-                log.info("Stderr: %s", line.decode("utf-8").replace("\n", ""))
+                log.info("Stderr: %s", decode_text(line).replace("\n", ""))
 
         tasks = [
             asyncio.create_task(read_stdout()),
@@ -395,22 +392,11 @@ async def stop_service(name: str) -> None:
         "rm",
         name,
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate()
-    await process.wait()
-    if process.returncode != 0:
-        if len(stdout) > 0:
-            log.info("Stdout: %s", stdout)
-        if len(stderr) > 0:
-            log.info("Stderr: %s", stderr)
-        raise Exception(f"Docker returned status {process.returncode}")
+    await check_call(args)
 
 
 async def get_log_for_service(service_name: str) -> str:
+    log.info("Getting logs for Docker service %s", service_name)
     args = [
         "docker",
         "service",
@@ -439,10 +425,11 @@ async def get_log_for_service(service_name: str) -> str:
         except asyncio.TimeoutError:
             return ""
 
-    return stdout.decode("utf-8")
+    return decode_text(stdout)
 
 
 async def network_exists(network_name: str) -> bool:
+    log.info("Checking if Docker network exists: %s", network_name)
     args = [
         "docker",
         "network",
@@ -459,6 +446,7 @@ async def network_exists(network_name: str) -> bool:
 
 
 def service_exists_sync(service_name: str) -> bool:
+    log.info("Checking if Docker service exists: %s", service_name)
     args = [
         "docker",
         "service",
@@ -475,6 +463,7 @@ def service_exists_sync(service_name: str) -> bool:
 
 
 async def service_exists(service_name: str) -> bool:
+    log.info("Checking if Docker service exists: %s", service_name)
     args = [
         "docker",
         "service",
@@ -491,6 +480,7 @@ async def service_exists(service_name: str) -> bool:
 
 
 async def list_services_for_project(project_name: str) -> list[str]:
+    log.info("Listing Docker services for projecct %s", project_name)
     args = [
         "docker",
         "service",
@@ -500,25 +490,12 @@ async def list_services_for_project(project_name: str) -> list[str]:
         "--format",
         "{{ .Name }}",
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    services = []
-    async for line in process.stdout:
-        line_text = line.decode("utf-8")
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        services.append(line_text)
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-    return services
+    stdout, _, _ = await check_call(args)
+    return stdout
 
 
 async def list_containers_for_project(project_name: str) -> list[str]:
+    log.info("Listing Docker containers for projecct %s", project_name)
     args = [
         "docker",
         "container",
@@ -529,18 +506,8 @@ async def list_containers_for_project(project_name: str) -> list[str]:
         "--format",
         "{{ .Names }}",
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    stdout, _ = await process.communicate()
-    lines = stdout.decode("utf-8").split("\n")
-    containers = [line[:-1].split(",")[0] for line in lines if line.strip() != ""]
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-    return containers
+    stdout, _, _ = await check_call(args)
+    return [line.split(",")[0] for line in stdout]
 
 
 @dataclass
@@ -552,6 +519,9 @@ class Service:
 async def list_services_for_deployment(
     project_name: str, deployment_number: int
 ) -> list[Service]:
+    log.info(
+        "Listing Docker services for deployment %s %d", project_name, deployment_number
+    )
     args = [
         "docker",
         "service",
@@ -563,19 +533,13 @@ async def list_services_for_deployment(
         "--format",
         '{"name":"{{.Name}}", "replicas":"{{.Replicas}}"}',
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
+    stdout, _, _ = await check_call(args)
     services = []
-    async for line in process.stdout:
-        line_text = line.decode("utf-8")
+    for line in stdout:
         try:
-            service_data = json.loads(line_text)
+            service_data = json.loads(line)
         except json.decoder.JSONDecodeError:
-            log.error("Could not JSON info for service: '%s'", line_text)
+            log.error("Could not JSON info for service: '%s'", line)
             continue
         service = Service(
             name=re.sub(
@@ -586,14 +550,11 @@ async def list_services_for_deployment(
             replicas=int(service_data["replicas"].split("/")[1]),
         )
         services.append(service)
-
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
     return services
 
 
 async def list_networks_for_project(project_name: str) -> list[str]:
+    log.info("Listing networks for project %s", project_name)
     args = [
         "docker",
         "network",
@@ -603,27 +564,14 @@ async def list_networks_for_project(project_name: str) -> list[str]:
         "--format",
         "{{ .Name }}",
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    networks = []
-    async for line in process.stdout:
-        line_text = line.decode("utf-8")
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        networks.append(line_text)
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-    return networks
+    stdout, _, _ = await check_call(args)
+    return stdout
 
 
 async def list_networks_for_deployment(
     project_name: str, deployment_number: int
 ) -> list[str]:
+    log.info("Listing networks for deployment %s %d", project_name, deployment_number)
     args = [
         "docker",
         "network",
@@ -635,22 +583,8 @@ async def list_networks_for_deployment(
         "--format",
         "{{ .Name }}",
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    networks = []
-    async for line in process.stdout:
-        line_text = line.decode("utf-8")
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        networks.append(line_text)
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-    return networks
+    stdout, _, _ = await check_call(args)
+    return stdout
 
 
 def internal_image_name(
@@ -710,12 +644,12 @@ async def _start_syslog_service(disco_host: str, syslog_urls: list[str]) -> None
     timeout = datetime.now(timezone.utc) + timedelta(seconds=timeout_seconds)
     next_check = datetime.now(timezone.utc) + timedelta(seconds=3)
     async for line in process.stdout:
-        line_text = line.decode("utf-8")
+        line_text = decode_text(line)
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
         if datetime.now(timezone.utc) > next_check:
-            states = await get_service_nodes_desired_state_async("disco-syslog")
+            states = await get_service_nodes_desired_state("disco-syslog")
             if (
                 len([state for state in states if state == "Shutdown"])
                 >= 3 * node_count
@@ -760,12 +694,12 @@ async def _update_syslog_service(disco_host: str, syslog_urls: list[str]) -> Non
     timeout = datetime.now(timezone.utc) + timedelta(seconds=timeout_seconds)
     next_check = datetime.now(timezone.utc) + timedelta(seconds=3)
     async for line in process.stdout:
-        line_text = line.decode("utf-8")
+        line_text = decode_text(line)
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
         if datetime.now(timezone.utc) > next_check:
-            states = await get_service_nodes_desired_state_async("disco-syslog")
+            states = await get_service_nodes_desired_state("disco-syslog")
             if (
                 len([state for state in states if state == "Shutdown"])
                 >= 3 * node_count
@@ -795,24 +729,8 @@ async def get_node_count() -> int:
         "--format",
         "{{ .Swarm.Nodes }}",
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    async for line in process.stdout:
-        line_text = line.decode("utf-8")
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-        node_count = int(line_text)
-        break
-
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-    return node_count
+    stdout, _, _ = await check_call(args)
+    return int(stdout[0])
 
 
 async def get_node_list() -> list[str]:
@@ -824,26 +742,8 @@ async def get_node_list() -> list[str]:
         "--format",
         "{{ .ID }}",
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate()
-    await process.wait()
-    if process.returncode != 0:
-        if len(stdout) > 0:
-            log.info("Stdout: %s", stdout)
-        if len(stderr) > 0:
-            log.info("Stderr: %s", stderr)
-        raise Exception(f"Docker returned status {process.returncode}")
-
-    node_ids = []
-    for line in stdout.decode("utf-8").split("\n"):
-        if len(line.strip()) == 0:
-            continue
-        node_ids.append(line.strip())
-    return node_ids
+    stdout, _, _ = await check_call(args)
+    return stdout
 
 
 @dataclass
@@ -865,21 +765,8 @@ async def get_node_details(node_ids: list[str]) -> list[NodeDetails]:
         "node",
         "inspect",
     ] + node_ids
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate()
-    await process.wait()
-    if process.returncode != 0:
-        if len(stdout) > 0:
-            log.info("Stdout: %s", stdout)
-        if len(stderr) > 0:
-            log.info("Stderr: %s", stderr)
-        raise Exception(f"Docker returned status {process.returncode}")
-
-    nodes = json.loads(stdout.decode("utf-8"))
+    stdout, _, _ = await check_call(args)
+    nodes = json.loads("\n".join(stdout))
     return [
         NodeDetails(
             id=node["ID"],
@@ -905,22 +792,11 @@ async def set_node_label(node_id: str, key: str, value: str) -> None:
         f"{key}={value}",
         node_id,
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate()
-    await process.wait()
-    if process.returncode != 0:
-        if len(stdout) > 0:
-            log.info("Stdout: %s", stdout)
-        if len(stderr) > 0:
-            log.info("Stderr: %s", stderr)
-        raise Exception(f"Docker returned status {process.returncode}")
+    await check_call(args)
 
 
 async def leave_swarm(node_id: str) -> str:
+    log.info("Running command for node to leave the Docker Swarm %s", node_id)
     service_name = f"leave-swarm-{node_id}"
     args = [
         "docker",
@@ -944,19 +820,7 @@ async def leave_swarm(node_id: str) -> str:
         f"letsdiscodev/daemon:{disco.__version__}",
         "disco_leave_swarm",
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate()
-    await process.wait()
-    if process.returncode != 0:
-        if len(stdout) > 0:
-            log.info("Stdout: %s", stdout)
-        if len(stderr) > 0:
-            log.info("Stderr: %s", stderr)
-        raise Exception(f"Docker returned status {process.returncode}")
+    await check_call(args)
     return service_name
 
 
@@ -970,19 +834,7 @@ async def remove_node(node_id: str, force: bool = False) -> None:
     ]
     if force:
         args.append("--force")
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate()
-    await process.wait()
-    if process.returncode != 0:
-        if len(stdout) > 0:
-            log.info("Stdout: %s", stdout)
-        if len(stderr) > 0:
-            log.info("Stderr: %s", stderr)
-        raise Exception(f"Docker returned status {process.returncode}")
+    await check_call(args)
 
 
 async def drain_node(node_id: str) -> None:
@@ -995,63 +847,7 @@ async def drain_node(node_id: str) -> None:
         "drain",
         node_id,
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate()
-    await process.wait()
-    if process.returncode != 0:
-        if len(stdout) > 0:
-            log.info("Stdout: %s", stdout)
-        if len(stderr) > 0:
-            log.info("Stderr: %s", stderr)
-        raise Exception(f"Docker returned status {process.returncode}")
-
-
-def create_network_sync(
-    name: str, project_name: str | None = None, deployment_number: int | None = None
-) -> None:
-    log.info("Creating network %s", name)
-    more_args = []
-    if project_name is not None:
-        more_args += [
-            "--label",
-            f"disco.project.name={project_name}",
-        ]
-    if deployment_number is not None:
-        more_args += [
-            "--label",
-            f"disco.deployment.number={deployment_number}",
-        ]
-    args = [
-        "docker",
-        "network",
-        "create",
-        "--driver",
-        "overlay",
-        "--attachable",
-        "--opt",
-        "encrypted",
-        *more_args,
-        name,
-    ]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    for line in process.stdout:
-        line_text = line.decode("utf-8")
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-
-    process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
+    await check_call(args)
 
 
 async def create_network(
@@ -1081,48 +877,17 @@ async def create_network(
         *more_args,
         name,
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate()
-    if stdout is not None:
-        for line in stdout.decode("utf-8").split("\n"):
-            if len(line) > 0:
-                log.info("Stdout: %s", line)
-    if stderr is not None:
-        for line in stderr.decode("utf-8").split("\n"):
-            if len(line) > 0:
-                log.info("Stderr: %s", line)
-    await process.wait()
-
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
+    await check_call(args)
 
 
-def pull(image: str) -> None:
+async def pull(image: str) -> None:
     log.info("Pulling Docker image %s", image)
     args = [
         "docker",
         "pull",
         image,
     ]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    for line in process.stdout:
-        line_text = line.decode("utf-8")
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-
-    process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
+    await check_call(args)
 
 
 def remove_network_sync(name: str) -> None:
@@ -1142,7 +907,7 @@ def remove_network_sync(name: str) -> None:
     )
     assert process.stdout is not None
     for line in process.stdout:
-        line_text = line.decode("utf-8")
+        line_text = decode_text(line)
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
@@ -1174,7 +939,7 @@ def add_network_to_container_sync(
     )
     assert process.stdout is not None
     for line in process.stdout:
-        line_text = line.decode("utf-8")
+        line_text = decode_text(line)
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
@@ -1193,21 +958,7 @@ async def add_network_to_container(container: str, network: str) -> None:
         network,
         container,
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    async for line in process.stdout:
-        line_text = line.decode("utf-8")
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
+    await check_call(args)
 
 
 async def remove_network_from_container(container: str, network: str) -> None:
@@ -1219,18 +970,7 @@ async def remove_network_from_container(container: str, network: str) -> None:
         network,
         container,
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    stdout, _ = await process.communicate()
-    for line in stdout.decode("utf-8").split("\n"):
-        log.info("Output: %s", line)
-
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
+    await check_call(args)
 
 
 class CommandRunProcessStatusError(ProcessStatusError):
@@ -1251,6 +991,7 @@ async def run(
     workdir: str | None = None,
     timeout: int = 600,
 ) -> None:
+    log.info("Docker run %s (%s)", name, image)
     try:
         more_args = []
         for var_name, var_value in env_variables:
@@ -1290,7 +1031,7 @@ async def run(
         async def read_create_container_stdout() -> None:
             assert process.stdout is not None
             async for line in process.stdout:
-                line_text = line.decode("utf-8")
+                line_text = decode_text(line)
                 if line_text.endswith("\n"):
                     line_text = line_text[:-1]
                 log.info("Output: %s", line_text)
@@ -1337,12 +1078,12 @@ async def run(
         async def read_stdout() -> None:
             assert process.stdout is not None
             async for line in process.stdout:
-                await stdout(line.decode("utf-8"))
+                await stdout(decode_text(line))
 
         async def read_stderr() -> None:
             assert process.stderr is not None
             async for line in process.stderr:
-                await stderr(line.decode("utf-8"))
+                await stderr(decode_text(line))
 
         tasks = [
             asyncio.create_task(write_stdin()),
@@ -1380,7 +1121,7 @@ def remove_container_sync(name: str) -> None:
     )
     assert process.stdout is not None
     for line in process.stdout:
-        line_text = line.decode("utf-8")
+        line_text = decode_text(line)
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
@@ -1399,21 +1140,7 @@ async def remove_container(name: str) -> None:
         "--force",
         name,
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    async for line in process.stdout:
-        line_text = line.decode("utf-8")
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
+    await check_call(args)
 
 
 def deployment_network_name(project_name: str, deployment_number: int) -> str:
@@ -1474,20 +1201,7 @@ async def login(disco_host_home: str, host: str, username: str, password: str) -
         "--password-stdin",
         f"https://{host}",
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate(input=password.encode("utf-8"))
-    await process.wait()
-    if process.returncode != 0:
-        if len(stdout) > 0:
-            log.info("Stdout: %s", stdout)
-        if len(stderr) > 0:
-            log.info("Stderr: %s", stderr)
-        raise Exception(f"Docker returned status {process.returncode}")
+    await check_call(args, stdin=password)
 
 
 async def logout(disco_host_home: str, host: str) -> None:
@@ -1507,19 +1221,7 @@ async def logout(disco_host_home: str, host: str) -> None:
         "logout",
         f"https://{host}",
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate()
-    await process.wait()
-    if process.returncode != 0:
-        if len(stdout) > 0:
-            log.info("Stdout: %s", stdout)
-        if len(stderr) > 0:
-            log.info("Stderr: %s", stderr)
-        raise Exception(f"Docker returned status {process.returncode}")
+    await check_call(args)
 
 
 async def get_swarm_join_token() -> str:
@@ -1531,24 +1233,11 @@ async def get_swarm_join_token() -> str:
         "--quiet",
         "worker",
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate()
-    await process.wait()
-    if process.returncode != 0:
-        if len(stdout) > 0:
-            log.info("Stdout: %s", stdout)
-        if len(stderr) > 0:
-            log.info("Stderr: %s", stderr)
-        raise Exception(f"Docker returned status {process.returncode}")
-    token = stdout.decode("utf-8").split("\n")[0]
-    return token
+    stdout, _, _ = await check_call(args)
+    return stdout[0]
 
 
-def scale(services: dict[str, int]) -> None:
+async def scale(services: dict[str, int]) -> None:
     log.info("Scaling services %s", " ".join([f"{s}={n}" for s, n in services.items()]))
     args = [
         "docker",
@@ -1557,20 +1246,11 @@ def scale(services: dict[str, int]) -> None:
         "--detach",
         *[f"{service_name}={scale}" for service_name, scale in services.items()],
     ]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    for line in process.stdout:
-        line_text = line.decode("utf-8")
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
+    await check_call(args)
 
 
 async def get_image_workdir(image: str) -> str:
+    log.info("Getting image Workdir: %s", image)
     args = [
         "docker",
         "image",
@@ -1578,36 +1258,20 @@ async def get_image_workdir(image: str) -> str:
         image,
         "--format={{.Config.WorkingDir}}",
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    out, _ = await process.communicate()
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-    workdir = out.decode("utf-8").replace("\n", "")
-    return workdir
+    stdout, _, _ = await check_call(args)
+    return stdout[0]
 
 
 async def copy_files_from_image(image: str, src: str, dst: str) -> None:
+    log.info("Copying files from image %s (%s) to %s", image, src, dst)
     args = [
         "docker",
         "container",
         "create",
         image,
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    out, _ = await process.communicate()
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-    container_name = out.decode("utf-8").replace("\n", "")
+    stdout, _, _ = await check_call(args)
+    container_name = stdout[0]
     # transform /code/dist to /code/dist/.
     if not src.endswith("."):
         if not src.endswith("/"):
@@ -1619,15 +1283,7 @@ async def copy_files_from_image(image: str, src: str, dst: str) -> None:
         f"{container_name}:{src}",
         dst,
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    _, _ = await process.communicate()
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
+    await check_call(args)
     await remove_container(container_name)
 
 
@@ -1641,6 +1297,7 @@ async def start_container(
     command: str | None,
     workdir: str | None = None,
 ) -> None:
+    log.info("Starting Docker container %s (%s)", name, image)
     more_args = []
     for var_name, var_value in env_variables:
         more_args.append("--env")
@@ -1669,19 +1326,7 @@ async def start_container(
         image,
         *(command.split() if command is not None else []),
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate()
-    if len(stdout) > 0:
-        log.info("Stdout: %s", stdout)
-    if len(stderr) > 0:
-        log.info("Stderr: %s", stderr)
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
+    await check_call(args)
     for network in networks:
         await add_network_to_container(container=name, network=network)
     args = [
@@ -1690,23 +1335,11 @@ async def start_container(
         "start",
         name,
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-
-    stdout, stderr = await process.communicate()
-    if len(stdout) > 0:
-        log.info("Stdout: %s", stdout)
-    if len(stderr) > 0:
-        log.info("Stderr: %s", stderr)
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
+    await check_call(args)
 
 
 async def ls_images_swarm() -> list[tuple[str, str]]:
+    log.info("Listing Docker images in all nodes of Docker Swarm")
     LS_SERVICE_NAME = "disco-ls-images"
     images = set()
     try:
@@ -1727,19 +1360,7 @@ async def ls_images_swarm() -> list[tuple[str, str]]:
             "--format",
             '{"repository": "{{.Repository}}", "tag": "{{.Tag}}"}',
         ]
-        process = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await process.communicate()
-        await process.wait()
-        if process.returncode != 0:
-            if len(stdout) > 0:
-                log.info("Stdout: %s", stdout)
-            if len(stderr) > 0:
-                log.info("Stderr: %s", stderr)
-            raise Exception(f"Docker returned status {process.returncode}")
+        await check_call(args)
         output = await get_log_for_service(LS_SERVICE_NAME)
         for line in output.split("\n"):
             if len(line.strip()) == 0:
@@ -1752,6 +1373,7 @@ async def ls_images_swarm() -> list[tuple[str, str]]:
 
 
 async def rm_image_swarm(image: str) -> None:
+    log.info("Removing image from all nodes in Docker Swarm: %s", image)
     RM_SERVICE_NAME = "disco-rm-images"
     try:
         args = [
@@ -1769,45 +1391,21 @@ async def rm_image_swarm(image: str) -> None:
             "-c",
             f"docker image rm {image} 2>/dev/null || true",
         ]
-        process = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await process.communicate()
-        await process.wait()
-        if process.returncode != 0:
-            if len(stdout) > 0:
-                log.info("Stdout: %s", stdout)
-            if len(stderr) > 0:
-                log.info("Stderr: %s", stderr)
-            raise Exception(f"Docker returned status {process.returncode}")
+        await check_call(args)
     finally:
         await stop_service(RM_SERVICE_NAME)
 
 
 async def get_docker_version() -> str:
+    log.info("Getting Docker version")
     args = [
         "docker",
         "version",
         "--format",
         "{{ .Server.Version }}",
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate()
-    await process.wait()
-    if process.returncode != 0:
-        if len(stdout) > 0:
-            log.info("Stdout: %s", stdout)
-        if len(stderr) > 0:
-            log.info("Stderr: %s", stderr)
-        raise Exception(f"Docker returned status {process.returncode}")
-    stdout_str = stdout.decode("utf-8")
-    return stdout_str.replace("\n", "").strip()
+    stdout, _, _ = await check_call(args)
+    return stdout[0]
 
 
 EASY_MODE_DOCKERFILE = """

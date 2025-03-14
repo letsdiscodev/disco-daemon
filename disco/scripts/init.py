@@ -1,5 +1,6 @@
 """Script that runs when installing Disco on a server"""
 
+import asyncio
 import logging
 import os
 import subprocess
@@ -16,6 +17,7 @@ from disco.utils import docker, keyvalues
 from disco.utils.apikeys import create_api_key
 from disco.utils.caddy import write_caddy_init_config
 from disco.utils.encryption import generate_key
+from disco.utils.subprocess import decode_text
 
 log = logging.getLogger(__name__)
 
@@ -63,8 +65,8 @@ def main() -> None:
     docker_swarm_init(disco_advertise_addr)
     node_id = get_this_swarm_node_id()
     label_swarm_node(node_id, "disco-role=main")
-    docker.create_network_sync("disco-main")
-    docker.create_network_sync("disco-logging")
+    asyncio.run(docker.create_network("disco-main"))
+    asyncio.run(docker.create_network("disco-logging"))
     docker_swarm_create_disco_encryption_key()
     print("Setting up Caddy web server")
     write_caddy_init_config(disco_host, tunnel=cloudflare_tunnel_token is not None)
@@ -86,7 +88,7 @@ def _run_cmd(args: list[str], timeout=600) -> str:
     timeout_dt = datetime.now(timezone.utc) + timedelta(seconds=timeout)
     output = ""
     for line in process.stdout:
-        decoded_line = line.decode("utf-8")
+        decoded_line = decode_text(line)
         output += decoded_line
         print(decoded_line, end="", flush=True)
         if datetime.now(timezone.utc) > timeout_dt:
@@ -229,7 +231,7 @@ def create_docker_config(host_home: str) -> None:
 
 
 def setup_cloudflare_tunnel(cloudflare_tunnel_token: str) -> None:
-    docker.create_network_sync("disco-cloudflare-tunnel")
+    asyncio.run(docker.create_network("disco-cloudflare-tunnel"))
     docker.add_network_to_container_sync(
         "disco-caddy", "disco-cloudflare-tunnel", alias="disco-server"
     )
