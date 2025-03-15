@@ -11,6 +11,7 @@ async def call(
 ) -> tuple[list[str], list[str], subprocess.Process]:
     process = await asyncio.create_subprocess_exec(
         *args,
+        stdin=subprocess.PIPE if stdin is not None else None,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
@@ -26,10 +27,10 @@ async def check_call(
 ) -> tuple[list[str], list[str], subprocess.Process]:
     stdout, stderr, process = await call(args=args, stdin=stdin)
     if process.returncode != 0:
-        if len(stdout) > 0:
-            log.info("Stdout: %s", stdout)
-        if len(stderr) > 0:
-            log.info("Stderr: %s", stderr)
+        for line in stdout:
+            log.info("Stdout: %s", line)
+        for line in stderr:
+            log.info("Stderr: %s", line)
         raise Exception(f"Processs returned status {process.returncode}")
     return stdout, stderr, process
 
