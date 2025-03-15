@@ -74,10 +74,6 @@ def create_command_run(
         await commandoutputs.init(commandoutputs.run_source(run_id))
 
         async def log_output(output: str) -> None:
-            output_for_log = output
-            if output_for_log.endswith("\n"):
-                output_for_log = output_for_log[:-1]
-            log.info("Command run %s %s: %s", project_name, run_number, output_for_log)
             await commandoutputs.store_output(commandoutputs.run_source(run_id), output)
 
         async def log_output_terminate():
