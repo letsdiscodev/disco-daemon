@@ -31,6 +31,7 @@ async def build_image(
     dockerfile_str: str | None = None,
     timeout: int = 3600,
 ) -> None:
+    log.info("Building Docker image %s", image)
     assert (dockerfile_path is None) != (dockerfile_str is None)
     # include all env variables individually, and also include a .env with all variables
     env_var_args = []
@@ -121,6 +122,7 @@ def start_service_sync(
     replicas: int,
     command: str | None,
 ) -> None:
+    log.info("Starting Docker service %s", name)
     more_args = []
     for var_name, var_value in env_variables:
         more_args.append("--env")
@@ -183,7 +185,7 @@ def start_service_sync(
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
         if datetime.now(timezone.utc) > next_check:
-            states = get_service_nodes_desired_state(name)
+            states = get_service_nodes_desired_state_sync(name)
             if len([state for state in states if state == "Shutdown"]) >= 3 * replicas:
                 # 3 attempts to start the service failed
                 process.terminate()
@@ -213,6 +215,7 @@ async def start_project_service(
     replicas: int,
     command: str | None,
 ) -> None:
+    log.info("Starting Docker project service %s", name)
     more_args = []
     for var_name, var_value in env_variables:
         more_args.append("--env")
@@ -275,7 +278,7 @@ async def start_project_service(
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
         if datetime.now(timezone.utc) > next_check:
-            states = await get_service_nodes_desired_state_async(name)
+            states = await get_service_nodes_desired_state(name)
             if (
                 replicas > 0
                 and len([state for state in states if state == "Shutdown"])
@@ -296,7 +299,8 @@ async def start_project_service(
         raise Exception(f"Docker returned status {process.returncode}")
 
 
-def get_service_nodes_desired_state(service_name: str) -> list[str]:
+def get_service_nodes_desired_state_sync(service_name: str) -> list[str]:
+    log.info("Getting Docker service nodes desired states: %s", service_name)
     args = [
         "docker",
         "service",
@@ -318,7 +322,8 @@ def get_service_nodes_desired_state(service_name: str) -> list[str]:
     return states
 
 
-async def get_service_nodes_desired_state_async(service_name: str) -> list[str]:
+async def get_service_nodes_desired_state(service_name: str) -> list[str]:
+    log.info("Getting Docker service nodes desired states: %s", service_name)
     args = [
         "docker",
         "service",
@@ -391,6 +396,7 @@ async def stop_service(name: str) -> None:
 
 
 async def get_log_for_service(service_name: str) -> str:
+    log.info("Getting logs for Docker service %s", service_name)
     args = [
         "docker",
         "service",
@@ -423,6 +429,7 @@ async def get_log_for_service(service_name: str) -> str:
 
 
 async def network_exists(network_name: str) -> bool:
+    log.info("Checking if Docker network exists: %s", network_name)
     args = [
         "docker",
         "network",
@@ -439,6 +446,7 @@ async def network_exists(network_name: str) -> bool:
 
 
 def service_exists_sync(service_name: str) -> bool:
+    log.info("Checking if Docker service exists: %s", service_name)
     args = [
         "docker",
         "service",
@@ -455,6 +463,7 @@ def service_exists_sync(service_name: str) -> bool:
 
 
 async def service_exists(service_name: str) -> bool:
+    log.info("Checking if Docker service exists: %s", service_name)
     args = [
         "docker",
         "service",
@@ -640,7 +649,7 @@ async def _start_syslog_service(disco_host: str, syslog_urls: list[str]) -> None
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
         if datetime.now(timezone.utc) > next_check:
-            states = await get_service_nodes_desired_state_async("disco-syslog")
+            states = await get_service_nodes_desired_state("disco-syslog")
             if (
                 len([state for state in states if state == "Shutdown"])
                 >= 3 * node_count
@@ -690,7 +699,7 @@ async def _update_syslog_service(disco_host: str, syslog_urls: list[str]) -> Non
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
         if datetime.now(timezone.utc) > next_check:
-            states = await get_service_nodes_desired_state_async("disco-syslog")
+            states = await get_service_nodes_desired_state("disco-syslog")
             if (
                 len([state for state in states if state == "Shutdown"])
                 >= 3 * node_count
@@ -810,7 +819,7 @@ async def leave_swarm(node_id: str) -> str:
         f"letsdiscodev/daemon:{disco.__version__}",
         "disco_leave_swarm",
     ]
-    _, _, _ = await check_call(args)
+    await check_call(args)
     return service_name
 
 
