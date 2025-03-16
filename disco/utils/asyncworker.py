@@ -62,6 +62,7 @@ async def cron_day() -> None:
     log.info("Disco day cron")
     await clean_up_rogue_syslogs()
     await remove_unused_images()
+    await docker.builder_prune()
 
 
 @dataclass

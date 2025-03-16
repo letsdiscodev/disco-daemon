@@ -1408,6 +1408,16 @@ async def get_docker_version() -> str:
     return stdout[0]
 
 
+async def builder_prune() -> None:
+    log.info("Purging Docker build cache")
+    args = [
+        "docker",
+        "builder",
+        "prune",
+    ]
+    await check_call(args)
+
+
 EASY_MODE_DOCKERFILE = """
 FROM {image}
 WORKDIR /project
