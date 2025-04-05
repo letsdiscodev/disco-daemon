@@ -629,6 +629,8 @@ async def _start_syslog_service(disco_host: str, syslog_urls: list[str]) -> None
         "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
         "--env",
         f"SYSLOG_HOSTNAME={disco_host}",
+        "--env",
+        "EXCLUDE_LABELS=disco.log.exclude",
         "--mode",
         "global",
         "gliderlabs/logspout:latest",

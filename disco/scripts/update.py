@@ -139,6 +139,28 @@ def alembic_upgrade(version_hash: str) -> None:
     command.upgrade(config, version_hash)
 
 
+def task_0_23_x(image: str) -> None:
+    from disco.utils import docker
+
+    print("Updating from 0.23.x to 0.24.0")
+    syslog_is_running = asyncio.run(docker.service_exists("disco-syslog"))
+    if syslog_is_running:
+        args = [
+            "docker",
+            "service",
+            "update",
+            "disco-syslog",
+            "--env-add",
+            "EXCLUDE_LABELS=disco.log.exclude",
+        ]
+        _run_cmd(args)
+
+    with Session.begin() as dbsession:
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.24.0"
+        )
+
+
 def task_0_22_x(image: str) -> None:
     from disco import config
     from disco.scripts.init import start_caddy
@@ -757,6 +779,8 @@ def get_update_function_for_version(version: str) -> Callable[[str], None]:
     if version.startswith("0.22."):
         return task_0_22_x
     if version.startswith("0.23."):
-        assert disco.__version__.startswith("0.23.")
+        return task_0_23_x
+    if version.startswith("0.24."):
+        assert disco.__version__.startswith("0.24.")
         return task_patch
     raise NotImplementedError(f"Update missing for version {version}")
