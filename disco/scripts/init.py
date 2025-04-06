@@ -268,6 +268,8 @@ def start_disco_daemon(host_home: str, image: str) -> None:
             "disco-main",
             "--network",
             "disco-logging",
+            "--container-label",
+            "disco.log.core=true",
             "--mount",
             "source=disco-data,target=/disco/data",
             "--mount",

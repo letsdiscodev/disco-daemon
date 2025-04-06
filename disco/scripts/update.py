@@ -143,6 +143,19 @@ def task_0_23_x(image: str) -> None:
     from disco.utils import docker
 
     print("Updating from 0.23.x to 0.24.0")
+    with Session.begin() as dbsession:
+        urls_str = keyvalues.get_value_sync(dbsession, "SYSLOG_URLS")
+        if urls_str is not None:
+            urls = json.loads(urls_str)
+            syslog_urls = [
+                {
+                    "url": url,
+                    "type": "GLOBAL",
+                }
+                for url in urls
+            ]
+            new_urls = json.dumps(syslog_urls)
+            keyvalues.set_value_sync(dbsession, "SYSLOG_URLS", json.dumps(new_urls))
     syslog_is_running = asyncio.run(docker.service_exists("disco-syslog"))
     if syslog_is_running:
         args = [
@@ -153,7 +166,10 @@ def task_0_23_x(image: str) -> None:
             "--env-add",
             "EXCLUDE_LABELS=disco.log.exclude",
         ]
-        _run_cmd(args)
+        try:
+            _run_cmd(args, timeout=30)
+        except Exception as ex:
+            print("Got exception when updating disco-syslog:", str(ex))
 
     with Session.begin() as dbsession:
         keyvalues.set_value_sync(

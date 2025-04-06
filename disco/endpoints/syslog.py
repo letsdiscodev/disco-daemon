@@ -10,7 +10,12 @@ from disco.auth import get_api_key_sync
 from disco.endpoints.dependencies import get_db_sync
 from disco.models import ApiKey
 from disco.utils import docker, keyvalues
-from disco.utils.syslog import add_syslog_url, get_syslog_urls, remove_syslog_url
+from disco.utils.syslog import (
+    add_syslog_url,
+    get_syslog_urls,
+    logspout_url,
+    remove_syslog_url,
+)
 
 log = logging.getLogger(__name__)
 
@@ -35,15 +40,23 @@ def syslog_post(
     background_tasks: BackgroundTasks,
 ):
     if add_remove_syslog.action == SyslogAction.add:
-        urls = add_syslog_url(dbsession, add_remove_syslog.url, api_key)
+        syslog_urls = add_syslog_url(dbsession, add_remove_syslog.url, api_key)
     else:
         assert add_remove_syslog.action == SyslogAction.remove
-        urls = remove_syslog_url(dbsession, add_remove_syslog.url, api_key)
+        syslog_urls = remove_syslog_url(dbsession, add_remove_syslog.url, api_key)
     disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
     assert disco_host is not None
-    background_tasks.add_task(docker.set_syslog_service, disco_host, urls)
+    background_tasks.add_task(
+        docker.set_syslog_service,
+        disco_host,
+        [logspout_url(syslog_url) for syslog_url in syslog_urls],
+    )
     return {
-        "urls": urls,
+        "urls": [
+            syslog_url["url"]
+            for syslog_url in syslog_urls
+            if syslog_url["type"] != "CORE"
+        ],
     }
 
 
@@ -51,6 +64,11 @@ def syslog_post(
 def syslog_get(
     dbsession: Annotated[DBSession, Depends(get_db_sync)],
 ):
+    syslog_urls = get_syslog_urls(dbsession)
     return {
-        "urls": get_syslog_urls(dbsession),
+        "urls": [
+            syslog_url["url"]
+            for syslog_url in syslog_urls
+            if syslog_url["type"] != "CORE"
+        ],
     }

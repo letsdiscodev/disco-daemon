@@ -25,6 +25,8 @@ def update_disco(
             "run",
             "--rm",
             "--detach",
+            "--label",
+            "disco.log.core=true",
             "--env",
             f"DISCO_IMAGE={image}",
             "--mount",
