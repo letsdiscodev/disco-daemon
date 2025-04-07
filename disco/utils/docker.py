@@ -682,6 +682,19 @@ async def start_syslog_service(
     await check_call(args)
 
 
+async def update_syslog_hostname(service_name: str, disco_host: str) -> None:
+    args = [
+        "docker",
+        "service",
+        "update",
+        service_name,
+        "--env-add",
+        f"SYSLOG_HOSTNAME={disco_host}",
+        "--detach",
+    ]
+    await check_call(args)
+
+
 async def get_node_count() -> int:
     log.info("Getting Docker Swarm node count")
     args = [

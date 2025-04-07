@@ -14,17 +14,17 @@ from sqlalchemy.orm.session import Session as DBSession
 from sse_starlette import EventSourceResponse, ServerSentEvent
 
 import disco
-from disco.auth import get_api_key, get_api_key_sync
+from disco.auth import get_api_key, get_api_key_wo_tx
 from disco.endpoints.dependencies import get_db, get_db_sync
 from disco.models import ApiKey
 from disco.utils import docker, keyvalues
 from disco.utils.meta import set_disco_host, update_disco
-from disco.utils.projects import get_project_by_domain_sync
+from disco.utils.projects import get_project_by_domain
 from disco.utils.stats import AsyncDockerStats
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(dependencies=[Depends(get_api_key_sync)])
+router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 
 
 @router.get("/api/disco/meta")
@@ -123,12 +123,12 @@ class SetDiscoHostRequestBody(BaseModel):
 
 
 @router.post("/api/disco/host")
-def host_post(
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
+async def host_post(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+    api_key: Annotated[ApiKey, Depends(get_api_key)],
     req_body: SetDiscoHostRequestBody,
-    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
 ):
-    project = get_project_by_domain_sync(dbsession, req_body.host)
+    project = await get_project_by_domain(dbsession, req_body.host)
     if project is not None:
         raise RequestValidationError(
             errors=(
@@ -147,12 +147,11 @@ def host_post(
                 )
             ).errors()
         )
-
-    set_disco_host(dbsession=dbsession, host=req_body.host, by_api_key=api_key)
+    await set_disco_host(dbsession=dbsession, host=req_body.host, by_api_key=api_key)
     return {
         "version": disco.__version__,
-        "discoHost": keyvalues.get_value_sync(dbsession, "DISCO_HOST"),
-        "registryHost": keyvalues.get_value_sync(dbsession, "REGISTRY_HOST"),
+        "discoHost": await keyvalues.get_value_str(dbsession, "DISCO_HOST"),
+        "registryHost": await keyvalues.get_value(dbsession, "REGISTRY_HOST"),
     }
 
 

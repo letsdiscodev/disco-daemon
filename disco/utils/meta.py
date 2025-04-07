@@ -2,6 +2,7 @@ import asyncio
 import logging
 import subprocess
 
+from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import ApiKey
@@ -69,10 +70,19 @@ def save_done_updating(dbsession: DBSession) -> None:
     keyvalues.delete_value_sync(dbsession, "DISCO_IS_UPDATING")
 
 
-def set_disco_host(dbsession: DBSession, host: str, by_api_key: ApiKey) -> None:
-    prev_host = keyvalues.get_value_sync(dbsession=dbsession, key="DISCO_HOST")
+async def set_disco_host(
+    dbsession: AsyncDBSession, host: str, by_api_key: ApiKey
+) -> None:
+    from disco.utils import docker
+
+    prev_host = await keyvalues.get_value_str(dbsession=dbsession, key="DISCO_HOST")
     log.info(
         "Setting Disco host from %s to %s by %s", prev_host, host, by_api_key.log()
     )
-    caddy.update_disco_host(host)
-    keyvalues.set_value_sync(dbsession=dbsession, key="DISCO_HOST", value=host)
+    await caddy.update_disco_host(host)
+    await keyvalues.set_value(dbsession=dbsession, key="DISCO_HOST", value=host)
+    syslog_services = await docker.list_syslog_services()
+    for syslog_service in syslog_services:
+        await docker.update_syslog_hostname(
+            service_name=syslog_service.name, disco_host=host
+        )

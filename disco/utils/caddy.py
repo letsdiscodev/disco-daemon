@@ -273,11 +273,15 @@ async def serve_static_site(project_name: str, deployment_number: int) -> None:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
 
-def update_disco_host(disco_host: str) -> None:
+async def update_disco_host(disco_host: str) -> None:
     url = f"{BASE_URL}/id/disco-domain-handle/match/0/host/0"
     req_body = disco_host
     session = _get_session()
-    response = session.patch(url, json=req_body, headers=HEADERS, timeout=10)
+
+    def query() -> requests.Response:
+        return session.patch(url, json=req_body, headers=HEADERS, timeout=10)
+
+    response = await asyncio.get_event_loop().run_in_executor(None, query)
     if response.status_code != 200:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
