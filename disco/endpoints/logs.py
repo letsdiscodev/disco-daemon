@@ -101,4 +101,4 @@ async def read_logs(
                 log.info("Closed datagram log endpoint")
             except Exception:
                 log.exception("Exception closing transport")
-        background_tasks.add_task(docker.stop_service, syslog_service_name)
+        background_tasks.add_task(docker.rm_service, syslog_service_name)

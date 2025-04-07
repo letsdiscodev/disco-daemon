@@ -73,7 +73,7 @@ async def close_tunnel(service_name: str) -> None:
                 _active_tunnels.remove(tunnel)
         running_tunnels = await get_running_tunnels()
         if service_name in running_tunnels:
-            await docker.stop_service(service_name)
+            await docker.rm_service(service_name)
 
 
 async def get_active_tunnels() -> list[str]:

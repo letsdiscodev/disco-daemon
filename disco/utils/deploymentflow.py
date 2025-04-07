@@ -829,7 +829,7 @@ async def stop_conflicting_port_services(
         )
         try:
             if not recovery or await docker.service_exists(internal_service_name):
-                await docker.stop_service(internal_service_name)
+                await docker.rm_service(internal_service_name)
         except Exception:
             await log_output(f"Failed to stop service {internal_service_name}\n")
             if not recovery:
@@ -938,7 +938,7 @@ async def stop_prev_services(
     for service in all_services - current_services:
         try:
             await log_output(f"Stopping service {service}\n")
-            await docker.stop_service(service)
+            await docker.rm_service(service)
         except Exception:
             await log_output(f"Failed to stop service {service}\n")
             if not recovery:

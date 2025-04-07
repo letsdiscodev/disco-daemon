@@ -5,10 +5,11 @@ import os
 import re
 import signal
 import subprocess
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from multiprocessing import cpu_count
-from typing import AsyncGenerator, Awaitable, Callable
+from typing import AsyncGenerator, Awaitable, Callable, Literal
 
 import disco
 from disco.errors import ProcessStatusError
@@ -384,7 +385,7 @@ async def push_image(image: str) -> None:
         raise
 
 
-async def stop_service(name: str) -> None:
+async def rm_service(name: str) -> None:
     log.info("Stopping service %s", name)
     args = [
         "docker",
@@ -603,28 +604,70 @@ def service_name(project_name: str, service: str, deployment_number: int) -> str
     return f"{project_name}-{deployment_number}-{service}"
 
 
-async def set_syslog_service(disco_host: str, syslog_urls: list[str]) -> None:
-    if len(syslog_urls) == 0:
-        if await service_exists("disco-syslog"):
-            await stop_service("disco-syslog")
-        else:
-            log.info("Syslog service already stopped")
-    else:
-        if await service_exists("disco-syslog"):
-            await _update_syslog_service(disco_host, syslog_urls)
-        else:
-            await _start_syslog_service(disco_host, syslog_urls)
+@dataclass
+class SyslogService:
+    name: str
+    type: str
+    url: str
 
 
-async def _start_syslog_service(disco_host: str, syslog_urls: list[str]) -> None:
-    node_count = await get_node_count()
-    log.info("Starting syslog service")
+async def list_syslog_services() -> list[SyslogService]:
+    log.info("Listing Docker syslog services")
+    args = [
+        "docker",
+        "service",
+        "ls",
+        "--filter",
+        "label=disco.syslog",
+        "-q",
+    ]
+    service_ids, _, _ = await check_call(args)
+    if len(service_ids) == 0:
+        return []
+    args = [
+        "docker",
+        "service",
+        "inspect",
+    ] + service_ids
+    stdout, _, _ = await check_call(args)
+    services_json = "\n".join(stdout)
+    services_data = json.loads(services_json)
+    services = []
+    for service_data in services_data:
+        service = SyslogService(
+            name=service_data["Spec"]["Name"],
+            type=service_data["Spec"]["Labels"]["disco.syslog.type"],
+            url=service_data["Spec"]["Labels"]["disco.syslog.url"],
+        )
+        services.append(service)
+    return services
+
+
+def _logspout_url(url: str, type: Literal["CORE", "GLOBAL"]) -> str:
+    if type == "CORE":
+        return f"{url}?filter.labels=disco.log.core:true"
+    assert type == "GLOBAL"
+    return url
+
+
+async def start_syslog_service(
+    disco_host: str, url: str, type: Literal["CORE", "GLOBAL"]
+) -> None:
+    log.info("Starting Syslog service %s %s", url, type)
+    syslog_url = _logspout_url(url=url, type=type)
     args = [
         "docker",
         "service",
         "create",
         "--name",
-        "disco-syslog",
+        f"disco-syslog-{uuid.uuid4().hex}",
+        "--detach",
+        "--label",
+        "disco.syslog",
+        "--label",
+        f"disco.syslog.url={url}",
+        "--label",
+        f"disco.syslog.type={type}",
         "--mount",
         "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
         "--env",
@@ -634,93 +677,9 @@ async def _start_syslog_service(disco_host: str, syslog_urls: list[str]) -> None
         "--mode",
         "global",
         "gliderlabs/logspout:latest",
-        ",".join(syslog_urls),
+        syslog_url,
     ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    timeout_seconds = 900  # 15 minutes, safety net
-    timeout = datetime.now(timezone.utc) + timedelta(seconds=timeout_seconds)
-    next_check = datetime.now(timezone.utc) + timedelta(seconds=3)
-    async for line in process.stdout:
-        line_text = decode_text(line)
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-        if datetime.now(timezone.utc) > next_check:
-            states = await get_service_nodes_desired_state("disco-syslog")
-            if (
-                len([state for state in states if state == "Shutdown"])
-                >= 3 * node_count
-            ):
-                # 3 attempts to start the service failed
-                process.terminate()
-                raise Exception("Starting task failed, too many failed attempts")
-            next_check += timedelta(seconds=3)
-        if datetime.now(timezone.utc) > timeout:
-            process.terminate()
-            raise Exception(
-                f"Starting task failed, timeout after {timeout_seconds} seconds"
-            )
-
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-
-    log.info("Syslog service started")
-
-
-async def _update_syslog_service(disco_host: str, syslog_urls: list[str]) -> None:
-    node_count = await get_node_count()
-    log.info("Updating syslog service")
-    args = [
-        "docker",
-        "service",
-        "update",
-        "disco-syslog",
-        "--env-add",
-        f"SYSLOG_HOSTNAME={disco_host}",
-        "--args",
-        ",".join(syslog_urls),
-    ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    timeout_seconds = 900  # 15 minutes, safety net
-    timeout = datetime.now(timezone.utc) + timedelta(seconds=timeout_seconds)
-    next_check = datetime.now(timezone.utc) + timedelta(seconds=3)
-    async for line in process.stdout:
-        line_text = decode_text(line)
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-        if datetime.now(timezone.utc) > next_check:
-            states = await get_service_nodes_desired_state("disco-syslog")
-            if (
-                len([state for state in states if state == "Shutdown"])
-                >= 3 * node_count
-            ):
-                # 3 attempts to start the service failed
-                process.terminate()
-                raise Exception("Starting task failed, too many failed attempts")
-            next_check += timedelta(seconds=3)
-        if datetime.now(timezone.utc) > timeout:
-            process.terminate()
-            raise Exception(
-                f"Starting task failed, timeout after {timeout_seconds} seconds"
-            )
-
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-
-    log.info("Syslog service updated")
+    await check_call(args)
 
 
 async def get_node_count() -> int:
@@ -1370,7 +1329,7 @@ async def ls_images_swarm() -> list[tuple[str, str]]:
             image = json.loads(line)
             images.add((image["repository"], image["tag"]))
     finally:
-        await stop_service(LS_SERVICE_NAME)
+        await rm_service(LS_SERVICE_NAME)
     return list(images)
 
 
@@ -1395,7 +1354,7 @@ async def rm_image_swarm(image: str) -> None:
         ]
         await check_call(args)
     finally:
-        await stop_service(RM_SERVICE_NAME)
+        await rm_service(RM_SERVICE_NAME)
 
 
 async def get_docker_version() -> str:

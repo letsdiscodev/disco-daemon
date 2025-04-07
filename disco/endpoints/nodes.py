@@ -69,7 +69,7 @@ async def node_delete(node_name: str):
     log.info("Draining node %s", node_name)
     await docker.drain_node(node_id=node_id)
     log.info("Removing swarm leaver service for node %s", node_name)
-    await docker.stop_service(service_name)
+    await docker.rm_service(service_name)
     timeout = datetime.now(timezone.utc) + timedelta(minutes=20)
     while datetime.now(timezone.utc) < timeout:
         try:

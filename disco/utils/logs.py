@@ -128,4 +128,4 @@ async def clean_up_rogue_syslogs() -> None:
     for running_syslog in running_syslogs:
         if running_syslog not in active_syslogs:
             log.warning("Killing rogue syslog %s", running_syslog)
-            await docker.stop_service(running_syslog)
+            await docker.rm_service(running_syslog)

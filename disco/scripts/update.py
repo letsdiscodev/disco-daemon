@@ -141,13 +141,16 @@ def alembic_upgrade(version_hash: str) -> None:
 
 def task_0_23_x(image: str) -> None:
     from disco.utils import docker
+    from disco.utils.syslog import SyslogUrl, set_syslog_services
 
     print("Updating from 0.23.x to 0.24.0")
     with Session.begin() as dbsession:
+        disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
+        assert disco_host is not None
         urls_str = keyvalues.get_value_sync(dbsession, "SYSLOG_URLS")
         if urls_str is not None:
             urls = json.loads(urls_str)
-            syslog_urls = [
+            syslog_urls: list[SyslogUrl] = [
                 {
                     "url": url,
                     "type": "GLOBAL",
@@ -155,21 +158,13 @@ def task_0_23_x(image: str) -> None:
                 for url in urls
             ]
             new_urls = json.dumps(syslog_urls)
-            keyvalues.set_value_sync(dbsession, "SYSLOG_URLS", json.dumps(new_urls))
-    syslog_is_running = asyncio.run(docker.service_exists("disco-syslog"))
-    if syslog_is_running:
-        args = [
-            "docker",
-            "service",
-            "update",
-            "disco-syslog",
-            "--env-add",
-            "EXCLUDE_LABELS=disco.log.exclude",
-        ]
-        try:
-            _run_cmd(args, timeout=30)
-        except Exception as ex:
-            print("Got exception when updating disco-syslog:", str(ex))
+            keyvalues.set_value_sync(dbsession, "SYSLOG_URLS", new_urls)
+    if urls_str is not None:
+        assert syslog_urls is not None
+        asyncio.run(set_syslog_services(disco_host=disco_host, syslog_urls=syslog_urls))
+    old_syslog_is_running = asyncio.run(docker.service_exists("disco-syslog"))
+    if old_syslog_is_running:
+        asyncio.run(docker.rm_service("disco-syslog"))
 
     with Session.begin() as dbsession:
         keyvalues.set_value_sync(

@@ -148,7 +148,7 @@ async def delete_project(
     services = await docker.list_services_for_project(project.name)
     for service_name in services:
         try:
-            await docker.stop_service(service_name)
+            await docker.rm_service(service_name)
         except Exception:
             log.info("Failed to stop service %s", service_name)
     containers = await docker.list_containers_for_project(project.name)
