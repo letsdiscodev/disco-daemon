@@ -175,6 +175,7 @@ def task_0_23_x(image: str) -> None:
 def task_0_22_x(image: str) -> None:
     from disco import config
     from disco.scripts.init import start_caddy
+    from disco.utils import docker
 
     print("Updating from 0.22.x to 0.23.0")
     with Session.begin() as dbsession:
@@ -200,6 +201,10 @@ def task_0_22_x(image: str) -> None:
         ]
     )
     start_caddy(host_home=host_home, tunnel=cloudflare_tunnel_token is not None)
+    if cloudflare_tunnel_token is not None:
+        docker.add_network_to_container_sync(
+            "disco-caddy", "disco-cloudflare-tunnel", alias="disco-server"
+        )
     with Session.begin() as dbsession:
         keyvalues.set_value_sync(
             dbsession=dbsession, key="DISCO_VERSION", value="0.23.0"
