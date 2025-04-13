@@ -440,6 +440,13 @@ async def process_github_app_webhook(
         try:
             full_name = body["repository"]["full_name"]
             branch, commit_hash = get_commit_info_from_webhook_push(body_text)
+            if commit_hash == "0000000000000000000000000000000000000000":
+                # branch deleted
+                log.info(
+                    "Received commit hash 0000000000000000000000000000000000000000 "
+                    "from Github, skipping"
+                )
+                return
             deployment_ids = []
             async with AsyncSession.begin() as dbsession:
                 projects = await get_projects_by_github_app_repo(dbsession, full_name)
