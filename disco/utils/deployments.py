@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import uuid
 from typing import Literal, Sequence
@@ -96,68 +95,6 @@ async def create_deployment(
     return deployment
 
 
-def create_deployment_sync(
-    dbsession: DBSession,
-    project: Project,
-    commit_hash: str | None,
-    disco_file: DiscoFile | None,
-    by_api_key: ApiKey | None,
-    number: int | None = None,
-) -> Deployment:
-    if number is not None:
-        if len(project.deployments) > 0:
-            raise Exception(
-                "Cannot set deployment number if project already has deployments"
-            )
-    else:
-        number = get_next_deployment_number_sync(dbsession, project)
-    prev_deployment = get_live_deployment_sync(dbsession, project)
-    project_github_repo = project.github_repo
-    deployment = Deployment(
-        id=uuid.uuid4().hex,
-        number=number,
-        prev_deployment_id=prev_deployment.id if prev_deployment is not None else None,
-        project_name=project.name,
-        github_repo_full_name=project_github_repo.full_name
-        if project_github_repo is not None
-        else None,
-        branch=project_github_repo.branch if project_github_repo is not None else None,
-        project=project,
-        status="QUEUED",
-        commit_hash=commit_hash,
-        disco_file=disco_file.model_dump_json(indent=2, by_alias=True)
-        if disco_file is not None
-        else None,
-        registry_host=keyvalues.get_value_sync(dbsession, "REGISTRY_HOST"),
-        by_api_key=by_api_key,
-    )
-    dbsession.add(deployment)
-    for env_variable in project.env_variables:
-        deploy_env_var = DeploymentEnvironmentVariable(
-            id=uuid.uuid4().hex,
-            name=env_variable.name,
-            value=env_variable.value,
-            deployment=deployment,
-        )
-        dbsession.add(deploy_env_var)
-    log.info("Created deployment %s", deployment.log())
-
-    async def create_cmd_output() -> None:
-        await commandoutputs.init(commandoutputs.deployment_source(deployment.id))
-        await commandoutputs.store_output(
-            commandoutputs.deployment_source(deployment.id),
-            f"Deployment {deployment.number} enqueued\n",
-        )
-
-    asyncio.run(create_cmd_output())
-    events.deployment_created(
-        project_name=project.name,
-        deployment_number=deployment.number,
-        status="QUEUED",
-    )
-    return deployment
-
-
 async def get_next_deployment_number(
     dbsession: AsyncDBSession, project: Project
 ) -> int:
@@ -174,26 +111,6 @@ async def get_next_deployment_number(
     else:
         number = deployment.number
     return number + 1
-
-
-def get_next_deployment_number_sync(dbsession: DBSession, project: Project) -> int:
-    deployment = (
-        dbsession.query(Deployment)
-        .filter(Deployment.project == project)
-        .order_by(Deployment.number.desc())
-        .first()
-    )
-    if deployment is None:
-        number = 0
-    else:
-        number = deployment.number
-    return number + 1
-
-
-def get_deployment_by_id_sync(
-    dbsession: DBSession, deployment_id: str
-) -> Deployment | None:
-    return dbsession.query(Deployment).get(deployment_id)
 
 
 async def get_deployment_by_id(
