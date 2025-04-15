@@ -213,6 +213,12 @@ async def process_deployment(deployment_id: str) -> None:
             prev_deployment_number = (
                 prev_deployment.number if prev_deployment is not None else None
             )
+            if (
+                deployment.commit_hash is None
+                and prev_deployment is not None
+                and prev_deployment.commit_hash is not None
+            ):
+                set_deployment_commit_hash(deployment, prev_deployment.commit_hash)
         if prev_deployment_number is not None:
             scale = defaultdict(
                 lambda: 1,
