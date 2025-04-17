@@ -19,6 +19,7 @@ from disco.endpoints.dependencies import get_db, get_db_sync
 from disco.models import ApiKey
 from disco.utils import docker, keyvalues
 from disco.utils.meta import set_disco_host, update_disco
+from disco.utils.projectdomains import DOMAIN_REGEX
 from disco.utils.projects import get_project_by_domain
 from disco.utils.stats import AsyncDockerStats
 
@@ -59,7 +60,7 @@ class RegistryAuthType(Enum):
 
 
 class SetRegistryRequestBody(BaseModel):
-    host: str
+    host: str = Field(..., pattern=DOMAIN_REGEX)
     authType: RegistryAuthType
     username: str
     password: str
@@ -119,7 +120,7 @@ async def registry_delete(
 
 
 class SetDiscoHostRequestBody(BaseModel):
-    host: str
+    host: str = Field(..., pattern=DOMAIN_REGEX)
 
 
 @router.post("/api/disco/host")

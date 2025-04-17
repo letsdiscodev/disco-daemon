@@ -12,6 +12,10 @@ from disco.utils.discofile import ServiceType, get_disco_file_from_str
 
 log = logging.getLogger(__name__)
 
+DOMAIN_REGEX = (
+    r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$"
+)
+
 
 async def add_domain(
     dbsession: AsyncDBSession,

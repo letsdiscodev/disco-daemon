@@ -12,6 +12,7 @@ from disco.endpoints.dependencies import get_db, get_project_from_url
 from disco.models import ApiKey, Project, ProjectDomain
 from disco.utils import keyvalues
 from disco.utils.projectdomains import (
+    DOMAIN_REGEX,
     add_domain,
     get_domain_by_id,
     get_domain_by_name,
@@ -40,7 +41,7 @@ async def domains_get(
 
 
 class AddDomainReqBody(BaseModel):
-    domain: str = Field(..., pattern=r"^\S+$", max_length=255)
+    domain: str = Field(..., pattern=DOMAIN_REGEX)
 
 
 @router.post("/api/projects/{project_name}/domains", status_code=201)

@@ -35,7 +35,7 @@ from disco.utils.filesystem import (
     get_caddy_key_meta,
 )
 from disco.utils.github import get_all_repos, repo_is_public
-from disco.utils.projectdomains import add_domain
+from disco.utils.projectdomains import DOMAIN_REGEX, add_domain
 from disco.utils.projects import (
     create_project,
     delete_project,
@@ -70,7 +70,7 @@ class NewProjectRequestBody(BaseModel):
         pattern=r"^\S+/\S+$",
     )
     branch: str | None = None
-    domain: str | None = None
+    domain: str | None = Field(None, pattern=DOMAIN_REGEX)
     env_variables: list[EnvVariable] = Field([], alias="envVariables")
     caddy: CaddyKey | None = None
     generate_suffix: bool = Field(False, alias="generateSuffix")
