@@ -280,6 +280,9 @@ async def volume_set(
             networks=networks,
             replicas=scale[service_name],
             command=service.command,
+            health_command=service.health.command
+            if service.health is not None
+            else None,
         )
     log.info("Done importing volume %s", volume_name)
     return {}

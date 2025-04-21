@@ -29,6 +29,10 @@ class ServiceType(str, Enum):
     cgi = "cgi"
 
 
+class Health(BaseModel):
+    command: str
+
+
 class Service(BaseModel):
     type: ServiceType = ServiceType.container
     public_path: str | None = Field(
@@ -50,6 +54,7 @@ class Service(BaseModel):
         alias="exposedInternally",
     )
     timeout: int = 300  # commands, static site generation
+    health: Health | None = None
 
 
 class DiscoFile(BaseModel):

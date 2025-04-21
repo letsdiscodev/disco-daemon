@@ -43,7 +43,15 @@ async def build_image(
     dot_env = "\n".join([f"{key}={value}" for key, value in env_variables]) + "\n"
     env_var_args.append("--secret")
     env_var_args.append("id=.env,env=DOT_ENV")
-    env_variables += [("DOT_ENV", dot_env)]
+    env_variables += [
+        ("DOT_ENV", dot_env),
+        # suppress warning at end of build
+        # WARNING: current commit information was not captured by the build:
+        # git was not found in the system: exec: "git":
+        # executable file not found in $PATH
+        # https://github.com/docker/buildx/issues/1881
+        ("BUILDX_GIT_INFO", "0"),
+    ]
     args = [
         "docker",
         "build",
@@ -216,6 +224,7 @@ async def start_project_service(
     networks: list[tuple[str, str]],
     replicas: int,
     command: str | None,
+    health_command: str | None,
 ) -> None:
     log.info("Starting Docker project service %s", name)
     more_args = []
@@ -240,6 +249,11 @@ async def start_project_service(
     for network, alias in networks:
         more_args.append("--network")
         more_args.append(f"name={network},alias={alias}")
+    if health_command is not None:
+        more_args.append("--health-cmd")
+        more_args.append(health_command)
+        more_args.append("--health-start-interval=3s")
+        more_args.append("--health-start-period=300s")
     args = [
         "docker",
         "service",
@@ -1078,32 +1092,6 @@ async def run(
             raise CommandRunProcessStatusError(status=process.returncode)
     finally:
         await remove_container(name)
-
-
-def remove_container_sync(name: str) -> None:
-    log.info("Removing container %s", name)
-    args = [
-        "docker",
-        "container",
-        "rm",
-        "--force",
-        name,
-    ]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    for line in process.stdout:
-        line_text = decode_text(line)
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-
-    process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
 
 
 async def remove_container(name: str) -> None:
