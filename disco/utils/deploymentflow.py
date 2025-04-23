@@ -272,9 +272,12 @@ async def process_deployment(deployment_id: str) -> None:
         )
         await log_output("Cancelled\n")
         await set_current_deployment_status("CANCELLED")
-    except Exception:
+    except Exception as ex:
         await set_current_deployment_status("FAILED")
-        log.exception("Exception while deploying")
+        if isinstance(ex, DiscoBuildException):
+            await log_output(f"{str(ex)}\n")
+        else:
+            log.exception("Exception while deploying")
         await log_output("Deployment failed\n")
         await log_output("Restoring previous deployment\n")
         await replace_deployment(
@@ -605,13 +608,16 @@ async def read_disco_file_for_deployment(
     disco_file_str = await read_disco_file(
         project_name=new_deployment_info.project_name, disco_json_path=disco_json_path
     )
-    if disco_file_str is not None:
-        async with AsyncSession.begin() as dbsession:
-            deployment = await get_deployment_by_id(dbsession, new_deployment_info.id)
-            assert deployment is not None
-            set_deployment_disco_file(deployment, disco_file_str)
-    else:
-        await log_output("No disco.json found, falling back to default config\n")
+    if disco_file_str is None:
+        if disco_json_path == "disco.json":
+            exception_msg = "disco.json not found"
+        else:
+            exception_msg = f"disco.json ({disco_json_path}) not found"
+        raise DiscoBuildException(exception_msg)
+    async with AsyncSession.begin() as dbsession:
+        deployment = await get_deployment_by_id(dbsession, new_deployment_info.id)
+        assert deployment is not None
+        set_deployment_disco_file(deployment, disco_file_str)
     return get_disco_file_from_str(disco_file_str)
 
 
