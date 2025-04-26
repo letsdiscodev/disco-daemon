@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import subprocess
-from collections import defaultdict
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
@@ -13,11 +12,10 @@ from disco.auth import get_api_key_sync, get_api_key_wo_tx
 from disco.endpoints.dependencies import get_db_sync, get_project_from_url_sync
 from disco.models import ApiKey, Project
 from disco.models.db import Session
-from disco.utils import docker, keyvalues
+from disco.utils import docker
 from disco.utils.apikeys import get_api_key_by_id_sync
 from disco.utils.deployments import get_live_deployment_sync
 from disco.utils.discofile import get_disco_file_from_str
-from disco.utils.encryption import decrypt
 from disco.utils.projects import get_project_by_name_sync, volume_name_for_project
 
 log = logging.getLogger(__name__)
@@ -119,170 +117,94 @@ async def volume_set(
             raise HTTPException(status_code=404)
         assert deployment is not None
         deployment_number = deployment.number
-        commit_hash = deployment.commit_hash
-        registry_host = deployment.registry_host
-        env_variables = [
-            (env_var.name, decrypt(env_var.value))
-            for env_var in deployment.env_variables
-        ]
-        disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
-        assert disco_host is not None
         api_key = get_api_key_by_id_sync(dbsession, api_key_id)
         assert api_key is not None
         api_key_log = api_key.log()
 
     assert disco_file is not None
-    if deployment_number is not None:
-        scale = defaultdict(
-            lambda: 1,
-            [
-                (service.name, service.replicas)
-                for service in await docker.list_services_for_deployment(
-                    project_name=project_name,
-                    deployment_number=deployment_number,
-                )
-            ],
-        )
-    else:
-        scale = defaultdict(lambda: 1)
     log.info(
         "Importing volume for project %s %s by %s",
         project_name,
         volume_name,
         api_key_log,
     )
-    for service_name, service in disco_file.services.items():
-        if volume_name not in [v.name for v in service.volumes]:
-            continue
-        internal_service_name = docker.service_name(
-            project_name, service_name, deployment_number
-        )
-        if not await docker.service_exists(internal_service_name):
-            log.info("Service %s not running, not trying to stop")
-            continue
-        log.info("Stopping %s", internal_service_name)
-        process = await asyncio.create_subprocess_exec(
-            "docker",
-            "service",
-            "rm",
-            internal_service_name,
-        )
-        await process.wait()
-        if process.returncode != 0:
-            raise Exception(f"Error stopping service {internal_service_name}")
-
-    source = volume_name_for_project(volume_name, project_id)
-    attempts = 200
-    for i in range(attempts):
-        process = await asyncio.create_subprocess_exec(
-            "docker",
-            "volume",
-            "rm",
-            source,
-        )
-        await process.wait()
-        if process.returncode == 0:
-            break
-        log.info("Failed to remove volume, attempt %d/%d", i + 1, attempts)
-        if i + 1 == attempts:
-            raise Exception("Error removing previous volume")
-        await asyncio.sleep(0.2)
-    log.info("Removed %s", source)
-    log.info("Receiving file")
-    process = await asyncio.create_subprocess_exec(
-        "docker",
-        "run",
-        "--rm",
-        "--interactive",  # to read from stdin
-        "--workdir",
-        "/volume",
-        "--mount",
-        f"type=volume,source={source},destination=/volume",
-        "--label",
-        "disco.log.exclude=true",
-        f"busybox:{config.BUSYBOX_VERSION}",
-        "tar",
-        "--extract",
-        "--gzip",
-        "--file",
-        "-",
-        stdin=asyncio.subprocess.PIPE,
+    previous_scale = dict(
+        [
+            (
+                docker.service_name(project_name, service.name, deployment_number),
+                service.replicas,
+            )
+            for service in await docker.list_services_for_deployment(
+                project_name=project_name,
+                deployment_number=deployment_number,
+            )
+        ],
     )
-    assert process.stdin is not None
-    async for chunk in request.stream():
-        process.stdin.write(chunk)
-        await process.stdin.drain()
-    await process.communicate()
-    if process.returncode != 0:
-        raise Exception("Error receving file")
-
-    log.info("Reveived file")
+    services_with_volume = []
     for service_name, service in disco_file.services.items():
         if volume_name not in [v.name for v in service.volumes]:
             continue
         internal_service_name = docker.service_name(
             project_name, service_name, deployment_number
         )
-        # TODO refactor, this code is pretty much copy-pasted from the deployment flow
-        internal_service_name = docker.service_name(
-            project_name, service_name, deployment_number
+        services_with_volume.append(internal_service_name)
+    running_services = [
+        service for service in services_with_volume if service in previous_scale
+    ]
+    scale_zero = dict([(service, 0) for service in running_services])
+    scale_back = dict(
+        [(service, previous_scale[service]) for service in running_services]
+    )
+    if len(scale_zero) > 0:
+        await docker.scale(scale_zero)
+    internal_volume_name = volume_name_for_project(volume_name, project_id)
+    attempts = 200
+    try:
+        for i in range(attempts):
+            process = await asyncio.create_subprocess_exec(
+                "docker",
+                "volume",
+                "rm",
+                internal_volume_name,
+            )
+            await process.wait()
+            if process.returncode == 0:
+                break
+            log.info("Failed to remove volume, attempt %d/%d", i + 1, attempts)
+            if i + 1 == attempts:
+                raise Exception("Error removing previous volume")
+            await asyncio.sleep(0.2)
+        log.info("Removed %s", internal_volume_name)
+        log.info("Receiving file")
+        process = await asyncio.create_subprocess_exec(
+            "docker",
+            "run",
+            "--rm",
+            "--interactive",  # to read from stdin
+            "--workdir",
+            "/volume",
+            "--mount",
+            f"type=volume,source={internal_volume_name},destination=/volume",
+            "--label",
+            "disco.log.exclude=true",
+            f"busybox:{config.BUSYBOX_VERSION}",
+            "tar",
+            "--extract",
+            "--gzip",
+            "--file",
+            "-",
+            stdin=asyncio.subprocess.PIPE,
         )
-        networks: list[tuple[str, str]] = [
-            (
-                docker.deployment_network_name(project_name, deployment_number),
-                service_name,
-            ),
-            (
-                "disco-main",
-                f"{project_name}-{service_name}"
-                if service.exposed_internally
-                else internal_service_name,
-            ),
-        ]
-        env_variables += [
-            ("DISCO_PROJECT_NAME", project_name),
-            ("DISCO_SERVICE_NAME", service_name),
-            ("DISCO_HOST", disco_host),
-            ("DISCO_DEPLOYMENT_NUMBER", str(deployment_number)),
-        ]
-        if commit_hash is not None:
-            env_variables += [
-                ("DISCO_COMMIT", commit_hash),
-            ]
-
-        image = docker.get_image_name_for_service(
-            disco_file=disco_file,
-            service_name=service_name,
-            registry_host=registry_host,
-            project_name=project_name,
-            deployment_number=deployment_number,
-        )
-        log.info("Starting %s", internal_service_name)
-        await docker.start_project_service(
-            image=image,
-            name=internal_service_name,
-            project_name=project_name,
-            project_service_name=service_name,
-            deployment_number=deployment_number,
-            env_variables=env_variables,
-            volumes=[
-                (
-                    "volume",
-                    volume_name_for_project(v.name, project_id),
-                    v.destination_path,
-                )
-                for v in service.volumes
-            ],
-            published_ports=[
-                (p.published_as, p.from_container_port, p.protocol)
-                for p in service.published_ports
-            ],
-            networks=networks,
-            replicas=scale[service_name],
-            command=service.command,
-            health_command=service.health.command
-            if service.health is not None
-            else None,
-        )
+        assert process.stdin is not None
+        async for chunk in request.stream():
+            process.stdin.write(chunk)
+            await process.stdin.drain()
+        await process.communicate()
+        if process.returncode != 0:
+            raise Exception("Error receving file")
+        log.info("Reveived file")
+    finally:
+        if len(scale_back) > 0:
+            await docker.scale(scale_back)
     log.info("Done importing volume %s", volume_name)
     return {}
