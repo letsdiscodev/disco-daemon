@@ -54,7 +54,7 @@ def run_post(
             raise HTTPException(422)
         if (
             "web" in disco_file.services
-            and disco_file.services["web"].type == ServiceType.container
+            and disco_file.services["web"].type != ServiceType.static
         ):
             service = "web"
         else:
@@ -62,7 +62,7 @@ def run_post(
                 [
                     name
                     for name, service in disco_file.services.items()
-                    if service.type in [ServiceType.container, ServiceType.command]
+                    if service.type != ServiceType.static
                 ]
             )
             if len(services) == 0:
@@ -87,10 +87,7 @@ def run_post(
                     )
                 ).errors()
             )
-        if disco_file.services[req_body.service].type not in [
-            ServiceType.container,
-            ServiceType.command,
-        ]:
+        if disco_file.services[req_body.service].type == ServiceType.static:
             raise RequestValidationError(
                 errors=(
                     ValidationError.from_exception_data(
