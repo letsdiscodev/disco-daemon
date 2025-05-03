@@ -78,6 +78,7 @@ class ProjectCron(Cron):
     schedule: str
     cron: croniter
     paused: bool
+    timeout: int
 
     @staticmethod
     async def from_deployment(
@@ -142,6 +143,7 @@ class ProjectCron(Cron):
             cron=cron,
             next=cron.get_next(datetime),
             paused=False,
+            timeout=disco_file.services[service_name].timeout,
         )
 
     async def update_for_deployment(
@@ -200,6 +202,7 @@ class ProjectCron(Cron):
             self.cron = croniter(schedule, datetime.now(timezone.utc))
             self.next = self.cron.get_next(datetime)
         self.schedule = schedule
+        self.timeout = disco_file.services[self.service_name].timeout
 
     async def run(self) -> None:
         async def log_stdout(stdout: str) -> None:
@@ -216,7 +219,7 @@ class ProjectCron(Cron):
             volumes=self.volumes,
             networks=self.networks,
             command=self.command,
-            timeout=300,
+            timeout=self.timeout,
             stdout=log_stdout,
             stderr=log_stderr,
         )
@@ -398,7 +401,15 @@ class AsyncWorker:
             log.info(
                 "Running cron %s %s", worker_task.project_name, worker_task.service_name
             )
-            await worker_task.run()
+            try:
+                await worker_task.run()
+            except asyncio.TimeoutError:
+                log.info(
+                    "Cron timed out %s %s after %d seconds",
+                    worker_task.project_name,
+                    worker_task.service_name,
+                    worker_task.timeout,
+                )
         elif isinstance(worker_task, QueueTask):
             log.info("Runnning QueueTask")
             await worker_task.run()

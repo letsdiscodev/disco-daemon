@@ -53,7 +53,7 @@ class Service(BaseModel):
         False,
         alias="exposedInternally",
     )
-    timeout: int = 300  # commands, static site generation
+    timeout: int = 300  # commands, static site generation, crons
     health: Health | None = None
 
 
