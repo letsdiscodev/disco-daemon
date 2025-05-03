@@ -496,7 +496,7 @@ async def service_exists(service_name: str) -> bool:
 
 
 async def list_services_for_project(project_name: str) -> list[str]:
-    log.info("Listing Docker services for projecct %s", project_name)
+    log.info("Listing Docker services for project %s", project_name)
     args = [
         "docker",
         "service",

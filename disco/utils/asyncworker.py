@@ -5,17 +5,16 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator, Awaitable, Callable
+from typing import AsyncGenerator, Awaitable, Callable, Sequence
 
 from croniter import croniter
 
-from disco.models import Deployment
-from disco.models.db import Session
+from disco.models import Deployment, DeploymentEnvironmentVariable
+from disco.models.db import AsyncSession
 from disco.utils import docker, keyvalues
 from disco.utils.discofile import DiscoFile, ServiceType, get_disco_file_from_str
 from disco.utils.encryption import decrypt
 from disco.utils.imagecleanup import remove_unused_images
-from disco.utils.projects import volume_name_for_project
 
 log = logging.getLogger(__name__)
 
@@ -81,19 +80,24 @@ class ProjectCron(Cron):
     paused: bool
 
     @staticmethod
-    def from_deployment(
+    async def from_deployment(
         service_name: str,
         disco_file: DiscoFile,
         deployment: Deployment,
         disco_host: str,
     ) -> ProjectCron:
+        from disco.utils.projects import volume_name_for_project
+
         schedule = disco_file.services[service_name].schedule
         cron = croniter(schedule, datetime.now(timezone.utc))
+        deployment_env_variables: Sequence[
+            DeploymentEnvironmentVariable
+        ] = await deployment.awaitable_attrs.env_variables
         env_variables = [
             (env_var.name, decrypt(env_var.value))
-            for env_var in deployment.env_variables
+            for env_var in deployment_env_variables
         ] + [
-            ("DISCO_PROJECT_NAME", deployment.project.name),
+            ("DISCO_PROJECT_NAME", deployment.project_name),
             ("DISCO_SERVICE_NAME", service_name),
             ("DISCO_HOST", disco_host),
             ("DISCO_DEPLOYMENT_NUMBER", str(deployment.number)),
@@ -114,13 +118,13 @@ class ProjectCron(Cron):
             disco_file=disco_file,
             service_name=service_name,
             registry_host=deployment.registry_host,
-            project_name=deployment.project.name,
+            project_name=deployment.project_name,
             deployment_number=deployment.number,
         )
         command = disco_file.services[service_name].command
         assert command is not None
         return ProjectCron(
-            project_name=deployment.project.name,
+            project_name=deployment.project_name,
             service_name=service_name,
             image=image,
             volumes=volumes,
@@ -131,7 +135,7 @@ class ProjectCron(Cron):
             command=command,
             networks=[
                 docker.deployment_network_name(
-                    deployment.project.name, deployment.number
+                    deployment.project_name, deployment.number
                 ),
                 "disco-main",
             ],
@@ -140,12 +144,14 @@ class ProjectCron(Cron):
             paused=False,
         )
 
-    def update_for_deployment(
+    async def update_for_deployment(
         self,
         disco_file: DiscoFile,
         deployment: Deployment,
         disco_host: str,
     ) -> None:
+        from disco.utils.projects import volume_name_for_project
+
         command = disco_file.services[self.service_name].command
         assert command is not None
         schedule = disco_file.services[self.service_name].schedule
@@ -157,11 +163,14 @@ class ProjectCron(Cron):
             )
             for v in disco_file.services[self.service_name].volumes
         ]
+        deployment_env_variables: Sequence[
+            DeploymentEnvironmentVariable
+        ] = await deployment.awaitable_attrs.env_variables
         env_variables = [
             (env_var.name, decrypt(env_var.value))
-            for env_var in deployment.env_variables
+            for env_var in deployment_env_variables
         ] + [
-            ("DISCO_PROJECT_NAME", deployment.project.name),
+            ("DISCO_PROJECT_NAME", deployment.project_name),
             ("DISCO_SERVICE_NAME", self.service_name),
             ("DISCO_HOST", disco_host),
             ("DISCO_DEPLOYMENT_NUMBER", str(deployment.number)),
@@ -177,19 +186,19 @@ class ProjectCron(Cron):
             disco_file=disco_file,
             service_name=self.service_name,
             registry_host=deployment.registry_host,
-            project_name=deployment.project.name,
+            project_name=deployment.project_name,
             deployment_number=deployment.number,
         )
         self.volumes = volumes
         self.env_variables = env_variables
         self.networks = [
-            docker.deployment_network_name(deployment.project.name, deployment.number),
+            docker.deployment_network_name(deployment.project_name, deployment.number),
             "disco-main",
         ]
         self.command = command
         if self.schedule != schedule:
             self.cron = croniter(schedule, datetime.now(timezone.utc))
-            self.next = self.cron.get_next()
+            self.next = self.cron.get_next(datetime)
         self.schedule = schedule
 
     async def run(self) -> None:
@@ -255,7 +264,7 @@ class AsyncWorker:
     async def work(self) -> None:
         log.info("Starting AsyncWorker")
         self._disco_crons = self._load_disco_crons()
-        self._project_crons = self._load_project_crons()
+        self._project_crons = await self._load_project_crons()
         tasks: set[asyncio.Task] = set()
         async for task in self._get_tasks():
             tasks.add(task)
@@ -276,18 +285,21 @@ class AsyncWorker:
             if cron.project_name == project_name:
                 self._project_crons.remove(cron)
 
-    def reload_and_resume_project_crons(
-        self, prev_project_name: str | None, project_name: str, deployment_number: int
+    async def reload_and_resume_project_crons(
+        self,
+        prev_project_name: str | None,
+        project_name: str,
+        deployment_number: int,
     ) -> None:
-        from disco.utils.deployments import get_deployment_by_number_sync
-        from disco.utils.projects import get_project_by_name_sync
+        from disco.utils.deployments import get_deployment_by_number
+        from disco.utils.projects import get_project_by_name
 
-        with Session.begin() as dbsession:
-            disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
-            assert disco_host is not None
-            project = get_project_by_name_sync(dbsession, project_name)
+        log.info("Reloading project crons of %s", project_name)
+        async with AsyncSession.begin() as dbsession:
+            disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
+            project = await get_project_by_name(dbsession, project_name)
             assert project is not None
-            deployment = get_deployment_by_number_sync(
+            deployment = await get_deployment_by_number(
                 dbsession, project, deployment_number
             )
             assert deployment is not None
@@ -298,12 +310,16 @@ class AsyncWorker:
                     continue
                 existing_crons.add(cron.service_name)
                 if cron.service_name in disco_file.services:
-                    cron.update_for_deployment(
+                    log.info("Updating cron %s %s", project_name, cron.service_name)
+                    await cron.update_for_deployment(
                         disco_file=disco_file,
                         deployment=deployment,
                         disco_host=disco_host,
                     )
                 else:
+                    log.info(
+                        "Removing cron %s %s", prev_project_name, cron.service_name
+                    )
                     self._project_crons.remove(cron)
             for service_name, service in disco_file.services.items():
                 if service.type != ServiceType.cron:
@@ -311,7 +327,8 @@ class AsyncWorker:
                 if service_name in existing_crons:
                     continue  # already updated above
                 try:
-                    cron = ProjectCron.from_deployment(
+                    log.info("Adding cron %s %s", project_name, service_name)
+                    cron = await ProjectCron.from_deployment(
                         service_name=service_name,
                         disco_file=disco_file,
                         deployment=deployment,
@@ -329,6 +346,7 @@ class AsyncWorker:
                 if cron.project_name != project_name:
                     continue
                 cron.paused = False
+        log.info("Reloaded project crons of %s", project_name)
 
     async def _get_tasks(self) -> AsyncGenerator[asyncio.Task, None]:
         while not self._stopped:
@@ -454,17 +472,16 @@ class AsyncWorker:
             ),
         ]
 
-    def _load_project_crons(self) -> list[ProjectCron]:
-        from disco.utils.deployments import get_live_deployment_sync
-        from disco.utils.projects import get_all_projects_sync
+    async def _load_project_crons(self) -> list[ProjectCron]:
+        from disco.utils.deployments import get_live_deployment
+        from disco.utils.projects import get_all_projects
 
         crons: list[ProjectCron] = []
-        with Session.begin() as dbsession:
-            disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
-            assert disco_host is not None
-            projects = get_all_projects_sync(dbsession)
+        async with AsyncSession.begin() as dbsession:
+            disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
+            projects = await get_all_projects(dbsession)
             for project in projects:
-                deployment = get_live_deployment_sync(dbsession, project)
+                deployment = await get_live_deployment(dbsession, project)
                 if deployment is None:
                     continue
                 disco_file = get_disco_file_from_str(deployment.disco_file)
@@ -472,7 +489,7 @@ class AsyncWorker:
                     if service.type != ServiceType.cron:
                         continue
                     try:
-                        cron = ProjectCron.from_deployment(
+                        cron = await ProjectCron.from_deployment(
                             service_name=service_name,
                             disco_file=disco_file,
                             deployment=deployment,

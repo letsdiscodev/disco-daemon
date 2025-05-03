@@ -499,7 +499,7 @@ async def replace_deployment(
                 has_domains = len(domains) > 0
             if has_domains:
                 await serve_new_deployment(new_deployment_info, recovery, log_output)
-        async_worker.reload_and_resume_project_crons(
+        await async_worker.reload_and_resume_project_crons(
             prev_project_name=prev_deployment_info.project_name
             if prev_deployment_info is not None
             else None,
