@@ -461,6 +461,23 @@ async def network_exists(network_name: str) -> bool:
     return process.returncode == 0
 
 
+async def container_exists(container_name: str) -> bool:
+    log.info("Checking if Docker container exists: %s", container_name)
+    args = [
+        "docker",
+        "container",
+        "inspect",
+        container_name,
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    await process.wait()
+    return process.returncode == 0
+
+
 def service_exists_sync(service_name: str) -> bool:
     log.info("Checking if Docker service exists: %s", service_name)
     args = [

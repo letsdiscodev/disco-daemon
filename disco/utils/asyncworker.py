@@ -211,10 +211,13 @@ class ProjectCron(Cron):
         async def log_stderr(stderr: str) -> None:
             pass
 
+        name = f"{self.project_name}-{self.service_name}.{self.deployment_number}"
+        if await docker.container_exists(name):
+            await docker.remove_container(name)
         await docker.run(
             image=self.image,
             project_name=self.project_name,
-            name=f"{self.project_name}-{self.service_name}.{self.deployment_number}",
+            name=name,
             env_variables=self.env_variables,
             volumes=self.volumes,
             networks=self.networks,
@@ -409,6 +412,12 @@ class AsyncWorker:
                     worker_task.project_name,
                     worker_task.service_name,
                     worker_task.timeout,
+                )
+            except docker.CommandRunProcessStatusError:
+                log.info(
+                    "Cron did not complete successfully %s %s",
+                    worker_task.project_name,
+                    worker_task.service_name,
                 )
         elif isinstance(worker_task, QueueTask):
             log.info("Runnning QueueTask")
