@@ -1343,6 +1343,7 @@ async def builder_prune() -> None:
         "docker",
         "builder",
         "prune",
+        "--force",  # do not prompt for confirmation
     ]
     await check_call(args)
 
