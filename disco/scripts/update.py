@@ -141,6 +141,7 @@ def alembic_upgrade(version_hash: str) -> None:
 
 def task_0_25_x(image: str) -> None:
     from disco.scripts.init import start_caddy
+    from disco.utils import docker
 
     print("Updating from 0.25.x to 0.26.0")
     with Session.begin() as dbsession:
@@ -149,7 +150,14 @@ def task_0_25_x(image: str) -> None:
             dbsession=dbsession, key="CLOUDFLARE_TUNNEL_TOKEN"
         )
     _run_cmd(
-
+        [
+            "docker",
+            "container",
+            "stop",
+            "disco-caddy",
+        ]
+    )
+    _run_cmd(
         [
             "docker",
             "container",
@@ -158,7 +166,10 @@ def task_0_25_x(image: str) -> None:
         ]
     )
     start_caddy(host_home=host_home, tunnel=cloudflare_tunnel_token is not None)
-
+    if cloudflare_tunnel_token is not None:
+        docker.add_network_to_container_sync(
+            "disco-caddy", "disco-cloudflare-tunnel", alias="disco-server"
+        )
     with Session.begin() as dbsession:
         keyvalues.set_value_sync(
             dbsession=dbsession, key="DISCO_VERSION", value="0.26.0"
