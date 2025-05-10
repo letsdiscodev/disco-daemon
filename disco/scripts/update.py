@@ -139,6 +139,32 @@ def alembic_upgrade(version_hash: str) -> None:
     command.upgrade(config, version_hash)
 
 
+def task_0_25_x(image: str) -> None:
+    from disco.scripts.init import start_caddy
+
+    print("Updating from 0.25.x to 0.26.0")
+    with Session.begin() as dbsession:
+        host_home = keyvalues.get_value_str_sync(dbsession=dbsession, key="HOST_HOME")
+        cloudflare_tunnel_token = keyvalues.get_value_sync(
+            dbsession=dbsession, key="CLOUDFLARE_TUNNEL_TOKEN"
+        )
+
+    _run_cmd(
+        [
+            "docker",
+            "container",
+            "rm",
+            "disco-caddy",
+        ]
+    )
+    start_caddy(host_home=host_home, tunnel=cloudflare_tunnel_token is not None)
+
+    with Session.begin() as dbsession:
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.26.0"
+        )
+
+
 def task_0_24_x(image: str) -> None:
     print("Updating from 0.24.x to 0.25.0")
     with Session.begin() as dbsession:
@@ -807,6 +833,8 @@ def get_update_function_for_version(version: str) -> Callable[[str], None]:
     if version.startswith("0.24."):
         return task_0_24_x
     if version.startswith("0.25."):
-        assert disco.__version__.startswith("0.25.")
+        return task_0_25_x
+    if version.startswith("0.26."):
+        assert disco.__version__.startswith("0.26.")
         return task_patch
     raise NotImplementedError(f"Update missing for version {version}")

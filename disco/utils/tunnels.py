@@ -33,6 +33,12 @@ TUNNEL_CMD = [
     "disco-main",
     "--label",
     "disco.tunnels",
+    "--log-driver",
+    "json-file",
+    "--log-opt",
+    "max-size=20m",
+    "--log-opt",
+    "max-file=5",
     f"letsdiscodev/sshtunnel:{config.DISCO_TUNNEL_VERSION}",
 ]
 

@@ -42,6 +42,12 @@ LOGSPOUT_CMD = [
     "ALLOW_TTY=true",
     "--label",
     "disco.syslogs",
+    "--log-driver",
+    "json-file",
+    "--log-opt",
+    "max-size=20m",
+    "--log-opt",
+    "max-file=5",
     "gliderlabs/logspout:latest",
     "raw://disco:{port}",
 ]
