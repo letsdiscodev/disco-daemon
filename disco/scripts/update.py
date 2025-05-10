@@ -148,8 +148,8 @@ def task_0_25_x(image: str) -> None:
         cloudflare_tunnel_token = keyvalues.get_value_sync(
             dbsession=dbsession, key="CLOUDFLARE_TUNNEL_TOKEN"
         )
-
     _run_cmd(
+
         [
             "docker",
             "container",
