@@ -163,14 +163,19 @@ async def stats_experimental():
 
 async def read_stats():
     log.info("Starting stats")
-    stats_blah = AsyncDockerStats()
+    async_docker_stats = AsyncDockerStats()
     try:
         while True:
-            containers_stats = await stats_blah.get_all_container_stats()
+            containers_stats = await async_docker_stats.get_all_container_stats()
+            df = await docker.host_df()
             node_stats = {
                 "node_name": "leader",
                 "read": datetime.now(timezone.utc).isoformat(),
                 "stats": containers_stats,
+                "df": {
+                    "used": df.used,
+                    "available": df.available,
+                },
             }
             yield ServerSentEvent(
                 event="stats",

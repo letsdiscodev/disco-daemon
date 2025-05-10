@@ -13,6 +13,7 @@ from multiprocessing import cpu_count
 from typing import AsyncGenerator, Awaitable, Callable, Literal
 
 import disco
+from disco.config import BUSYBOX_VERSION
 from disco.errors import ProcessStatusError
 from disco.utils.discofile import DiscoFile
 from disco.utils.discofile import Service as DiscoService
@@ -1346,6 +1347,33 @@ async def builder_prune() -> None:
         "--force",  # do not prompt for confirmation
     ]
     await check_call(args)
+
+
+@dataclass
+class DiskFree:
+    used: int
+    available: int
+
+
+async def host_df() -> DiskFree:
+    log.info("Getting host disk usage (df)")
+    args = [
+        "docker",
+        "run",
+        "-v",
+        "/:/hostroot:ro",
+        f"busybox:{BUSYBOX_VERSION}",
+        "df",
+        "/hostroot",
+    ]
+    stdout, _, _ = await check_call(args)
+    # Filesystem           1K-blocks      Used Available Use% Mounted on
+    # /dev/sda1            235972036  32875864 193451672  15% /hostroot
+    _, _, used, available, _, _ = stdout[1].split()
+    return DiskFree(
+        used=int(used),
+        available=int(available),
+    )
 
 
 EASY_MODE_DOCKERFILE = """
