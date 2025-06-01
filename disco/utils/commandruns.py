@@ -20,6 +20,7 @@ def create_command_run(
     service: str,
     command: str,
     timeout: int,
+    interactive: bool,
     by_api_key: ApiKey,
 ) -> tuple[CommandRun, Callable[[], Awaitable[None]]]:
     disco_file: DiscoFile = get_disco_file_from_str(deployment.disco_file)
@@ -71,13 +72,18 @@ def create_command_run(
     ]
 
     async def func() -> None:
-        await commandoutputs.init(commandoutputs.run_source(run_id))
+        if interactive:
+            pass
+        else:
+            await commandoutputs.init(commandoutputs.run_source(run_id))
 
-        async def log_output(output: str) -> None:
-            await commandoutputs.store_output(commandoutputs.run_source(run_id), output)
+            async def log_output(output: str) -> None:
+                await commandoutputs.store_output(commandoutputs.run_source(run_id), output)
 
-        async def log_output_terminate():
-            await commandoutputs.terminate(commandoutputs.run_source(run_id))
+            async def log_output_terminate():
+                await commandoutputs.terminate(commandoutputs.run_source(run_id))
+            stdout = log_output
+            stderr = log_output
 
         name = f"{project_name}-run.{run_number}"
         try:
@@ -90,18 +96,30 @@ def create_command_run(
                 networks=[network, "disco-main"],
                 command=command,
                 timeout=timeout,
-                stdout=log_output,
-                stderr=log_output,
+                stdout=stdout,
+                stderr=stderr,
             )
         except TimeoutError:
-            await log_output(f"Timed out after {timeout} seconds\n")
+            if interactive:
+                pass # TODO
+            else:
+                await log_output(f"Timed out after {timeout} seconds\n")
         except docker.CommandRunProcessStatusError as ex:
-            await log_output(f"Exited with code {ex.status}\n")
+            if interactive:
+                pass # TODO
+            else:
+                await log_output(f"Exited with code {ex.status}\n")
         except Exception:
             log.exception("Error when running command %s (%s)", command, name)
-            await log_output("Internal Disco error\n")
+            if interactive:
+                pass # TODO
+            else:
+                await log_output("Internal Disco error\n")
         finally:
-            await log_output_terminate()
+            if interactive:
+                pass # TODO
+            else:
+                await log_output_terminate()
 
     return command_run, func
 
