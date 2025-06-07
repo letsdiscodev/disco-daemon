@@ -1018,67 +1018,18 @@ async def run(
 ) -> None:
     log.info("Docker run %s (%s)", name, image)
     try:
-        more_args = []
-        for var_name, var_value in env_variables:
-            more_args.append("--env")
-            more_args.append(f"{var_name}={var_value}")
-        for volume_type, source, destination in volumes:
-            assert volume_type in ["bind", "volume"]
-            more_args.append("--mount")
-            more_args.append(
-                f"type={volume_type},source={source},destination={destination}"
-            )
-        if workdir is not None:
-            more_args.append("--workdir")
-            more_args.append(workdir)
-        if stdin is not None:
-            more_args.append("--interactive")
-        args = [
-            "docker",
-            "container",
-            "create",
-            "--name",
-            name,
-            "--label",
-            f"disco.project.name={project_name}",
-            "--label",
-            f"disco.service.name={name}",
-            "--log-driver",
-            "json-file",
-            "--log-opt",
-            "max-size=20m",
-            "--log-opt",
-            "max-file=5",
-            *more_args,
-            image,
-            *(shlex.split(command) if command is not None else []),
-        ]
-        process = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+        await create_container(
+            image=image,
+            project_name=project_name,
+            name=name,
+            env_variables=env_variables,
+            volumes=volumes,
+            networks=networks,
+            command=command,
+            stdin=stdin,
+            workdir=workdir,
+            timeout=timeout,
         )
-
-        async def read_create_container_stdout() -> None:
-            assert process.stdout is not None
-            async for line in process.stdout:
-                line_text = decode_text(line)
-                if line_text.endswith("\n"):
-                    line_text = line_text[:-1]
-                log.info("Output: %s", line_text)
-
-        try:
-            async with asyncio.timeout(timeout):
-                await asyncio.wait_for(read_create_container_stdout(), timeout)
-        except TimeoutError:
-            process.terminate()
-            raise
-
-        await process.wait()
-        if process.returncode != 0:
-            raise ProcessStatusError(status=process.returncode)
-        for network in networks:
-            await add_network_to_container(container=name, network=network)
         more_args = []
         if stdin is not None:
             more_args.append("--interactive")
@@ -1134,6 +1085,81 @@ async def run(
             raise CommandRunProcessStatusError(status=process.returncode)
     finally:
         await remove_container(name)
+
+
+async def create_container(
+    image: str,
+    project_name: str,
+    name: str,
+    env_variables: list[tuple[str, str]],
+    volumes: list[tuple[str, str, str]],
+    networks: list[str],
+    command: str | None,
+    stdin: AsyncGenerator[bytes, None] | None = None,
+    workdir: str | None = None,
+    timeout: int = 600,
+) -> None:
+    more_args = []
+    for var_name, var_value in env_variables:
+        more_args.append("--env")
+        more_args.append(f"{var_name}={var_value}")
+    for volume_type, source, destination in volumes:
+        assert volume_type in ["bind", "volume"]
+        more_args.append("--mount")
+        more_args.append(
+            f"type={volume_type},source={source},destination={destination}"
+        )
+    if workdir is not None:
+        more_args.append("--workdir")
+        more_args.append(workdir)
+    if stdin is not None:
+        more_args.append("--interactive")
+    args = [
+        "docker",
+        "container",
+        "create",
+        "--name",
+        name,
+        "--label",
+        f"disco.project.name={project_name}",
+        "--label",
+        f"disco.service.name={name}",
+        "--log-driver",
+        "json-file",
+        "--log-opt",
+        "max-size=20m",
+        "--log-opt",
+        "max-file=5",
+        *more_args,
+        image,
+        *(shlex.split(command) if command is not None else []),
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+
+    async def read_create_container_stdout() -> None:
+        assert process.stdout is not None
+        async for line in process.stdout:
+            line_text = decode_text(line)
+            if line_text.endswith("\n"):
+                line_text = line_text[:-1]
+            log.info("Output: %s", line_text)
+
+    try:
+        async with asyncio.timeout(timeout):
+            await asyncio.wait_for(read_create_container_stdout(), timeout)
+    except TimeoutError:
+        process.terminate()
+        raise
+
+    await process.wait()
+    if process.returncode != 0:
+        raise ProcessStatusError(status=process.returncode)
+    for network in networks:
+        await add_network_to_container(container=name, network=network)
 
 
 async def remove_container(name: str) -> None:
