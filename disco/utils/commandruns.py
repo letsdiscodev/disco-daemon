@@ -1,6 +1,7 @@
+from dataclasses import dataclass
 import logging
 from secrets import token_hex
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
@@ -13,6 +14,15 @@ from disco.utils.encryption import decrypt
 from disco.utils.projects import volume_name_for_project
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class Run:
+    number: int
+    name: str
+    state: Literal['DECLARED', 'CREATED', 'STARTED', 'REMOVED']
+
+runs: dict[str, Run] = {}
 
 
 async def create_command_run(
@@ -72,6 +82,13 @@ async def create_command_run(
         for v in disco_file.services[service].volumes
     ]
 
+    name = f"{project_name}-run.{run_number}"
+    run_id = command_run.id
+    runs[run_id] = Run(
+        number=number,
+        name=name,
+        state='DECLARED'
+    )
     async def non_interactive_func() -> None:
         await commandoutputs.init(commandoutputs.run_source(run_id))
 
@@ -83,7 +100,6 @@ async def create_command_run(
 
         stdout = log_output
         stderr = log_output
-        name = f"{project_name}-run.{run_number}"
         try:
             await docker.run(
                 image=image,
@@ -108,7 +124,6 @@ async def create_command_run(
             await log_output_terminate()
 
     async def interactive_func() -> None:
-        name = f"{project_name}-run.{run_number}"
         try:
             await docker.create_container(
                 image=image,
@@ -119,17 +134,23 @@ async def create_command_run(
                 networks=[network, "disco-main"],
                 command=command,
                 timeout=timeout,
+                interactive=True,
+                tty=True,
             )
+            runs[run_id].state= 'CREATED'
 
         except TimeoutError:
-            pass  # TODO f"Timed out after {timeout} seconds\n"
+            log.exception("Timeout error")
+            await docker.remove_container(name)
+            # TODO f"Timed out after {timeout} seconds\n"
         except docker.CommandRunProcessStatusError:
-            pass  # TODO f"Exited with code {ex.status}\n" => should yield a status code for the CLI
+            log.exception("docker.CommandRunProcessStatusError")
+            await docker.remove_container(name)
+            # TODO f"Exited with code {ex.status}\n" => should yield a status code for the CLI
         except Exception:
             log.exception("Error when running command %s (%s)", command, name)
-            pass  # TODO  "Internal Disco error\n"
-        finally:
             await docker.remove_container(name)
+            # TODO  "Internal Disco error\n"
 
     if interactive:
         func = interactive_func

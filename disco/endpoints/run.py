@@ -1,8 +1,9 @@
 import asyncio
+from dataclasses import dataclass
 import json
 import logging
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import (
     APIRouter,
@@ -191,6 +192,7 @@ async def run_output_get(
 
 @router.websocket("/api/projects/{project_name}/runs/{run_id}/ws")
 async def asdasdasdasdasdasd(websocket: WebSocket, project_name: str, run_id: str):
+    from disco.utils.commandruns import runs
     log.info("Websocket function")
     async with AsyncSession.begin() as dbsession:
         run = await get_command_run_by_id(dbsession, run_id)
@@ -199,7 +201,11 @@ async def asdasdasdasdasdasd(websocket: WebSocket, project_name: str, run_id: st
         run_number = run.number
     try:
         await websocket.accept()
+        still_connected = True
         log.info("websocket.accept() %s", run_number)
+        while runs[run_id].state != "CREATED":
+            log.info("Waiting %s", runs[run_id].state)
+            await asyncio.sleep(3)
         name = f"{project_name}-run.{run_number}"
         args = [
             "docker",
@@ -218,27 +224,38 @@ async def asdasdasdasdasdasd(websocket: WebSocket, project_name: str, run_id: st
 
         async def write_stdin() -> None:
             assert process.stdin is not None
-            while True:
-                chunk = await websocket.receive_bytes()
-                process.stdin.write(chunk)
+            try:
+                while True:
+                    chunk = await websocket.receive_bytes()
+                    if not chunk:
+                        return
+                    process.stdin.write(chunk)
+            except WebSocketDisconnect:
+                return
 
         async def read_stdout() -> None:
             assert process.stdout is not None
-
+        
             while True:
                 chunk = await process.stdout.read(1024)
-                if chunk is None:
+                if not chunk:
                     return
-                await websocket.send_bytes(b"o:" + chunk)
+                if not still_connected:
+                    return
+                if chunk:
+                    await websocket.send_bytes(b"o:" + chunk)
 
         async def read_stderr() -> None:
             assert process.stderr is not None
 
             while True:
                 chunk = await process.stderr.read(1024)
-                if chunk is None:
+                if not chunk:
                     return
-                await websocket.send_bytes(b"e:" + chunk)
+                if not still_connected:
+                    return
+                if chunk:
+                    await websocket.send_bytes(b"e:" + chunk)
 
         tasks = [
             asyncio.create_task(write_stdin()),
@@ -251,14 +268,20 @@ async def asdasdasdasdasdasd(websocket: WebSocket, project_name: str, run_id: st
         try:
             async with asyncio.timeout(86400):
                 await asyncio.wait(tasks_to_wait, return_when=asyncio.FIRST_COMPLETED)
+                log.info("FIRST_COMPLETED")
                 await process.wait()
+                log.info("await process.wait()")
                 await websocket.send_bytes(
                     b"s:" + str(process.returncode).encode("utf-8")
                 )
+                websocket.close(1000)
+                return
         except TimeoutError:
             process.terminate()
             raise
     except WebSocketDisconnect:
+        still_connected = False
         process.terminate()
     finally:
+        still_connected = False
         await docker.remove_container(name)

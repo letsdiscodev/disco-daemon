@@ -1026,7 +1026,8 @@ async def run(
             volumes=volumes,
             networks=networks,
             command=command,
-            stdin=stdin,
+            interactive=stdin is not None,
+            tty=False,
             workdir=workdir,
             timeout=timeout,
         )
@@ -1095,7 +1096,8 @@ async def create_container(
     volumes: list[tuple[str, str, str]],
     networks: list[str],
     command: str | None,
-    stdin: AsyncGenerator[bytes, None] | None = None,
+    interactive: bool,
+    tty: bool,
     workdir: str | None = None,
     timeout: int = 600,
 ) -> None:
@@ -1112,8 +1114,10 @@ async def create_container(
     if workdir is not None:
         more_args.append("--workdir")
         more_args.append(workdir)
-    if stdin is not None:
+    if interactive is not None:
         more_args.append("--interactive")
+    if tty is not None:
+        more_args.append("--tty")
     args = [
         "docker",
         "container",
