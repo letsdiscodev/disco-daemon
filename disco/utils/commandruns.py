@@ -1,7 +1,10 @@
-from dataclasses import dataclass
+import asyncio
+import collections
 import logging
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from secrets import token_hex
-from typing import Awaitable, Callable, Literal
+from typing import AsyncGenerator, Awaitable, Callable, Deque
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
@@ -16,11 +19,63 @@ from disco.utils.projects import volume_name_for_project
 log = logging.getLogger(__name__)
 
 
+class AsyncBytesBuffer:
+    MAX_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
+
+    def __init__(self):
+        self._deque: Deque[bytes] = collections.deque()
+        self._current_size = 0
+        self._new_data_event = asyncio.Event()
+        self._lock = asyncio.Lock()
+
+    async def add_bytes(self, data: bytes):
+        async with self._lock:
+            data_len = len(data)
+            if data_len > self.MAX_SIZE_BYTES:
+                log.warning(
+                    "Dropping %s bytes, larger than buffer %s bytes",
+                    data_len,
+                    self.MAX_SIZE_BYTES,
+                )
+                return
+            while self._current_size + data_len > self.MAX_SIZE_BYTES and self._deque:
+                oldest_data = self._deque.popleft()
+                self._current_size -= len(oldest_data)
+                log.warning("Buffer full, dropping %s bytes", len(oldest_data))
+            self._deque.append(data)
+            self._current_size += data_len
+            self._new_data_event.set()  # Signal that new data is available
+
+    async def requeue_front(self, data: bytes):
+        async with self._lock:
+            self._deque.appendleft(data)
+            self._current_size += len(data)
+            self._new_data_event.set()  # Signal that data is available
+
+    async def stream(self) -> AsyncGenerator[bytes, None]:
+        while True:
+            async with self._lock:
+                if self._deque:
+                    chunk = self._deque.popleft()
+                    self._current_size -= len(chunk)
+                    if not self._deque:
+                        self._new_data_event.clear()
+                    yield chunk
+                    # go back to the top of the loop to check for more data
+                    continue
+            # the deque was empty, wait for the event.
+            await self._new_data_event.wait()
+
+
 @dataclass
 class Run:
-    number: int
     name: str
-    state: Literal['DECLARED', 'CREATED', 'STARTED', 'REMOVED']
+    stdin: AsyncBytesBuffer
+    stdout: AsyncBytesBuffer
+    stderr: AsyncBytesBuffer
+    process: asyncio.Future[asyncio.subprocess.Process]
+    last_interaction: datetime
+
 
 runs: dict[str, Run] = {}
 
@@ -85,10 +140,14 @@ async def create_command_run(
     name = f"{project_name}-run.{run_number}"
     run_id = command_run.id
     runs[run_id] = Run(
-        number=number,
         name=name,
-        state='DECLARED'
+        stdin=AsyncBytesBuffer(),
+        stdout=AsyncBytesBuffer(),
+        stderr=AsyncBytesBuffer(),
+        last_interaction=datetime.now(timezone.utc),
+        process=asyncio.get_running_loop().create_future(),
     )
+
     async def non_interactive_func() -> None:
         await commandoutputs.init(commandoutputs.run_source(run_id))
 
@@ -137,8 +196,52 @@ async def create_command_run(
                 interactive=True,
                 tty=True,
             )
-            runs[run_id].state= 'CREATED'
+            args = [
+                "docker",
+                "container",
+                "start",
+                "--attach",
+                "--interactive",
+                name,
+            ]
+            process = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.PIPE,
+            )
+            runs[run_id].process.set_result(process)
 
+            async def write_stdin() -> None:
+                assert process.stdin is not None
+                async for chunk in runs[run_id].stdin.stream():
+                    process.stdin.write(chunk)
+
+            async def read_stdout() -> None:
+                assert process.stdout is not None
+
+                while True:
+                    chunk = await process.stdout.read(1024)
+                    if not chunk:
+                        return
+                    await runs[run_id].stdout.add_bytes(chunk)
+
+            async def read_stderr() -> None:
+                assert process.stderr is not None
+
+                while True:
+                    chunk = await process.stderr.read(1024)
+                    if not chunk:
+                        return
+                    await runs[run_id].stderr.add_bytes(chunk)
+
+            tasks = [
+                asyncio.create_task(write_stdin()),
+                asyncio.create_task(read_stdout()),
+                asyncio.create_task(read_stderr()),
+            ]
+            await asyncio.gather(*tasks)
+            # TODO del runs[run_id]
         except TimeoutError:
             log.exception("Timeout error")
             await docker.remove_container(name)
