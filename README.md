@@ -5,8 +5,9 @@
     <strong>The server-side engine for the Disco open-source PaaS.</strong>
   </p>
   <p>
-    <a href="https://github.com/letsdiscodev/disco-daemon/blob/main/LICENSE"><img src="https://img.shields.io/github/license/letsdiscodev/disco-daemon?style=for-the-badge" alt="License"></a>
-    <a href="https://discord.gg/7J4vb5uUwU"><img src="https://img.shields.io/discord/1200593573062651914?style=for-the-badge&logo=discord&label=discord" alt="Discord"></a>
+    <a href="https://github.com/letsdiscodev/disco-daemon/blob/main/LICENSE"><img src="https://img.shields.io/github/license/letsdiscodev/disco-daemon" alt="License"></a>
+    <a href="https://discord.gg/7J4vb5uUwU"><img src="https://img.shields.io/discord/1200593573062651914?logo=discord&label=discord" alt="Discord"></a>
+    <a href="https://deepwiki.com/letsdiscodev/disco-daemon"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
   </p>
 </div>
 
