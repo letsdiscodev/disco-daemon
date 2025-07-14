@@ -65,9 +65,9 @@ curl https://cli-assets.letsdisco.dev/install.sh | sh
 ```
 
 2.  **Initialize your server:**
-    Point the CLI at your server. It will connect via SSH, install Docker, and set up the Disco Daemon.
+    Point a domain to your server's IP, then run the command below. It will connect via SSH, install Docker, and set up the Disco Daemon.
 ```bash
-disco init root@your-server-ip
+disco init root@disco.example.com
 ```
 
 From there, the CLI will guide you through connecting your GitHub account and deploying your first project.
