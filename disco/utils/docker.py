@@ -1401,6 +1401,59 @@ async def host_df() -> DiskFree:
     )
 
 
+async def get_service_health_status(
+    service_name: str, log_output: Callable[[str], Awaitable[None]]
+) -> str | None:
+    """
+    Check if a Docker service has a health check and return its status.
+    Returns: 'healthy', 'starting', 'unhealthy', or None if no health check defined.
+    """
+    try:
+        # Get service inspect data to check if health check is defined
+        stdout, stderr, process = await check_call(
+            ["docker", "service", "inspect", service_name]
+        )
+        service_info = json.loads("".join(stdout))[0]
+
+        # Check if service has health check defined
+        healthcheck = (
+            service_info.get("Spec", {})
+            .get("TaskTemplate", {})
+            .get("ContainerSpec", {})
+            .get("Healthcheck")
+        )
+        if not healthcheck:
+            return None
+
+        # Get container ID for the service
+        stdout, stderr, process = await check_call(
+            ["docker", "ps", "-q", "-f", f"name={service_name}"]
+        )
+        container_id = "".join(stdout).strip()
+        if not container_id:
+            return "starting"
+
+        # Get container health status
+        stdout, stderr, process = await check_call(
+            [
+                "docker",
+                "inspect",
+                container_id,
+                "--format",
+                "{{json .State.Health}}",
+            ]
+        )
+        health_json = "".join(stdout).strip()
+        if not health_json or health_json == "<no value>":
+            return "starting"
+
+        health = json.loads(health_json)
+        return health.get("Status", "starting")
+    except Exception as e:
+        await log_output(f"Error checking Docker health status: {e}\n")
+        return None
+
+
 EASY_MODE_DOCKERFILE = """
 FROM {image}
 WORKDIR /project

@@ -4,6 +4,8 @@ import asyncio
 import logging
 import os
 import random
+import socket
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Mapping, Sequence
@@ -47,6 +49,126 @@ log = logging.getLogger(__name__)
 
 class DiscoBuildException(Exception):
     pass
+
+
+async def wait_for_service_healthy_via_docker_check(
+    service_name: str,
+    log_output: Callable[[str], Awaitable[None]],
+    timeout: int = 120,
+) -> None:
+    """
+    Waits for Docker's native health check to report 'healthy' status.
+    Polls Docker health status every 2 seconds until healthy or timeout.
+    """
+    await log_output(
+        f"Service has health check defined. Waiting for Docker health status...\n"
+    )
+    start_time = time.time()
+    attempt = 0
+
+    while time.time() - start_time < timeout:
+        attempt += 1
+        health_status = await docker.get_service_health_status(service_name, log_output)
+
+        if health_status == "healthy":
+            await log_output(
+                f"✓ Service '{service_name}' is healthy (attempt {attempt})\n"
+            )
+            return
+        elif health_status == "unhealthy":
+            await log_output(
+                f"Service '{service_name}' is unhealthy, retrying... (attempt {attempt})\n"
+            )
+        else:  # starting or None
+            await log_output(
+                f"Service '{service_name}' health status: {health_status}, retrying... (attempt {attempt})\n"
+            )
+
+        await asyncio.sleep(2)
+
+    raise TimeoutError(
+        f"Service '{service_name}' did not become healthy within {timeout} seconds."
+    )
+
+
+async def wait_for_service_healthy_via_tcp_check(
+    service_name: str,
+    port: int,
+    log_output: Callable[[str], Awaitable[None]],
+    timeout: int = 120,
+) -> None:
+    """
+    Waits for service to accept TCP connections on the specified port.
+    Retries DNS resolution and TCP connection every 2 seconds until successful or timeout.
+    """
+    await log_output(f"No health check defined. Using TCP connection check...\n")
+    start_time = time.time()
+    attempt = 0
+
+    while time.time() - start_time < timeout:
+        attempt += 1
+        try:
+            # DNS lookup
+            ip_address = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: socket.gethostbyname(service_name)
+            )
+
+            # Try to connect
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(service_name, port), timeout=2
+            )
+            writer.close()
+            await writer.wait_closed()
+
+            # Success!
+            await log_output(
+                f"✓ Service '{service_name}' is ready at {ip_address}:{port} (attempt {attempt})\n"
+            )
+            return
+
+        except socket.gaierror:
+            await log_output(
+                f"DNS lookup failed for '{service_name}', retrying... (attempt {attempt})\n"
+            )
+        except (ConnectionRefusedError, OSError) as e:
+            await log_output(
+                f"Connection to '{service_name}' refused (DNS may have stale IP), retrying... (attempt {attempt})\n"
+            )
+        except asyncio.TimeoutError:
+            await log_output(
+                f"Connection to '{service_name}:{port}' timed out, retrying... (attempt {attempt})\n"
+            )
+
+        await asyncio.sleep(2)
+
+    raise TimeoutError(
+        f"Service '{service_name}' did not become healthy within {timeout} seconds."
+    )
+
+
+async def wait_for_service_healthy(
+    service_name: str,
+    port: int,
+    log_output: Callable[[str], Awaitable[None]],
+    timeout: int = 120,
+) -> None:
+    """
+    Waits for service to be healthy using Docker's health check if defined,
+    or falls back to TCP connection check.
+    """
+    # Check if service has a Docker health check defined
+    has_health_check = (
+        await docker.get_service_health_status(service_name, log_output) is not None
+    )
+
+    if has_health_check:
+        await wait_for_service_healthy_via_docker_check(
+            service_name, log_output, timeout
+        )
+    else:
+        await wait_for_service_healthy_via_tcp_check(
+            service_name, port, log_output, timeout
+        )
 
 
 @dataclass
@@ -861,7 +983,20 @@ async def serve_new_deployment(
         internal_service_name = docker.service_name(
             new_deployment_info.project_name, "web", new_deployment_info.number
         )
-        # TODO wait that it's listening on the port specified? + health check?
+        port = new_deployment_info.disco_file.services["web"].port or 8000
+
+        # Wait for service to be healthy before configuring Caddy to route traffic to it.
+        # Uses Docker's native health check if defined, otherwise falls back to TCP connection check.
+        try:
+            await wait_for_service_healthy(internal_service_name, port, log_output)
+        except TimeoutError as e:
+            await log_output(f"Health check failed: {e}\n")
+            if not recovery:
+                raise DiscoBuildException(
+                    f"Service '{internal_service_name}' failed readiness check."
+                ) from e
+            return  # In recovery mode, abort the attempt to serve this failed deployment
+
         assert new_deployment_info.disco_file is not None
         try:
             if (
@@ -875,7 +1010,7 @@ async def serve_new_deployment(
                 await caddy.serve_service(
                     new_deployment_info.project_name,
                     internal_service_name,
-                    port=new_deployment_info.disco_file.services["web"].port or 8000,
+                    port=port,
                 )
         except Exception:
             await log_output(
