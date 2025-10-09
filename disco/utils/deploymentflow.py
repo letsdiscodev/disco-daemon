@@ -4,6 +4,8 @@ import asyncio
 import logging
 import os
 import random
+import socket
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Mapping, Sequence
@@ -857,12 +859,21 @@ async def serve_new_deployment(
     log_output: Callable[[str], Awaitable[None]],
 ) -> None:
     assert new_deployment_info.disco_file is not None
-    if new_deployment_info.disco_file.services["web"].type == ServiceType.container:
+    if (
+        "web" in new_deployment_info.disco_file.services
+        and new_deployment_info.disco_file.services["web"].type == ServiceType.container
+    ):
         internal_service_name = docker.service_name(
             new_deployment_info.project_name, "web", new_deployment_info.number
         )
-        # TODO wait that it's listening on the port specified? + health check?
-        assert new_deployment_info.disco_file is not None
+        port = new_deployment_info.disco_file.services["web"].port or 8000
+        await log_output(f"Waiting for port {port} on {internal_service_name}\n")
+        await wait_for_dns_and_port(
+            service_name=internal_service_name,
+            port=port,
+            log_output=log_output,
+            timeout=300,
+        )
         try:
             if (
                 not recovery
@@ -875,7 +886,7 @@ async def serve_new_deployment(
                 await caddy.serve_service(
                     new_deployment_info.project_name,
                     internal_service_name,
-                    port=new_deployment_info.disco_file.services["web"].port or 8000,
+                    port=port,
                 )
         except Exception:
             await log_output(
@@ -1013,4 +1024,40 @@ async def prepare_generator_site(
         image=image,
         src=src,
         dst=dst,
+    )
+
+
+async def wait_for_dns_and_port(
+    service_name: str,
+    port: int,
+    log_output: Callable[[str], Awaitable[None]],
+    timeout: int,
+):
+    start_time = time.time()
+    output_since_nl = 0
+    while time.time() - start_time < timeout:
+        if output_since_nl >= 80:
+            await log_output("\n")
+            output_since_nl = 0
+        try:
+            await asyncio.get_running_loop().run_in_executor(
+                None, lambda: socket.gethostbyname(service_name)
+            )
+            _, writer = await asyncio.wait_for(
+                asyncio.open_connection(service_name, port), timeout=3
+            )
+            writer.close()
+            await writer.wait_closed()
+            if output_since_nl > 0:
+                await log_output("\n")
+            return
+        except socket.gaierror:
+            await log_output(".")
+            output_since_nl += 1
+        except (ConnectionRefusedError, asyncio.TimeoutError):
+            await log_output(".")
+            output_since_nl += 1
+        await asyncio.sleep(2)
+    raise TimeoutError(
+        f"{service_name} not available on port {port} within {timeout} seconds."
     )
