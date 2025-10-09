@@ -868,12 +868,17 @@ async def serve_new_deployment(
         )
         port = new_deployment_info.disco_file.services["web"].port or 8000
         await log_output(f"Waiting for port {port} on {internal_service_name}\n")
-        await wait_for_dns_and_port(
-            service_name=internal_service_name,
-            port=port,
-            log_output=log_output,
-            timeout=300,
-        )
+        try:
+            await wait_for_dns_and_port(
+                service_name=internal_service_name,
+                port=port,
+                log_output=log_output,
+                timeout=300,
+            )
+        except TimeoutError:
+            await log_output(f"Could not open port {port} on {internal_service_name}\n")
+            if not recovery:
+                raise
         try:
             if (
                 not recovery
@@ -1058,6 +1063,8 @@ async def wait_for_dns_and_port(
             await log_output(".")
             output_since_nl += 1
         await asyncio.sleep(2)
+    if output_since_nl > 0:
+        await log_output("\n")
     raise TimeoutError(
         f"{service_name} not available on port {port} within {timeout} seconds."
     )
