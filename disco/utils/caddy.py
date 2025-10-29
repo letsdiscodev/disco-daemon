@@ -65,6 +65,14 @@ async def _add_project_route(project_name: str, domains: list[str]) -> None:
         "@id": f"disco-project-{project_name}",
         "handle": [
             {
+                "handler": "headers",
+                "response": {
+                    "set": {
+                        "Server": [""]
+                    }
+                }
+            },
+            {
                 "handler": "subroute",
                 "routes": [
                     {
@@ -183,6 +191,14 @@ async def add_apex_www_redirects(
     req_body = {
         "@id": f"apex-www-redirect-{domain_id}",
         "handle": [
+            {
+                "handler": "headers",
+                "response": {
+                    "set": {
+                        "Server": [""]
+                    }
+                }
+            },
             {
                 "handler": "subroute",
                 "routes": [
@@ -307,6 +323,14 @@ def write_caddy_init_config(disco_host: str, tunnel: bool) -> None:
                             {
                                 "@id": "disco-domain-handle",
                                 "handle": [
+                                    {
+                                        "handler": "headers",
+                                        "response": {
+                                            "set": {
+                                                "Server": [""]
+                                            }
+                                        }
+                                    },
                                     {
                                         "handler": "subroute",
                                         "routes": [
