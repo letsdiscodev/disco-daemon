@@ -20,7 +20,7 @@ from disco.models import ApiKey, Project
 from disco.models.db import AsyncSession
 from disco.utils import commandoutputs
 from disco.utils.apikeys import get_valid_api_key_by_id
-from disco.utils.deploymentflow import enqueue_deployment
+from disco.utils.deploymentflow import enqueue_deployment, process_deployment_if_any
 from disco.utils.deployments import (
     cancel_deployment,
     create_deployment,
@@ -114,25 +114,33 @@ async def deployment_delete(
         project = await get_project_by_name(dbsession, project_name)
         if project is None:
             raise HTTPException(status_code=404)
+        project_id = project.id
         cancelled_deployments = []
+        start_next_deployment = False
         if deployment_number == 0:
             deployments_queued = await get_deployments_with_status(
                 dbsession, project, "QUEUED"
             )
             for deployment in deployments_queued:
-                await cancel_deployment(deployment, by_api_key=api_key)
+                start_next = await cancel_deployment(deployment, by_api_key=api_key)
+                if start_next:
+                    start_next_deployment = True
                 cancelled_deployments.append(deployment.number)
             deployments_preparing = await get_deployments_with_status(
                 dbsession, project, "PREPARING"
             )
             for deployment in deployments_preparing:
-                await cancel_deployment(deployment, by_api_key=api_key)
+                start_next = await cancel_deployment(deployment, by_api_key=api_key)
+                if start_next:
+                    start_next_deployment = True
                 cancelled_deployments.append(deployment.number)
             deployments_replacing = await get_deployments_with_status(
                 dbsession, project, "REPLACING"
             )
             for deployment in deployments_replacing:
-                await cancel_deployment(deployment, by_api_key=api_key)
+                start_next = await cancel_deployment(deployment, by_api_key=api_key)
+                if start_next:
+                    start_next_deployment = True
                 cancelled_deployments.append(deployment.number)
         else:
             single_deployment = await get_deployment_by_number(
@@ -146,8 +154,12 @@ async def deployment_delete(
                     f"Cannot cancel deployment {single_deployment.number}, "
                     f"status {single_deployment.status} not one of QUEUED, PREPARING, REPLACING",
                 )
-            await cancel_deployment(single_deployment, by_api_key=api_key)
+            start_next = await cancel_deployment(single_deployment, by_api_key=api_key)
+            if start_next:
+                start_next_deployment = True
             cancelled_deployments.append(single_deployment.number)
+        if start_next_deployment:
+            await process_deployment_if_any(project_id)
         return {
             "cancelledDeployments": [
                 {"number": number} for number in sorted(cancelled_deployments)

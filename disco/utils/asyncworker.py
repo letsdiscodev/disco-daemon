@@ -237,6 +237,10 @@ class QueueTask(WorkerTask):
     run: Callable[[], Awaitable[None]]
 
 
+class TaskNotFoundError(KeyError):
+    pass
+
+
 class AsyncWorker:
     def __init__(self) -> None:
         self._stopped = False
@@ -253,7 +257,10 @@ class AsyncWorker:
         return queue_task.id
 
     def cancel_task(self, task_id: str) -> None:
-        task = self._queue_tasks[task_id]
+        try:
+            task = self._queue_tasks[task_id]
+        except KeyError as ex:
+            raise TaskNotFoundError() from ex
         task.cancel()
 
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:

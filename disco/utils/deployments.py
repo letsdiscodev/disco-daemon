@@ -186,7 +186,16 @@ def set_deployment_task_id(deployment: Deployment, task_id: str) -> None:
     deployment.task_id = task_id
 
 
-async def cancel_deployment(deployment: Deployment, by_api_key: ApiKey) -> None:
+async def cancel_deployment(deployment: Deployment, by_api_key: ApiKey) -> bool:
+    """Cancels a deployment.
+
+    Returns True if should process next deployment.
+    It's the case when a deployment was in progress but wasn't
+    actually found in the tasks. It could happen if something
+    doesn't work and is there as a fallback to fix the project,
+    in case it would be stuck with a broken deployment forever.
+
+    """
     from disco.utils.asyncworker import async_worker
 
     assert deployment.status in ["QUEUED", "PREPARING", "REPLACING"]
@@ -206,9 +215,19 @@ async def cancel_deployment(deployment: Deployment, by_api_key: ApiKey) -> None:
         await commandoutputs.store_output(output_source, "Cancelled\n")
         await commandoutputs.terminate(output_source)
         await set_deployment_status(deployment, "CANCELLED")
+        return False
     elif deployment.status in ["PREPARING", "REPLACING"]:
+        from disco.utils.asyncworker import TaskNotFoundError
+
         assert deployment.task_id is not None
-        async_worker.cancel_task(deployment.task_id)
+        try:
+            async_worker.cancel_task(deployment.task_id)
+            return False
+        except TaskNotFoundError:
+            await commandoutputs.store_output(output_source, "Cancelled\n")
+            await commandoutputs.terminate(output_source)
+            await set_deployment_status(deployment, "CANCELLED")
+            return True
     else:
         raise NotImplementedError(f"Status {deployment.status}")
 

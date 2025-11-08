@@ -106,6 +106,7 @@ async def enqueue_deployment(deployment_id: str) -> None:
     Because it creates an SQL transaction of its own.
 
     """
+    log.info("Enqueueing deployment %s", deployment_id)
 
     async def task() -> None:
         await process_deployment(deployment_id)
