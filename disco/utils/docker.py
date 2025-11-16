@@ -132,6 +132,10 @@ def start_service_sync(
     networks: list[tuple[str, str]],
     replicas: int,
     command: str | None,
+    cpu_limit: float | None = None,
+    memory_limit: str | None = None,
+    cpu_reservation: float | None = None,
+    memory_reservation: str | None = None,
 ) -> None:
     log.info("Starting Docker service %s", name)
     more_args = []
@@ -156,6 +160,18 @@ def start_service_sync(
     for network, alias in networks:
         more_args.append("--network")
         more_args.append(f"name={network},alias={alias}")
+    if cpu_limit is not None:
+        more_args.append("--limit-cpu")
+        more_args.append(str(cpu_limit))
+    if memory_limit is not None:
+        more_args.append("--limit-memory")
+        more_args.append(memory_limit)
+    if cpu_reservation is not None:
+        more_args.append("--reserve-cpu")
+        more_args.append(str(cpu_reservation))
+    if memory_reservation is not None:
+        more_args.append("--reserve-memory")
+        more_args.append(memory_reservation)
     args = [
         "docker",
         "service",
@@ -232,6 +248,10 @@ async def start_project_service(
     replicas: int,
     command: str | None,
     health_command: str | None,
+    cpu_limit: float | None = None,
+    memory_limit: str | None = None,
+    cpu_reservation: float | None = None,
+    memory_reservation: str | None = None,
 ) -> None:
     log.info("Starting Docker project service %s", name)
     more_args = []
@@ -261,6 +281,18 @@ async def start_project_service(
         more_args.append(health_command)
         more_args.append("--health-start-interval=3s")
         more_args.append("--health-start-period=300s")
+    if cpu_limit is not None:
+        more_args.append("--limit-cpu")
+        more_args.append(str(cpu_limit))
+    if memory_limit is not None:
+        more_args.append("--limit-memory")
+        more_args.append(memory_limit)
+    if cpu_reservation is not None:
+        more_args.append("--reserve-cpu")
+        more_args.append(str(cpu_reservation))
+    if memory_reservation is not None:
+        more_args.append("--reserve-memory")
+        more_args.append(memory_reservation)
     args = [
         "docker",
         "service",

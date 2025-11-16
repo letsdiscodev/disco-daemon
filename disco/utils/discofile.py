@@ -33,6 +33,13 @@ class Health(BaseModel):
     command: str
 
 
+class Resources(BaseModel):
+    cpu_limit: float | None = Field(None, alias="cpuLimit")
+    memory_limit: str | None = Field(None, alias="memoryLimit")
+    cpu_reservation: float | None = Field(None, alias="cpuReservation")
+    memory_reservation: str | None = Field(None, alias="memoryReservation")
+
+
 class Service(BaseModel):
     type: ServiceType = ServiceType.container
     public_path: str | None = Field(
@@ -55,6 +62,7 @@ class Service(BaseModel):
     )
     timeout: int = 300  # commands, static site generation, crons
     health: Health | None = None
+    resources: Resources | None = None
 
 
 class DiscoFile(BaseModel):

@@ -797,6 +797,18 @@ async def start_services(
                     health_command=service.health.command
                     if service.health is not None
                     else None,
+                    cpu_limit=service.resources.cpu_limit
+                    if service.resources is not None
+                    else None,
+                    memory_limit=service.resources.memory_limit
+                    if service.resources is not None
+                    else None,
+                    cpu_reservation=service.resources.cpu_reservation
+                    if service.resources is not None
+                    else None,
+                    memory_reservation=service.resources.memory_reservation
+                    if service.resources is not None
+                    else None,
                 )
         except Exception:
             await log_output(f"Failed to start service {internal_service_name}\n")
