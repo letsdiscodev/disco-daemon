@@ -797,6 +797,13 @@ async def start_services(
                     health_command=service.health.command
                     if service.health is not None
                     else None,
+                    extra_params=[
+                        param.strip()
+                        for param in service.extra_swarm_params.split(" ")
+                        if len(param.strip()) > 0
+                    ]
+                    if service.extra_swarm_params is not None
+                    else [],
                 )
         except Exception:
             await log_output(f"Failed to start service {internal_service_name}\n")

@@ -55,6 +55,10 @@ class Service(BaseModel):
     )
     timeout: int = 300  # commands, static site generation, crons
     health: Health | None = None
+    extra_swarm_params: str | None = Field(
+        None,
+        alias="extraSwarmParams",
+    )
 
 
 class DiscoFile(BaseModel):

@@ -232,6 +232,7 @@ async def start_project_service(
     replicas: int,
     command: str | None,
     health_command: str | None,
+    extra_params: list[str],
 ) -> None:
     log.info("Starting Docker project service %s", name)
     more_args = []
@@ -261,6 +262,7 @@ async def start_project_service(
         more_args.append(health_command)
         more_args.append("--health-start-interval=3s")
         more_args.append("--health-start-period=300s")
+    more_args.extend(extra_params)
     args = [
         "docker",
         "service",
