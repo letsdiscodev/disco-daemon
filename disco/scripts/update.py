@@ -139,6 +139,15 @@ def alembic_upgrade(version_hash: str) -> None:
     command.upgrade(config, version_hash)
 
 
+def task_0_26_x(image: str) -> None:
+    print("Updating from 0.26.x to 0.27.0")
+    alembic_upgrade("b0b4edb3672a")
+    with Session.begin() as dbsession:
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.27.0"
+        )
+
+
 def task_0_25_x(image: str) -> None:
     from disco.scripts.init import start_caddy
     from disco.utils import docker
@@ -846,6 +855,8 @@ def get_update_function_for_version(version: str) -> Callable[[str], None]:
     if version.startswith("0.25."):
         return task_0_25_x
     if version.startswith("0.26."):
-        assert disco.__version__.startswith("0.26.")
+        return task_0_26_x
+    if version.startswith("0.27."):
+        assert disco.__version__.startswith("0.27.")
         return task_patch
     raise NotImplementedError(f"Update missing for version {version}")
