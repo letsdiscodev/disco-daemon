@@ -27,6 +27,10 @@ from disco.endpoints import (
 )
 from disco.middleware import middleware
 from disco.utils.asyncworker import async_worker
+from disco.utils.deployments import (
+    cleanup_deployments_on_disco_boot,
+    enqueue_deployments_on_disco_boot,
+)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -40,6 +44,8 @@ async def lifespan(app: FastAPI):
     loop = asyncio.get_running_loop()
     async_worker.set_loop(loop)
     worker_task = loop.create_task(async_worker.work())
+    await cleanup_deployments_on_disco_boot()
+    await enqueue_deployments_on_disco_boot()
     yield
     async_worker.stop()
     await worker_task

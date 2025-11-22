@@ -12,6 +12,7 @@ from disco.models import (
     DeploymentEnvironmentVariable,
     Project,
 )
+from disco.models.db import AsyncSession
 from disco.utils import commandoutputs, events, keyvalues
 from disco.utils.discofile import DiscoFile
 
@@ -198,7 +199,8 @@ async def cancel_deployment(deployment: Deployment, by_api_key: ApiKey) -> bool:
     """
     from disco.utils.asyncworker import async_worker
 
-    assert deployment.status in ["QUEUED", "PREPARING", "REPLACING"]
+    assert deployment.status in ["QUEUED", "PREPARING", "REPLACING", "CANCELLING"]
+
     log.info(
         "Cancelling deployment %s (had status %s) by %s",
         deployment.id,
@@ -216,7 +218,7 @@ async def cancel_deployment(deployment: Deployment, by_api_key: ApiKey) -> bool:
         await commandoutputs.terminate(output_source)
         await set_deployment_status(deployment, "CANCELLED")
         return False
-    elif deployment.status in ["PREPARING", "REPLACING"]:
+    elif deployment.status in ["PREPARING", "REPLACING", "CANCELLING"]:
         from disco.utils.asyncworker import TaskNotFoundError
 
         assert deployment.task_id is not None
@@ -230,6 +232,33 @@ async def cancel_deployment(deployment: Deployment, by_api_key: ApiKey) -> bool:
             return True
     else:
         raise NotImplementedError(f"Status {deployment.status}")
+
+
+async def cleanup_deployments_on_disco_boot() -> None:
+    async with AsyncSession.begin() as dbsession:
+        stmt = select(Deployment).where(
+            Deployment.status.in_(["PREPARING", "REPLACING", "CANCELLING"])
+        )
+        result = await dbsession.execute(stmt)
+        deployments = result.scalars().all()
+        for deployment in deployments:
+            output_source = commandoutputs.deployment_source(deployment.id)
+            await commandoutputs.store_output(
+                output_source, "Marked as failed on Disco start\n"
+            )
+            await commandoutputs.terminate(output_source)
+            await set_deployment_status(deployment, "FAILED")
+
+
+async def enqueue_deployments_on_disco_boot() -> None:
+    from disco.utils.deploymentflow import process_deployment_if_any
+    from disco.utils.projects import get_all_projects
+
+    async with AsyncSession.begin() as dbsession:
+        projects = await get_all_projects(dbsession)
+        project_ids = [project.id for project in projects]
+    for project_id in project_ids:
+        await process_deployment_if_any(project_id)
 
 
 def set_deployment_disco_file(deployment: Deployment, disco_file: str) -> None:
