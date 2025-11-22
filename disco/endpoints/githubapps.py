@@ -70,6 +70,12 @@ def get_pending_app_id_from_url_with_state(
 
 class NewGithubAppRequestBody(BaseModel):
     organization: str | None = Field(None, pattern=r"^\S+$", max_length=255)
+    setup_url: str | None = Field(
+        None,
+        alias="setupUrl",
+        pattern=r"^https://dashboard.disco.cloud/\S+$",
+        max_length=1000,
+    )
 
 
 @router.post("/api/github-apps/create", status_code=201)
@@ -79,7 +85,10 @@ def github_app_prune_post(
     req_body: NewGithubAppRequestBody,
 ):
     pending_app = create_pending_github_app(
-        dbsession=dbsession, organization=req_body.organization, by_api_key=api_key
+        dbsession=dbsession,
+        organization=req_body.organization,
+        setup_url=req_body.setup_url,
+        by_api_key=api_key,
     )
     disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
     assert disco_host is not None
@@ -138,6 +147,9 @@ def github_app_create_get(
         },
         "default_events": ["push"],
     }
+    if pending_app.setup_url is not None:
+        manifest["setup_url"] = pending_app.setup_url
+        manifest["setup_on_update"] = False
     return CREATE_APP_HTML.format(
         github_url=github_url, manifest_data=escape(json.dumps(manifest))
     )

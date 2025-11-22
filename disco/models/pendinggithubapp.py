@@ -29,6 +29,7 @@ class PendingGithubApp(Base):
         nullable=False,
     )
     state: Mapped[str] = mapped_column(String(32), nullable=False)
+    setup_url: Mapped[str] = mapped_column(Unicode(1000), nullable=True)
     organization: Mapped[str] = mapped_column(Unicode(250), nullable=True)
 
     def log(self):

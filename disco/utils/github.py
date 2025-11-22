@@ -301,13 +301,17 @@ def generate_jwt_token(app_id: int, pem: str) -> str:
 
 
 def create_pending_github_app(
-    dbsession: DBSession, organization: str | None, by_api_key: ApiKey
+    dbsession: DBSession,
+    organization: str | None,
+    setup_url: str | None,
+    by_api_key: ApiKey,
 ) -> PendingGithubApp:
     pending_app = PendingGithubApp(
         id=uuid.uuid4().hex,
         state=token_hex(16),
         expires=datetime.now(timezone.utc) + timedelta(minutes=30),
         organization=organization,
+        setup_url=setup_url,
     )
     dbsession.add(pending_app)
     log.info("%s created pending Github app %s", by_api_key.log(), pending_app.log())
