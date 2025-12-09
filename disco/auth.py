@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
 from disco.endpoints.dependencies import get_db, get_db_sync
+from disco.models import ApiKey
 from disco.models.db import AsyncSession
 from disco.utils import keyvalues
 from disco.utils.apikeys import (
@@ -166,3 +167,54 @@ async def get_api_key_wo_tx(
         await record_api_key_usage(dbsession, api_key)
 
     yield api_key_id
+
+
+async def validate_token(token: str) -> ApiKey | None:
+    """
+    Validate a token (either raw API key ID or JWT).
+    Returns ApiKey if valid, None otherwise.
+    """
+    async with AsyncSession.begin() as dbsession:
+        # First, try as raw API key ID (like Basic auth does)
+        api_key = await get_valid_api_key_by_id(dbsession, token)
+        if api_key is not None:
+            await record_api_key_usage(dbsession, api_key)
+            return api_key
+
+        # Then try as JWT
+        try:
+            headers = jwt.get_unverified_header(token)
+        except jwt.PyJWTError:
+            return None
+
+        public_key = headers.get("kid")
+        if not public_key:
+            return None
+
+        api_key_for_public_key = await get_api_key_by_public_key(
+            dbsession, public_key
+        )
+        if api_key_for_public_key is None:
+            return None
+
+        disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
+        try:
+            jwt.decode(
+                token,
+                api_key_for_public_key.id,
+                algorithms=["HS256"],
+                audience=disco_host,
+                options=dict(
+                    verify_signature=True,
+                    verify_exp=True,
+                ),
+            )
+        except jwt.PyJWTError:
+            return None
+
+        api_key = await get_valid_api_key_by_id(dbsession, api_key_for_public_key.id)
+        if api_key is not None:
+            await record_api_key_usage(dbsession, api_key)
+        return api_key
+
+
