@@ -67,6 +67,7 @@ async def project_shell(
 
     token = msg.get("token")
     requested_service = msg.get("service")  # Optional
+    requested_command = msg.get("command")  # Optional - for one-shot command execution
 
     if not token:
         await websocket.close(code=4001, reason="Unauthorized")
@@ -189,7 +190,12 @@ async def project_shell(
             ]
 
         # Use /bin/sh which exists on all Linux systems (bash on Debian, ash on Alpine)
-        docker_args += [image, "/bin/sh"]
+        if requested_command:
+            # One-shot command mode: run command via sh -c
+            docker_args += [image, "/bin/sh", "-c", requested_command]
+        else:
+            # Interactive shell mode
+            docker_args += [image, "/bin/sh"]
 
         # Start container with PTY
         proc = await asyncio.create_subprocess_exec(
@@ -215,7 +221,14 @@ async def project_shell(
         await websocket.send_json({"type": "connected", "container": container_name})
 
         # ===== STEP 4: Bridge PTY <-> WebSocket =====
-        await bridge_pty_websocket(websocket, master_fd, proc)
+        await bridge_pty_websocket(websocket, master_fd, proc, is_command_mode=bool(requested_command))
+
+        # Send exit message with exit code (useful for command mode)
+        exit_code = proc.returncode if proc.returncode is not None else 0
+        try:
+            await websocket.send_json({"type": "exit", "code": exit_code})
+        except Exception:
+            pass
 
         # Shell exited - close the WebSocket
         try:
@@ -259,6 +272,7 @@ async def bridge_pty_websocket(
     websocket: WebSocket,
     master_fd: int,
     proc: asyncio.subprocess.Process,
+    is_command_mode: bool = False,
 ):
     """Bridge between PTY file descriptor and WebSocket."""
     exit_event = asyncio.Event()
