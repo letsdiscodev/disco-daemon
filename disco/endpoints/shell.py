@@ -144,6 +144,7 @@ async def project_shell(
         docker_args = ["docker", "run"]
         docker_args += ["--name", container_name]
         docker_args += ["--rm"]  # Auto-remove on exit
+        docker_args += ["--restart=no"]  # Explicitly prevent restart
         docker_args += ["--label", f"disco.project.name={project_name}"]
         docker_args += ["--interactive", "--tty"]
         # Disable logging to prevent terminal output (escape codes, etc.) from polluting logs
