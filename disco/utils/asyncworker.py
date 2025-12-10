@@ -48,11 +48,13 @@ async def cron_minute() -> None:
 
 async def cron_hour() -> None:
     from disco.utils.commandoutputs import clean_up_db_connections
+    from disco.utils.shells import clean_up_orphan_shells
     from disco.utils.tunnels import clean_up_rogue_tunnels
 
     log.info("Disco hour cron")
     await clean_up_db_connections()
     await clean_up_rogue_tunnels()
+    await clean_up_orphan_shells()
 
 
 async def cron_day() -> None:
@@ -275,7 +277,12 @@ class AsyncWorker:
         self._stopped = True
 
     async def work(self) -> None:
+        from disco.utils.shells import clean_up_orphan_shells
+
         log.info("Starting AsyncWorker")
+        # Clean up any orphaned shell containers from previous runs
+        # remove_all=True because any existing shell container is by definition orphaned
+        await clean_up_orphan_shells(remove_all=True)
         self._disco_crons = self._load_disco_crons()
         self._project_crons = await self._load_project_crons()
         tasks: set[asyncio.Task] = set()

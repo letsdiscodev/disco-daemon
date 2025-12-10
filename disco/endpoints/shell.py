@@ -6,7 +6,9 @@ import os
 import pty
 import struct
 import termios
+import time
 import uuid
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -27,6 +29,13 @@ from disco.utils.projects import get_project_by_name_sync, volume_name_for_proje
 log = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Configuration for shell containers
+SHELL_MAX_LIFETIME_SECONDS = 24 * 60 * 60  # 24 hours hard limit
+SHELL_CPU_LIMIT = "0.5"  # 50% of one CPU
+SHELL_MEMORY_LIMIT = "512m"  # 512 MB
+SHELL_STOP_TIMEOUT = 5  # seconds
+SHELL_HEARTBEAT_INTERVAL = 30  # seconds between ping messages
 
 
 @router.websocket("/api/projects/{project_name}/shell")
@@ -126,7 +135,13 @@ async def project_shell(
             for v in disco_file.services[service].volumes
         ]
 
-        container_name = f"{project.name}-shell.{uuid.uuid4().hex[:8]}"
+        # Generate session ID and container name
+        session_id = uuid.uuid4().hex
+        container_name = f"{project.name}-shell.{session_id[:8]}"
+        created_at = int(time.time())
+        expires_at = int(
+            (datetime.utcnow() + timedelta(seconds=SHELL_MAX_LIFETIME_SECONDS)).timestamp()
+        )
 
     # ===== STEP 3: Run container with PTY =====
     master_fd = None
@@ -145,7 +160,20 @@ async def project_shell(
         docker_args += ["--name", container_name]
         docker_args += ["--rm"]  # Auto-remove on exit
         docker_args += ["--restart=no"]  # Explicitly prevent restart
+
+        # Labels for identification and cleanup
         docker_args += ["--label", f"disco.project.name={project_name}"]
+        docker_args += ["--label", "disco.shell=true"]  # Easy filter
+        docker_args += ["--label", f"disco.shell.created={created_at}"]
+        docker_args += ["--label", f"disco.shell.expires_at={expires_at}"]
+
+        # Resource limits - contain damage from orphans
+        docker_args += ["--cpus", SHELL_CPU_LIMIT]
+        docker_args += ["--memory", SHELL_MEMORY_LIMIT]
+
+        # Short stop timeout so cleanup doesn't hang
+        docker_args += ["--stop-timeout", str(SHELL_STOP_TIMEOUT)]
+
         docker_args += ["--interactive", "--tty"]
         # Disable logging to prevent terminal output (escape codes, etc.) from polluting logs
         docker_args += ["--log-driver", "none"]
@@ -160,7 +188,8 @@ async def project_shell(
                 f"type={volume_type},source={source},destination={destination}",
             ]
 
-        docker_args += [image, "/bin/bash"]
+        # Use /bin/sh which exists on all Linux systems (bash on Debian, ash on Alpine)
+        docker_args += [image, "/bin/sh"]
 
         # Start container with PTY
         proc = await asyncio.create_subprocess_exec(
@@ -240,17 +269,37 @@ async def bridge_pty_websocket(
         exit_event.set()
 
     async def pty_to_websocket():
-        """Read from PTY, send to WebSocket."""
-        while not exit_event.is_set():
-            await asyncio.sleep(0.01)
-            try:
-                data = os.read(master_fd, 4096)
-                if data:
-                    await websocket.send_bytes(data)
-            except BlockingIOError:
-                continue
-            except OSError:
-                break
+        """Read from PTY, send to WebSocket using event-driven I/O."""
+        loop = asyncio.get_running_loop()
+        data_ready = asyncio.Event()
+
+        def on_readable():
+            data_ready.set()
+
+        loop.add_reader(master_fd, on_readable)
+        try:
+            while not exit_event.is_set():
+                # Wait for data or timeout to check exit_event
+                try:
+                    await asyncio.wait_for(data_ready.wait(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    continue
+
+                data_ready.clear()
+
+                # Read and send all available data
+                try:
+                    while True:
+                        data = os.read(master_fd, 4096)
+                        if not data:
+                            break
+                        await websocket.send_bytes(data)
+                except BlockingIOError:
+                    pass  # No more data available
+                except OSError:
+                    break
+        finally:
+            loop.remove_reader(master_fd)
 
     async def websocket_to_pty():
         """Read from WebSocket, write to PTY."""
@@ -273,12 +322,25 @@ async def bridge_pty_websocket(
                         if ctrl.get("type") == "resize":
                             log.info("Resize request: rows=%s, cols=%s", ctrl["rows"], ctrl["cols"])
                             set_pty_size(master_fd, ctrl["rows"], ctrl["cols"])
+                        elif ctrl.get("type") == "pong":
+                            log.info("Received pong from client")
+                        # Ignore other control messages
                     except json.JSONDecodeError:
                         os.write(master_fd, message["text"].encode())
 
             except asyncio.TimeoutError:
                 continue
             except WebSocketDisconnect:
+                break
+
+    async def heartbeat():
+        """Send periodic ping to keep connection alive and detect dead clients."""
+        while not exit_event.is_set():
+            try:
+                await asyncio.sleep(SHELL_HEARTBEAT_INTERVAL)
+                if not exit_event.is_set():
+                    await websocket.send_json({"type": "ping"})
+            except Exception:
                 break
 
     # Start process watcher
@@ -288,6 +350,7 @@ async def bridge_pty_websocket(
         [
             asyncio.create_task(pty_to_websocket()),
             asyncio.create_task(websocket_to_pty()),
+            asyncio.create_task(heartbeat()),
             watch_task,
         ],
         return_when=asyncio.FIRST_COMPLETED,
