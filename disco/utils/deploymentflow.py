@@ -658,11 +658,16 @@ async def build_images(
             image_name=service_name,
         )
         images.append(internal_image_name)
-        dockerfile_str = docker.easy_mode_dockerfile(service)
+        dockerfile_path = dict(new_deployment_info.env_variables).get("DOCKERFILE_PATH")
+        if dockerfile_path is None:
+            dockerfile_str = docker.easy_mode_dockerfile(service)
+        else:
+            dockerfile_str = None
         await docker.build_image(
             image=internal_image_name,
             project_name=new_deployment_info.project_name,
             dockerfile_str=dockerfile_str,
+            dockerfile_path=dockerfile_path,
             context=".",
             env_variables=env_variables,
             stdout=log_output,
@@ -677,10 +682,13 @@ async def build_images(
             image_name=image_name,
         )
         images.append(internal_image_name)
+        dockerfile_path = dict(new_deployment_info.env_variables).get(
+            "DOCKERFILE_PATH", image.dockerfile
+        )
         await docker.build_image(
             image=internal_image_name,
             project_name=new_deployment_info.project_name,
-            dockerfile_path=image.dockerfile,
+            dockerfile_path=dockerfile_path,
             context=image.context,
             env_variables=env_variables,
             stdout=log_output,
