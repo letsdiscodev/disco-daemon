@@ -21,7 +21,6 @@ from disco.endpoints import (
     projects,
     run,
     scale,
-    shell,
     syslog,
     tunnels,
     volumes,
@@ -59,7 +58,6 @@ app.include_router(projects.router)
 app.include_router(volumes.router)
 app.include_router(deployments.router)
 app.include_router(run.router)
-app.include_router(shell.router)
 app.include_router(envvariables.router)
 app.include_router(projectdomains.router)
 app.include_router(projectkeyvalues.router)
