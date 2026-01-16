@@ -28,6 +28,8 @@ echo "----------------------------------------------------"
 echo ""
 echo "INFO: Phase 1: Synchronizing source code to remote server..."
 rsync -avz --delete \
+  --filter=':- .gitignore' \
+  --filter=':- .dockerignore' \
   --exclude '.git/' \
   --exclude '.venv/' \
   --exclude '__pycache__/' \
