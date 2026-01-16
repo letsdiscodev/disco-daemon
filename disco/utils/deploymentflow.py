@@ -4,7 +4,6 @@ import asyncio
 import logging
 import os
 import random
-import socket
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -880,7 +879,6 @@ async def serve_new_deployment(
             await wait_for_dns_and_port(
                 service_name=internal_service_name,
                 port=port,
-                log_output=log_output,
                 timeout=300,
             )
         except TimeoutError:
@@ -1043,36 +1041,31 @@ async def prepare_generator_site(
 async def wait_for_dns_and_port(
     service_name: str,
     port: int,
-    log_output: Callable[[str], Awaitable[None]],
     timeout: int,
 ):
+    """Check that the service is reachable.
+
+    Connect to the service through the Caddy container.
+    There was a strange delay resolving DNS and connecting to the port,
+    causing a 502 error from Caddy for the first request.
+
+    By doing it through the Caddy container, it triggers the DNS
+    resolution and ensures that the service is reachable by Caddy.
+
+    """
     start_time = time.time()
-    output_since_nl = 0
-    while time.time() - start_time < timeout:
-        if output_since_nl >= 80:
-            await log_output("\n")
-            output_since_nl = 0
+    time_left = float(timeout)
+    while time_left > 0:
         try:
-            await asyncio.get_running_loop().run_in_executor(
-                None, lambda: socket.gethostbyname(service_name)
+            ready = await asyncio.wait_for(
+                docker.caddy_nc(service_name, port), time_left
             )
-            _, writer = await asyncio.wait_for(
-                asyncio.open_connection(service_name, port), timeout=3
-            )
-            writer.close()
-            await writer.wait_closed()
-            if output_since_nl > 0:
-                await log_output("\n")
+        except asyncio.TimeoutError:
+            ready = False
+        if ready:
             return
-        except socket.gaierror:
-            await log_output(".")
-            output_since_nl += 1
-        except (ConnectionRefusedError, asyncio.TimeoutError):
-            await log_output(".")
-            output_since_nl += 1
         await asyncio.sleep(2)
-    if output_since_nl > 0:
-        await log_output("\n")
+        time_left = (start_time + timeout) - time.time()
     raise TimeoutError(
         f"{service_name} not available on port {port} within {timeout} seconds."
     )

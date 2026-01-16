@@ -18,7 +18,7 @@ from disco.errors import ProcessStatusError
 from disco.utils.discofile import DiscoFile
 from disco.utils.discofile import Service as DiscoService
 from disco.utils.filesystem import project_path
-from disco.utils.subprocess import check_call, decode_text
+from disco.utils.subprocess import call, check_call, decode_text
 
 log = logging.getLogger(__name__)
 
@@ -1373,6 +1373,22 @@ async def builder_prune() -> None:
         "--force",  # do not prompt for confirmation
     ]
     await check_call(args)
+
+
+async def caddy_nc(service_name: str, port: int) -> bool:
+    """Run netcat in Caddy's container."""
+    log.info("Running nc in Caddy's container for %s:%d", service_name, port)
+    args = [
+        "docker",
+        "exec",
+        "disco-caddy",
+        "nc",
+        "-zv",
+        service_name,
+        str(port),
+    ]
+    _, _, process = await call(args)
+    return process.returncode == 0
 
 
 @dataclass
