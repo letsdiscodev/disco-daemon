@@ -10,7 +10,7 @@ async def clean_up_orphan_shells(remove_all: bool = False) -> int:
     Clean up orphaned shell containers.
 
     A shell container is considered orphaned if:
-    1. It has the disco.shell=true label
+    1. It has the disco.run=true label
     2. Either remove_all=True OR its expires_at timestamp has passed
 
     When remove_all=True (used on startup), ALL shell containers are removed
@@ -29,9 +29,9 @@ async def clean_up_orphan_shells(remove_all: bool = False) -> int:
         "ps",
         "-a",
         "--filter",
-        "label=disco.shell=true",
+        "label=disco.run=true",
         "--format",
-        '{{.ID}}\t{{.Names}}\t{{.Label "disco.shell.expires_at"}}\t{{.State}}',
+        '{{.ID}}\t{{.Names}}\t{{.Label "disco.run.expires"}}\t{{.State}}',
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )

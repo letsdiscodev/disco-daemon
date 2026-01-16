@@ -191,9 +191,7 @@ async def validate_token(token: str) -> ApiKey | None:
         if not public_key:
             return None
 
-        api_key_for_public_key = await get_api_key_by_public_key(
-            dbsession, public_key
-        )
+        api_key_for_public_key = await get_api_key_by_public_key(dbsession, public_key)
         if api_key_for_public_key is None:
             return None
 
@@ -216,5 +214,3 @@ async def validate_token(token: str) -> ApiKey | None:
         if api_key is not None:
             await record_api_key_usage(dbsession, api_key)
         return api_key
-
-

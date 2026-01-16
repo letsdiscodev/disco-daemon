@@ -1,10 +1,26 @@
 import asyncio
+import fcntl
 import json
 import logging
-from datetime import datetime
-from typing import Annotated
+import os
+import pty
+import shlex
+import struct
+import termios
+import time
+import uuid
+from datetime import datetime, timedelta, timezone
+from typing import Annotated, Sequence
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Header,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_core import InitErrorDetails, PydanticCustomError
@@ -12,61 +28,34 @@ from sqlalchemy.orm.session import Session as DBSession
 from sse_starlette import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
-from disco.auth import get_api_key_sync, get_api_key_wo_tx
+from disco.auth import get_api_key_sync, get_api_key_wo_tx, validate_token
 from disco.endpoints.dependencies import get_db_sync, get_project_from_url_sync
 from disco.models import ApiKey, Project
-from disco.models.db import Session
-from disco.utils import commandoutputs
+from disco.models.db import AsyncSession, Session
+from disco.models.deploymentenvironmentvariable import DeploymentEnvironmentVariable
+from disco.utils import commandoutputs, keyvalues
 from disco.utils.commandruns import create_command_run, get_command_run_by_number
-from disco.utils.deployments import get_live_deployment_sync
-from disco.utils.discofile import DiscoFile, ServiceType, get_disco_file_from_str
-from disco.utils.projects import get_project_by_name_sync
-
-
-
-
-
-
-import asyncio
-import fcntl
-import json
-import logging
-import os
-import pty
-import struct
-import termios
-import time
-import uuid
-from datetime import datetime, timedelta
-
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-
-from disco.auth import validate_token
-from disco.models.db import Session
-from disco.utils import keyvalues
-from disco.utils.deployments import get_live_deployment_sync
+from disco.utils.deployments import get_live_deployment, get_live_deployment_sync
 from disco.utils.discofile import DiscoFile, ServiceType, get_disco_file_from_str
 from disco.utils.docker import (
-    add_network_to_container,
     deployment_network_name,
     get_image_name_for_service,
     remove_container,
 )
 from disco.utils.encryption import decrypt
-from disco.utils.projects import get_project_by_name_sync, volume_name_for_project
-
+from disco.utils.projects import (
+    get_project_by_name,
+    get_project_by_name_sync,
+    volume_name_for_project,
+)
 
 log = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-# Configuration for shell containers
-SHELL_MAX_LIFETIME_SECONDS = 24 * 60 * 60  # 24 hours hard limit
-SHELL_CPU_LIMIT = "0.5"  # 50% of one CPU
-SHELL_MEMORY_LIMIT = "512m"  # 512 MB
-SHELL_STOP_TIMEOUT = 5  # seconds
-SHELL_HEARTBEAT_INTERVAL = 30  # seconds between ping messages
+MAX_LIFETIME_SECONDS = 24 * 60 * 60
+HEARTBEAT_INTERVAL_SECONDS = 30
 
 
 @router.websocket("/api/projects/{project_name}/run")
@@ -100,7 +89,7 @@ async def run_ws(
 
     token = msg.get("token")
     requested_service = msg.get("service")  # Optional
-    requested_command = msg.get("command")
+    command = msg.get("command")
 
     if not token:
         await websocket.close(code=4001, reason="Unauthorized")
@@ -111,18 +100,18 @@ async def run_ws(
         await websocket.close(code=4001, reason="Unauthorized")
         return
 
-    if not requested_command:
+    if not command:
         await websocket.close(code=4023, reason="Command required")
         return
 
     # ===== STEP 2: Get project and deployment info =====
-    with Session.begin() as dbsession:
-        project = get_project_by_name_sync(dbsession, project_name)
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
         if project is None:
             await websocket.close(code=4004, reason="Project not found")
             return
 
-        deployment = get_live_deployment_sync(dbsession, project)
+        deployment = await get_live_deployment(dbsession, project)
         if deployment is None:
             await websocket.close(code=4022, reason="No live deployment")
             return
@@ -132,20 +121,24 @@ async def run_ws(
         # Determine which service to use
         if requested_service:
             if requested_service not in disco_file.services:
-                await websocket.close(code=4022, reason=f"Service '{requested_service}' not found")
+                await websocket.close(
+                    code=4022, reason=f"Service '{requested_service}' not found"
+                )
                 return
             if disco_file.services[requested_service].type == ServiceType.static:
-                await websocket.close(code=4022, reason=f"Service '{requested_service}' is static")
+                await websocket.close(
+                    code=4022, reason=f"Service '{requested_service}' is static"
+                )
                 return
             service = requested_service
         else:
-            service = resolve_service_for_shell(disco_file)
+            service = get_default_service_for_run(disco_file)
             if service is None:
-                await websocket.close(code=4022, reason="No service can run shell")
+                await websocket.close(code=4022, reason="No service can run commands")
                 return
 
         # Gather container config
-        registry_host = keyvalues.get_value_sync(dbsession, "REGISTRY_HOST")
+        registry_host = await keyvalues.get_value(dbsession, "REGISTRY_HOST")
         image = get_image_name_for_service(
             disco_file=disco_file,
             service_name=service,
@@ -154,14 +147,18 @@ async def run_ws(
             deployment_number=deployment.number,
         )
 
+        deployment_env_variables: Sequence[
+            DeploymentEnvironmentVariable
+        ] = await deployment.awaitable_attrs.env_variables
+        
         env_variables = [
             (env_var.name, decrypt(env_var.value))
-            for env_var in deployment.env_variables
+            for env_var in deployment_env_variables
         ]
         env_variables += [
             ("DISCO_PROJECT_NAME", project.name),
             ("DISCO_SERVICE_NAME", service),
-            ("DISCO_HOST", keyvalues.get_value_str_sync(dbsession, "DISCO_HOST")),
+            ("DISCO_HOST", await keyvalues.get_value_str(dbsession, "DISCO_HOST")),
             ("DISCO_DEPLOYMENT_NUMBER", str(deployment.number)),
         ]
         if deployment.commit_hash is not None:
@@ -175,10 +172,12 @@ async def run_ws(
 
         # Generate session ID and container name
         session_id = uuid.uuid4().hex
-        container_name = f"{project.name}-shell.{session_id[:8]}"
-        created_at = int(time.time())
-        expires_at = int(
-            (datetime.utcnow() + timedelta(seconds=SHELL_MAX_LIFETIME_SECONDS)).timestamp()
+        container_name = f"{project.name}-run.{session_id[:8]}"
+        created = int(time.time())
+        expires = int(
+            (
+                datetime.now(timezone.utc) + timedelta(seconds=MAX_LIFETIME_SECONDS)
+            ).timestamp()
         )
 
     # ===== STEP 3: Run container with PTY =====
@@ -194,49 +193,36 @@ async def run_ws(
         set_pty_size(master_fd, 24, 80)
 
         # Build docker run args - use --rm so container auto-removes on exit
-        docker_args = ["docker", "run"]
-        docker_args += ["--name", container_name]
-        docker_args += ["--rm"]  # Auto-remove on exit
-        docker_args += ["--restart=no"]  # Explicitly prevent restart
+        args = ["docker", "run"]
+        args += ["--name", container_name]
+        args += ["--rm"]  # Auto-remove on exit
+        args += ["--restart=no"]  # Explicitly prevent restart
 
         # Labels for identification and cleanup
-        docker_args += ["--label", f"disco.project.name={project_name}"]
-        docker_args += ["--label", "disco.shell=true"]  # Easy filter
-        docker_args += ["--label", f"disco.shell.created={created_at}"]
-        docker_args += ["--label", f"disco.shell.expires_at={expires_at}"]
+        args += ["--label", f"disco.project.name={project_name}"]
+        args += ["--label", "disco.run=true"]  # Easy filter
+        args += ["--label", f"disco.run.created={created}"]
+        args += ["--label", f"disco.run.expires={expires}"]
 
-        # Resource limits - contain damage from orphans
-        docker_args += ["--cpus", SHELL_CPU_LIMIT]
-        docker_args += ["--memory", SHELL_MEMORY_LIMIT]
-
-        # Short stop timeout so cleanup doesn't hang
-        docker_args += ["--stop-timeout", str(SHELL_STOP_TIMEOUT)]
-
-        docker_args += ["--interactive", "--tty"]
-        # Disable logging to prevent terminal output (escape codes, etc.) from polluting logs
-        docker_args += ["--log-driver", "none"]
-        docker_args += ["--network", network]
+        args += ["--interactive", "--tty"]
+        args += ["--log-driver", "none"]  # do not include output in logs
+        args += ["--network", network]
+        args += ["--network", "disco-main"]
 
         for var_name, var_value in env_variables:
-            docker_args += ["--env", f"{var_name}={var_value}"]
+            args += ["--env", f"{var_name}={var_value}"]
 
         for volume_type, source, destination in volumes:
-            docker_args += [
+            args += [
                 "--mount",
                 f"type={volume_type},source={source},destination={destination}",
             ]
 
-        # Use /bin/sh which exists on all Linux systems (bash on Debian, ash on Alpine)
-        if requested_command:
-            # One-shot command mode: run command via sh -c
-            docker_args += [image, "/bin/sh", "-c", requested_command]
-        else:
-            # Interactive shell mode
-            docker_args += [image, "/bin/sh"]
+        args += [image]
+        args += shlex.split(command)
 
-        # Start container with PTY
         proc = await asyncio.create_subprocess_exec(
-            *docker_args,
+            *args,
             stdin=slave_fd,
             stdout=slave_fd,
             stderr=slave_fd,
@@ -248,20 +234,13 @@ async def run_ws(
         flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
         fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
-        # Also add to disco-main network for access to other services
-        try:
-            await add_network_to_container(container=container_name, network="disco-main")
-        except Exception as e:
-            log.warning("Failed to add disco-main network: %s", e)
-
-        # Notify client we're connected
         await websocket.send_json({"type": "connected", "container": container_name})
 
         # ===== STEP 4: Bridge PTY <-> WebSocket =====
         await bridge_pty_websocket(websocket, master_fd, proc)
 
         # Send exit message with exit code (useful for command mode)
-        exit_code = proc.returncode if proc.returncode is not None else 0
+        exit_code = proc.returncode if proc.returncode is not None else 1
         try:
             await websocket.send_json({"type": "exit", "code": exit_code})
         except Exception:
@@ -298,11 +277,10 @@ async def run_ws(
                 await asyncio.wait_for(proc.wait(), timeout=5.0)
             except Exception:
                 proc.kill()
-        # Container should auto-remove due to --rm, but try cleanup just in case
         try:
             await remove_container(container_name)
         except Exception:
-            pass  # Container likely already removed by --rm
+            pass
 
 
 async def bridge_pty_websocket(
@@ -356,10 +334,7 @@ async def bridge_pty_websocket(
         while not exit_event.is_set():
             try:
                 # Use wait_for to allow checking exit_event periodically
-                message = await asyncio.wait_for(
-                    websocket.receive(),
-                    timeout=0.5
-                )
+                message = await asyncio.wait_for(websocket.receive(), timeout=0.5)
 
                 if message["type"] == "websocket.disconnect":
                     break
@@ -370,7 +345,11 @@ async def bridge_pty_websocket(
                     try:
                         ctrl = json.loads(message["text"])
                         if ctrl.get("type") == "resize":
-                            log.info("Resize request: rows=%s, cols=%s", ctrl["rows"], ctrl["cols"])
+                            log.info(
+                                "Resize request: rows=%s, cols=%s",
+                                ctrl["rows"],
+                                ctrl["cols"],
+                            )
                             set_pty_size(master_fd, ctrl["rows"], ctrl["cols"])
                         elif ctrl.get("type") == "pong":
                             log.info("Received pong from client")
@@ -387,7 +366,7 @@ async def bridge_pty_websocket(
         """Send periodic ping to keep connection alive and detect dead clients."""
         while not exit_event.is_set():
             try:
-                await asyncio.sleep(SHELL_HEARTBEAT_INTERVAL)
+                await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
                 if not exit_event.is_set():
                     await websocket.send_json({"type": "ping"})
             except Exception:
@@ -396,7 +375,7 @@ async def bridge_pty_websocket(
     # Start process watcher
     watch_task = asyncio.create_task(watch_process())
 
-    done, pending = await asyncio.wait(
+    _, pending = await asyncio.wait(
         [
             asyncio.create_task(pty_to_websocket()),
             asyncio.create_task(websocket_to_pty()),
@@ -422,7 +401,7 @@ def set_pty_size(fd: int, rows: int, cols: int):
     fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
 
 
-def resolve_service_for_shell(disco_file: DiscoFile) -> str | None:
+def get_default_service_for_run(disco_file: DiscoFile) -> str | None:
     """
     Determine which service to run shell in.
     Same logic as run.py - prefers 'web' service, falls back to first non-static.
@@ -441,11 +420,6 @@ def resolve_service_for_shell(disco_file: DiscoFile) -> str | None:
             return name
 
     return None
-
-
-
-
-
 
 
 class RunReqBody(BaseModel):
