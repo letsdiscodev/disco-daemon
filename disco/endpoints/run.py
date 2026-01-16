@@ -92,13 +92,15 @@ async def run_ws(
     # Expects: {"token": "...", "service": "optional-service-name"}
     try:
         msg = await asyncio.wait_for(websocket.receive_json(), timeout=10.0)
-    except (asyncio.TimeoutError, Exception):
+        if not isinstance(msg, dict):
+            raise ValueError("JSON object expected")
+    except Exception:
         await websocket.close(code=4001, reason="Unauthorized")
         return
 
     token = msg.get("token")
     requested_service = msg.get("service")  # Optional
-    requested_command = msg.get("command")  # Optional - for one-shot command execution
+    requested_command = msg.get("command")
 
     if not token:
         await websocket.close(code=4001, reason="Unauthorized")
@@ -107,6 +109,10 @@ async def run_ws(
     api_key = await validate_token(token)
     if api_key is None:
         await websocket.close(code=4001, reason="Unauthorized")
+        return
+
+    if not requested_command:
+        await websocket.close(code=4023, reason="Command required")
         return
 
     # ===== STEP 2: Get project and deployment info =====
