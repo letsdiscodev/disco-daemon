@@ -208,6 +208,7 @@ async def run_ws(
         args += ["--log-driver", "none"]  # do not include output in logs
         args += ["--network", network]
         args += ["--network", "disco-main"]
+        args += ["--entrypoint", ""]
 
         for var_name, var_value in env_variables:
             args += ["--env", f"{var_name}={var_value}"]
