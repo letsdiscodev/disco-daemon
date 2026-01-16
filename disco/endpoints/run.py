@@ -63,7 +63,7 @@ async def run_ws(
     websocket: WebSocket,
     project_name: str,
 ):
-    """Interactive shell session in a project's container.
+    """Interactive command session in a project's container.
 
     Protocol:
     1. Client connects
@@ -150,7 +150,7 @@ async def run_ws(
         deployment_env_variables: Sequence[
             DeploymentEnvironmentVariable
         ] = await deployment.awaitable_attrs.env_variables
-        
+
         env_variables = [
             (env_var.name, decrypt(env_var.value))
             for env_var in deployment_env_variables
@@ -246,16 +246,16 @@ async def run_ws(
         except Exception:
             pass
 
-        # Shell exited - close the WebSocket
+        # command exited - close the WebSocket
         try:
-            await websocket.close(code=1000, reason="Shell exited")
+            await websocket.close(code=1000, reason="Command exited")
         except Exception:
             pass
 
     except WebSocketDisconnect:
-        log.info("WebSocket disconnected for shell session %s", container_name)
+        log.info("WebSocket disconnected for command session %s", container_name)
     except Exception as e:
-        log.exception("Error in shell session: %s", e)
+        log.exception("Error in command session: %s", e)
         try:
             await websocket.close(code=4500, reason=str(e)[:100])
         except Exception:
@@ -403,7 +403,7 @@ def set_pty_size(fd: int, rows: int, cols: int):
 
 def get_default_service_for_run(disco_file: DiscoFile) -> str | None:
     """
-    Determine which service to run shell in.
+    Determine which service to run command in.
     Same logic as run.py - prefers 'web' service, falls back to first non-static.
     """
     if len(list(disco_file.services.keys())) == 0:

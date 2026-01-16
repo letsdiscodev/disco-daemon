@@ -5,25 +5,25 @@ import time
 log = logging.getLogger(__name__)
 
 
-async def clean_up_orphan_shells(remove_all: bool = False) -> int:
-    """
-    Clean up orphaned shell containers.
+async def clean_up_orphan_commands(remove_all: bool = False) -> None:
+    """Clean up orphaned command containers.
 
-    A shell container is considered orphaned if:
+    A command container is considered orphaned if:
     1. It has the disco.run=true label
-    2. Either remove_all=True OR its expires_at timestamp has passed
+    2. Either remove_all=True OR its expires timestamp has passed
 
-    When remove_all=True (used on startup), ALL shell containers are removed
+    When remove_all=True (used on startup), ALL command containers are removed
     since any container existing before disco started is by definition orphaned.
 
-    The expires_at label is set when the container is created, providing
+    The expires label is set when the container is created, providing
     a simple TTL-based cleanup that works even without DB state.
 
     Returns the number of containers cleaned up.
-    """
-    log.info("Checking for orphaned shell containers (remove_all=%s)", remove_all)
 
-    # List all shell containers
+    """
+    log.info("Checking for orphaned command containers (remove_all=%s)", remove_all)
+
+    # List all command containers
     proc = await asyncio.create_subprocess_exec(
         "docker",
         "ps",
@@ -38,8 +38,8 @@ async def clean_up_orphan_shells(remove_all: bool = False) -> int:
     stdout, stderr = await proc.communicate()
 
     if proc.returncode != 0:
-        log.error("Failed to list shell containers: %s", stderr.decode())
-        return 0
+        log.error("Failed to list command containers: %s", stderr.decode())
+        return
 
     now = int(time.time())
     to_remove = []
@@ -52,54 +52,52 @@ async def clean_up_orphan_shells(remove_all: bool = False) -> int:
         if len(parts) < 4:
             continue
 
-        container_id, name, expires_at_str, state = parts
+        _, name, expires_str, _ = parts
 
-        # On startup, remove ALL shell containers (they're orphans)
+        # On startup, remove ALL command containers (they're orphans)
         if remove_all:
-            log.info("Orphaned shell container %s (startup cleanup)", name)
+            log.info("Orphaned command container %s (startup cleanup)", name)
             to_remove.append(name)
             continue
 
         try:
-            expires_at = int(expires_at_str) if expires_at_str else 0
+            expires = int(expires_str) if expires_str else 0
         except ValueError:
-            expires_at = 0
+            expires = 0
 
-        # If expires_at is 0/missing, clean it up
-        if expires_at == 0:
+        # If expires is 0/missing, clean it up
+        if expires == 0:
             log.warning(
-                "Shell container %s missing expires_at label, will be cleaned up", name
+                "Command container %s missing expires label, will be cleaned up", name
             )
             to_remove.append(name)
             continue
 
-        if now > expires_at:
+        if now > expires:
             log.info(
-                "Shell container %s expired (%d seconds ago)",
+                "Command container %s expired (%d seconds ago)",
                 name,
-                now - expires_at,
+                now - expires,
             )
             to_remove.append(name)
 
-    # Remove containers
     for name in to_remove:
         try:
-            log.info("Removing shell container: %s", name)
-            await _remove_shell_container(name)
+            log.info("Removing command container: %s", name)
+            await _remove_command_container(name)
         except Exception as e:
-            log.warning("Failed to remove shell container %s: %s", name, e)
+            log.warning("Failed to remove command container %s: %s", name, e)
 
     if to_remove:
-        log.info("Cleaned up %d shell containers", len(to_remove))
+        log.info("Cleaned up %d command containers", len(to_remove))
     else:
-        log.debug("No shell containers to clean up")
+        log.debug("No command containers to clean up")
 
-    return len(to_remove)
+    return
 
 
-async def _remove_shell_container(name: str) -> None:
-    """Stop and remove a shell container."""
-    # First try graceful stop (will use the --stop-timeout from container config)
+async def _remove_command_container(name: str) -> None:
+    """Stop and remove a command container."""
     proc = await asyncio.create_subprocess_exec(
         "docker",
         "stop",
@@ -108,8 +106,6 @@ async def _remove_shell_container(name: str) -> None:
         stderr=asyncio.subprocess.PIPE,
     )
     await proc.communicate()
-
-    # Then remove (may already be gone due to --rm)
     proc = await asyncio.create_subprocess_exec(
         "docker",
         "rm",
