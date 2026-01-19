@@ -70,10 +70,14 @@ async def _add_project_route(project_name: str, domains: list[str]) -> None:
                     {
                         "handle": [
                             {
+                                "handler": "encode",
+                                "encodings": {"gzip": {}, "zstd": {}},
+                            },
+                            {
                                 "@id": f"disco-project-handler-{project_name}",
                                 "handler": "reverse_proxy",
                                 "upstreams": [{"dial": "disco:80"}],
-                            }
+                            },
                         ]
                     },
                 ],
@@ -313,12 +317,19 @@ def write_caddy_init_config(disco_host: str, tunnel: bool) -> None:
                                             {
                                                 "handle": [
                                                     {
+                                                        "handler": "encode",
+                                                        "encodings": {
+                                                            "gzip": {},
+                                                            "zstd": {},
+                                                        },
+                                                    },
+                                                    {
                                                         "@id": "domain-handle-disco-handle",
                                                         "handler": "reverse_proxy",
                                                         "upstreams": [
                                                             {"dial": "disco:80"}
                                                         ],
-                                                    }
+                                                    },
                                                 ],
                                             }
                                         ],

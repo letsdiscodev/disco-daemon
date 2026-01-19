@@ -139,6 +139,71 @@ def alembic_upgrade(version_hash: str) -> None:
     command.upgrade(config, version_hash)
 
 
+def task_0_28_x(image: str) -> None:
+    print("Updating from 0.28.x to 0.29.0")
+    with Session.begin() as dbsession:
+        host_home = keyvalues.get_value_sync(dbsession=dbsession, key="HOST_HOME")
+    assert host_home is not None
+    get_caddy_config_cmd = (
+        "from disco.utils import caddy; "
+        "import json; "
+        "print(json.dumps(caddy.get_config()))"
+    )
+    caddy_config_str = _run_cmd(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--mount",
+            f"type=bind,source={host_home}/disco/caddy-socket,target=/disco/caddy-socket",
+            image,
+            "python",
+            "-c",
+            get_caddy_config_cmd,
+        ]
+    )
+    caddy_config = json.loads(caddy_config_str)
+    assert caddy_config is not None
+    encode_handler = {"handler": "encode", "encodings": {"gzip": {}, "zstd": {}}}
+    routes = caddy_config["apps"]["http"]["servers"]["disco"]["routes"]
+    for route in routes:
+        if "handle" not in route:
+            continue
+        for handler in route["handle"]:
+            if handler.get("handler") != "subroute":
+                continue
+            for subroute in handler.get("routes", []):
+                handles = subroute.get("handle", [])
+                has_encode = any(h.get("handler") == "encode" for h in handles)
+                if not has_encode and len(handles) > 0:
+                    handles.insert(0, encode_handler)
+    caddy_config_str = json.dumps(caddy_config)
+    set_caddy_config_cmd = (
+        "from disco.utils import caddy; "
+        "import json; "
+        f"caddy_config_str = '''{caddy_config_str}''';"
+        "caddy_config = json.loads(caddy_config_str);"
+        "caddy.set_config(caddy_config)"
+    )
+    _run_cmd(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--mount",
+            f"type=bind,source={host_home}/disco/caddy-socket,target=/disco/caddy-socket",
+            image,
+            "python",
+            "-c",
+            set_caddy_config_cmd,
+        ]
+    )
+    with Session.begin() as dbsession:
+        keyvalues.set_value_sync(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.29.0"
+        )
+
+
 def task_0_27_x(image: str) -> None:
     print("Updating from 0.27.x to 0.28.0")
     with Session.begin() as dbsession:
@@ -867,6 +932,8 @@ def get_update_function_for_version(version: str) -> Callable[[str], None]:
     if version.startswith("0.27."):
         return task_0_27_x
     if version.startswith("0.28."):
-        assert disco.__version__.startswith("0.28.")
+        return task_0_28_x
+    if version.startswith("0.29."):
+        assert disco.__version__.startswith("0.29.")
         return task_patch
     raise NotImplementedError(f"Update missing for version {version}")
