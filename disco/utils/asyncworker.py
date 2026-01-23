@@ -70,7 +70,7 @@ async def cron_day() -> None:
 class ProjectCron(Cron):
     project_name: str
     service_name: str
-    registry_host: str | None
+    registry: str | None
     deployment_number: int
     image: str
     volumes: list[tuple[str, str, str]]
@@ -120,7 +120,7 @@ class ProjectCron(Cron):
         image = docker.get_image_name_for_service(
             disco_file=disco_file,
             service_name=service_name,
-            registry_host=deployment.registry_host,
+            registry=deployment.docker_registry,
             project_name=deployment.project_name,
             deployment_number=deployment.number,
         )
@@ -132,7 +132,7 @@ class ProjectCron(Cron):
             image=image,
             volumes=volumes,
             env_variables=env_variables,
-            registry_host=deployment.registry_host,
+            registry=deployment.docker_registry,
             deployment_number=deployment.number,
             schedule=schedule,
             command=command,
@@ -184,12 +184,12 @@ class ProjectCron(Cron):
                 ("DISCO_COMMIT", deployment.commit_hash),
             ]
         self.project_name = deployment.project_name
-        self.registry_host = deployment.registry_host
+        self.registry = deployment.docker_registry
         self.deployment_number = deployment.number
         self.image = docker.get_image_name_for_service(
             disco_file=disco_file,
             service_name=self.service_name,
-            registry_host=deployment.registry_host,
+            registry=deployment.docker_registry,
             project_name=deployment.project_name,
             deployment_number=deployment.number,
         )

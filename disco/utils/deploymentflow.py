@@ -61,7 +61,7 @@ class DeploymentInfo:
     project_name: str
     github_repo_full_name: str | None
     branch: str | None
-    registry_host: str | None
+    registry: str | None
     host_home: str
     disco_host: str
     env_variables: list[tuple[str, str]]
@@ -86,7 +86,7 @@ class DeploymentInfo:
             project_name=deployment.project_name,
             github_repo_full_name=deployment.github_repo_full_name,
             branch=deployment.branch,
-            registry_host=deployment.registry_host,
+            registry=deployment.docker_registry,
             host_home=host_home,
             disco_host=disco_host,
             disco_file=get_disco_file_from_str(deployment.disco_file)
@@ -328,7 +328,7 @@ async def prepare_deployment(
         new_deployment_info=new_deployment_info,
         log_output=log_output,
     )
-    if new_deployment_info.registry_host is not None:
+    if new_deployment_info.registry is not None:
         await push_images(images, log_output)
     if "web" in new_deployment_info.disco_file.services:
         if new_deployment_info.disco_file.services["web"].type == ServiceType.static:
@@ -363,7 +363,7 @@ async def run_hook_deploy_start_before(
         image = docker.get_image_name_for_service(
             disco_file=new_deployment_info.disco_file,
             service_name=service_name,
-            registry_host=new_deployment_info.registry_host,
+            registry=new_deployment_info.registry,
             project_name=new_deployment_info.project_name,
             deployment_number=new_deployment_info.number,
         )
@@ -423,7 +423,7 @@ async def run_hook_deploy_start_after(
         image = docker.get_image_name_for_service(
             disco_file=new_deployment_info.disco_file,
             service_name=service_name,
-            registry_host=new_deployment_info.registry_host,
+            registry=new_deployment_info.registry,
             project_name=new_deployment_info.project_name,
             deployment_number=new_deployment_info.number,
         )
@@ -651,7 +651,7 @@ async def build_images(
             )
         await log_output(f"Building image for {service_name}\n")
         internal_image_name = docker.internal_image_name(
-            registry_host=new_deployment_info.registry_host,
+            registry=new_deployment_info.registry,
             project_name=new_deployment_info.project_name,
             deployment_number=new_deployment_info.number,
             image_name=service_name,
@@ -670,7 +670,7 @@ async def build_images(
     for image_name, image in new_deployment_info.disco_file.images.items():
         await log_output(f"Building image {image_name}\n")
         internal_image_name = docker.internal_image_name(
-            registry_host=new_deployment_info.registry_host,
+            registry=new_deployment_info.registry,
             project_name=new_deployment_info.project_name,
             deployment_number=new_deployment_info.number,
             image_name=image_name,
@@ -762,7 +762,7 @@ async def start_services(
         image = docker.get_image_name_for_service(
             disco_file=new_deployment_info.disco_file,
             service_name=service_name,
-            registry_host=new_deployment_info.registry_host,
+            registry=new_deployment_info.registry,
             project_name=new_deployment_info.project_name,
             deployment_number=new_deployment_info.number,
         )
@@ -1013,7 +1013,7 @@ async def prepare_generator_site(
     image = docker.get_image_name_for_service(
         disco_file=new_deployment_info.disco_file,
         service_name="web",
-        registry_host=new_deployment_info.registry_host,
+        registry=new_deployment_info.registry,
         project_name=new_deployment_info.project_name,
         deployment_number=new_deployment_info.number,
     )

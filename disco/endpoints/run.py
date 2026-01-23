@@ -138,11 +138,11 @@ async def run_ws(
                 return
 
         # Gather container config
-        registry_host = await keyvalues.get_value(dbsession, "REGISTRY_HOST")
+        registry = await keyvalues.get_value(dbsession, "REGISTRY")
         image = get_image_name_for_service(
             disco_file=disco_file,
             service_name=service,
-            registry_host=registry_host,
+            registry=registry,
             project_name=project.name,
             deployment_number=deployment.number,
         )

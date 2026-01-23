@@ -48,7 +48,7 @@ def main() -> None:
             dbsession=dbsession, key="DISCO_HOST", value=disco_host
         )
         keyvalues.set_value_sync(dbsession=dbsession, key="HOST_HOME", value=host_home)
-        keyvalues.set_value_sync(dbsession=dbsession, key="REGISTRY_HOST", value=None)
+        keyvalues.set_value_sync(dbsession=dbsession, key="REGISTRY", value=None)
         if cloudflare_tunnel_token is not None:
             keyvalues.set_value_sync(
                 dbsession=dbsession,

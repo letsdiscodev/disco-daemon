@@ -22,7 +22,9 @@ async def join_token_get(dbsession: Annotated[AsyncDBSession, Depends(get_db)]):
         "joinToken": await docker.get_swarm_join_token(),
         "ip": await keyvalues.get_value(dbsession, "DISCO_ADVERTISE_ADDR"),
         "dockerVersion": await docker.get_docker_version(),
-        "registryHost": await keyvalues.get_value(dbsession, "REGISTRY_HOST"),
+        "registry": await keyvalues.get_value(dbsession, "REGISTRY"),
+        # registryHost for backward compat, remove after 2027-02-01
+        "registryHost": await keyvalues.get_value(dbsession, "REGISTRY"),
     }
 
 

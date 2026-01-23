@@ -179,11 +179,11 @@ async def request_cgi(
         deployment = await get_live_deployment(dbsession, project)
         assert deployment is not None
         disco_file = get_disco_file_from_str(deployment.disco_file)
-        registry_host = await keyvalues.get_value(dbsession, "REGISTRY_HOST")
+        registry = await keyvalues.get_value(dbsession, "REGISTRY")
         image = docker.get_image_name_for_service(
             disco_file=disco_file,
             service_name=service_name,
-            registry_host=registry_host,
+            registry=registry,
             project_name=project_name,
             deployment_number=deployment.number,
         )

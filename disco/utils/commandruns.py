@@ -37,11 +37,11 @@ def create_command_run(
         by_api_key=by_api_key,
     )
     dbsession.add(command_run)
-    registry_host = keyvalues.get_value_sync(dbsession, "REGISTRY_HOST")
+    registry = keyvalues.get_value_sync(dbsession, "REGISTRY")
     image = docker.get_image_name_for_service(
         disco_file=disco_file,
         service_name=service,
-        registry_host=registry_host,
+        registry=registry,
         project_name=project.name,
         deployment_number=deployment.number,
     )

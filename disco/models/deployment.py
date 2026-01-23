@@ -43,7 +43,7 @@ class Deployment(Base):
         Unicode(2048), nullable=True
     )
     branch: Mapped[str] = mapped_column(Unicode(255), nullable=True)
-    registry_host: Mapped[str | None] = mapped_column(Unicode(2048), nullable=True)
+    docker_registry: Mapped[str | None] = mapped_column(Unicode(2048), nullable=True)
     project_id: Mapped[str] = mapped_column(
         String(32),
         ForeignKey("projects.id"),

@@ -19,6 +19,7 @@ from disco.endpoints import (
     projectdomains,
     projectkeyvalues,
     projects,
+    registries,
     run,
     scale,
     syslog,
@@ -53,25 +54,26 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan, middleware=middleware)
 
-app.include_router(meta.router)
-app.include_router(projects.router)
-app.include_router(volumes.router)
+app.include_router(apikeyinvites.router)
+app.include_router(apikeys.router)
+app.include_router(cgi.router)
+app.include_router(corsorigins.router)
 app.include_router(deployments.router)
-app.include_router(run.router)
 app.include_router(envvariables.router)
+app.include_router(events.router)
+app.include_router(githubapps.router)
+app.include_router(logs.router)
+app.include_router(meta.router)
+app.include_router(nodes.router)
 app.include_router(projectdomains.router)
 app.include_router(projectkeyvalues.router)
-app.include_router(logs.router)
-app.include_router(nodes.router)
+app.include_router(projects.router)
+app.include_router(registries.router)
+app.include_router(run.router)
 app.include_router(scale.router)
-app.include_router(apikeys.router)
-app.include_router(apikeyinvites.router)
 app.include_router(syslog.router)
 app.include_router(tunnels.router)
-app.include_router(corsorigins.router)
-app.include_router(cgi.router)
-app.include_router(githubapps.router)
-app.include_router(events.router)
+app.include_router(volumes.router)
 
 
 @app.get("/")

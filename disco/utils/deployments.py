@@ -70,7 +70,7 @@ async def create_deployment(
         disco_file=disco_file.model_dump_json(indent=2, by_alias=True)
         if disco_file is not None
         else None,
-        registry_host=await keyvalues.get_value(dbsession, "REGISTRY_HOST"),
+        docker_registry=await keyvalues.get_value(dbsession, "REGISTRY"),
         by_api_key=by_api_key,
     )
     dbsession.add(deployment)

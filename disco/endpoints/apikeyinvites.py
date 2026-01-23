@@ -90,6 +90,8 @@ def api_key_invite_post(
         "meta": {
             "version": disco.__version__,
             "discoHost": keyvalues.get_value_sync(dbsession, "DISCO_HOST"),
-            "registryHost": keyvalues.get_value_sync(dbsession, "REGISTRY_HOST"),
+            "registry": keyvalues.get_value_sync(dbsession, "REGISTRY"),
+            # registryHost for backward compat, remove after 2027-02-01
+            "registryHost": keyvalues.get_value_sync(dbsession, "REGISTRY"),
         },
     }

@@ -636,15 +636,15 @@ async def list_networks_for_deployment(
 
 
 def internal_image_name(
-    registry_host: str | None,
+    registry: str | None,
     project_name: str,
     deployment_number: int,
     image_name: str,
 ) -> str:
     base_name = f"disco/project-{project_name}-{image_name}:{deployment_number}"
-    if registry_host is None:
+    if registry is None:
         return base_name
-    return f"{registry_host}/{base_name}"
+    return f"{registry}/{base_name}"
 
 
 def service_name(project_name: str, service: str, deployment_number: int) -> str:
@@ -1157,7 +1157,7 @@ def deployment_network_name(project_name: str, deployment_number: int) -> str:
 def get_image_name_for_service(
     disco_file: DiscoFile,
     service_name: str,
-    registry_host: str | None,
+    registry: str | None,
     project_name: str,
     deployment_number: int,
 ) -> str:
@@ -1169,7 +1169,7 @@ def get_image_name_for_service(
     if service.build is not None:
         # has a build command, is named after service name
         return internal_image_name(
-            registry_host=registry_host,
+            registry=registry,
             project_name=project_name,
             deployment_number=deployment_number,
             image_name=service_name,
@@ -1177,7 +1177,7 @@ def get_image_name_for_service(
     if service.image in disco_file.images:
         # image defined in Discofile
         return internal_image_name(
-            registry_host=registry_host,
+            registry=registry,
             project_name=project_name,
             deployment_number=deployment_number,
             image_name=service.image,
@@ -1187,10 +1187,12 @@ def get_image_name_for_service(
         return service.image
 
 
-async def login(disco_host_home: str, host: str, username: str, password: str) -> None:
+async def login(
+    disco_host_home: str, address: str, username: str, password: str
+) -> None:
     import disco
 
-    log.info("Docker login to %s", host)
+    log.info("Docker login to %s", address)
     args = [
         "docker",
         "run",
@@ -1206,15 +1208,15 @@ async def login(disco_host_home: str, host: str, username: str, password: str) -
         "--username",
         username,
         "--password-stdin",
-        f"https://{host}",
+        address,
     ]
     await check_call(args, stdin=password)
 
 
-async def logout(disco_host_home: str, host: str) -> None:
+async def logout(disco_host_home: str, address: str) -> None:
     import disco
 
-    log.info("Docker logout from %s", host)
+    log.info("Docker logout from %s", address)
     args = [
         "docker",
         "run",
@@ -1226,9 +1228,32 @@ async def logout(disco_host_home: str, host: str) -> None:
         f"letsdiscodev/daemon:{disco.__version__}",
         "docker",
         "logout",
-        f"https://{host}",
+        address,
     ]
     await check_call(args)
+
+
+async def get_authenticated_registries(disco_host_home: str) -> list[str]:
+    log.info("Getting list of authenticated Docker registries")
+    args = [
+        "docker",
+        "run",
+        "--rm",
+        "--mount",
+        "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+        "--mount",
+        f"type=bind,source={disco_host_home},target=/root",
+        f"letsdiscodev/daemon:{disco.__version__}",
+        "cat",
+        f"{disco_host_home}/.docker/config.json",
+    ]
+    stdout, _, process = await call(args)
+    if process.returncode == 0:
+        config_json_str = "\n".join(stdout)
+        config = json.loads(config_json_str)
+        return list(config.get("auths", {}).keys())
+    else:
+        return []
 
 
 async def get_swarm_join_token() -> str:
