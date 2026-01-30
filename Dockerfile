@@ -1,4 +1,4 @@
-FROM python:3.12.9
+FROM python:3.13.11
 ENV PYTHONUNBUFFERED=0
 RUN apt-get install ca-certificates curl
 RUN install -m 0755 -d /etc/apt/keyrings
