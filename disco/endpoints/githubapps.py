@@ -27,8 +27,10 @@ from disco.utils import keyvalues
 from disco.utils.github import (
     create_pending_github_app,
     generate_new_pending_app_state,
+    get_access_token_for_installation_id,
     get_all_github_apps,
     get_all_repos_sync,
+    get_github_app_installation_by_id,
     get_github_pending_app_by_id,
     handle_app_created_on_github,
     process_github_app_webhook,
@@ -249,7 +251,35 @@ def list_github_repos(
         "repos": [
             {
                 "fullName": repo.full_name,
+                "installationId": repo.installation_id,
             }
             for repo in repos
         ],
+    }
+
+
+@router.post(
+    "/api/github-apps/installations/{installation_id}/access-token",
+    dependencies=[Depends(get_api_key)],
+)
+async def get_installation_access_token(
+    installation_id: Annotated[int, Path()],
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+):
+    installation = await get_github_app_installation_by_id(dbsession, installation_id)
+    if installation is None:
+        raise HTTPException(status_code=404, detail="Installation not found")
+    try:
+        token = await get_access_token_for_installation_id(installation_id)
+    except Exception as e:
+        log.exception("Failed to get access token for installation %d", installation_id)
+        raise HTTPException(
+            status_code=502, detail="Failed to get access token from GitHub"
+        ) from e
+    await dbsession.refresh(installation)  # access_token_expires
+    return {
+        "token": token,
+        "expiresAt": installation.access_token_expires.isoformat()
+        if installation.access_token_expires
+        else None,
     }
