@@ -258,24 +258,17 @@ def list_github_repos(
     }
 
 
-@router.post("/api/github-apps/installations/{installation_id}/access-token")
+@router.post(
+    "/api/github-apps/installations/{installation_id}/access-token",
+    dependencies=[Depends(get_api_key)],
+)
 async def get_installation_access_token(
     installation_id: Annotated[int, Path()],
     dbsession: Annotated[AsyncDBSession, Depends(get_db)],
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
 ):
-    """
-    Get a short-lived GitHub access token for the specified installation.
-
-    This allows external services (like the dashboard backend) to make
-    GitHub API calls on behalf of the user's GitHub App installation.
-    """
-    # Verify installation exists
     installation = await get_github_app_installation_by_id(dbsession, installation_id)
     if installation is None:
         raise HTTPException(status_code=404, detail="Installation not found")
-
-    # Get (or refresh) the access token
     try:
         token = await get_access_token_for_installation_id(installation_id)
     except Exception as e:
@@ -283,11 +276,7 @@ async def get_installation_access_token(
         raise HTTPException(
             status_code=502, detail="Failed to get access token from GitHub"
         ) from e
-
-    # Refresh installation to get the updated expiry timestamp
-    # (the token function uses its own session, so we need to reload)
-    await dbsession.refresh(installation)
-
+    await dbsession.refresh(installation)  # access_token_expires
     return {
         "token": token,
         "expiresAt": installation.access_token_expires.isoformat()
