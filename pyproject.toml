@@ -11,6 +11,7 @@ version = {attr = "disco.__version__"}
 [project.scripts]
 disco_worker = "disco.worker:main"
 disco_init = "disco.scripts.init:main"
+disco_init_db = "disco.scripts.init:init_database_script"
 disco_update = "disco.scripts.update:main"
 disco_set_core_logging = "disco.scripts.setcorelogging:main"
 disco_leave_swarm = "disco.scripts.leave_swarm:main"

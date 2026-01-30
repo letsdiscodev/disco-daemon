@@ -1,9 +1,14 @@
 import logging
 
 from alembic import context
+from alembic.ddl.impl import DefaultImpl
 
-from disco.config import SQLALCHEMY_DATABASE_URL
+from disco.config import get_dqlite_url
 from disco.models.meta import Base, DateTimeTzAware
+
+
+class DqliteImpl(DefaultImpl):
+    __dialect__ = "dqlite"
 
 config = context.config
 
@@ -19,7 +24,7 @@ def render_item(type_, obj, autogen_context):
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=SQLALCHEMY_DATABASE_URL,
+        url=get_dqlite_url(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -34,8 +39,9 @@ def run_migrations_offline() -> None:
 def run_migrations_online():
     logging.basicConfig(level=logging.INFO)
 
-    from disco.models.db import engine
+    from disco.models.db import get_engine
 
+    engine = get_engine()
     connection = engine.connect()
     context.configure(
         connection=connection,
