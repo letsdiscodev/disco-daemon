@@ -205,6 +205,16 @@ class ProjectCron(Cron):
             self.next = self.cron.get_next(datetime)
         self.schedule = schedule
         self.timeout = disco_file.services[self.service_name].timeout
+        extra_run_params = disco_file.services[self.service_name].extra_run_params
+        self.extra_params = (
+            [
+                param.strip()
+                for param in extra_run_params.split(" ")
+                if len(param.strip()) > 0
+            ]
+            if extra_run_params is not None
+            else None
+        )
 
     async def run(self) -> None:
         async def log_stdout(stdout: str) -> None:
@@ -227,6 +237,7 @@ class ProjectCron(Cron):
             timeout=self.timeout,
             stdout=log_stdout,
             stderr=log_stderr,
+            extra_params=self.extra_params,
         )
 
     def schedule_next(self) -> None:
