@@ -45,6 +45,7 @@ async def create_deployment(
     disco_file: DiscoFile | None,
     by_api_key: ApiKey | None,
     number: int | None = None,
+    no_cache: bool = False,
 ) -> Deployment:
     if number is not None:
         if len(await project.awaitable_attrs.deployments) > 0:
@@ -72,6 +73,7 @@ async def create_deployment(
         else None,
         docker_registry=await keyvalues.get_value(dbsession, "REGISTRY"),
         by_api_key=by_api_key,
+        no_cache=no_cache,
     )
     dbsession.add(deployment)
     for env_variable in await project.awaitable_attrs.env_variables:
