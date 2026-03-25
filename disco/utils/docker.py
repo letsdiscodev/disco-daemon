@@ -33,6 +33,7 @@ async def build_image(
     dockerfile_path: str | None = None,
     dockerfile_str: str | None = None,
     timeout: int = 3600,
+    no_cache: bool = False,
 ) -> None:
     log.info("Building Docker image %s", image)
     assert (dockerfile_path is None) != (dockerfile_str is None)
@@ -53,9 +54,11 @@ async def build_image(
         # https://github.com/docker/buildx/issues/1881
         ("BUILDX_GIT_INFO", "0"),
     ]
+    no_cache_args = ["--no-cache"] if no_cache else []
     args = [
         "docker",
         "build",
+        *no_cache_args,
         *env_var_args,
         "--cpu-period",
         "100000",  # default
