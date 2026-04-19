@@ -723,7 +723,7 @@ def _vector_syslog_config(
     sink_mode = "tcp" if tls else "udp"
     tls_block = "    tls:\n      enabled: true\n" if tls else ""
 
-    # The disco hostname is interpolated from the DISCO_SYSLOG_HOSTNAME env var
+    # The disco hostname is interpolated from the SYSLOG_HOSTNAME env var
     # at config load time. This lets update_syslog_hostname() change the value
     # by updating the env var (which triggers a Docker service restart, which
     # causes Vector to re-load the config with the new substituted value).
@@ -731,9 +731,6 @@ def _vector_syslog_config(
   docker:
     type: docker_logs
     docker_host: unix:///var/run/docker.sock
-    # Only forward new logs, not historical. Persistent syslog services don't
-    # need to replay everything that happened before they started.
-    since_seconds_ago: 0
 
 transforms:
   filtered:
@@ -765,7 +762,7 @@ transforms:
       # literal "\\n" sequences, not multiple broken frames.
       msg_raw = to_string(.message) ?? ""
       msg = replace(msg_raw, "\\n", "\\\\n")
-      . = {{ "message": "<" + pri + ">1 " + ts + " ${{DISCO_SYSLOG_HOSTNAME}} " + cn + " - - - " + msg + "\\n" }}
+      . = {{ "message": "<" + pri + ">1 " + ts + " ${{SYSLOG_HOSTNAME}} " + cn + " - - - " + msg + "\\n" }}
 
 sinks:
   out:
@@ -805,7 +802,7 @@ async def start_syslog_service(
         "--env",
         f"DISCO_VECTOR_CONFIG={vector_config}",
         "--env",
-        f"DISCO_SYSLOG_HOSTNAME={disco_host}",
+        f"SYSLOG_HOSTNAME={disco_host}",
         "--mode",
         "global",
         "--log-driver",
@@ -826,7 +823,7 @@ async def start_syslog_service(
 async def update_syslog_hostname(service_name: str, disco_host: str) -> None:
     """Update the disco hostname injected into syslog messages.
 
-    The hostname is interpolated from the DISCO_SYSLOG_HOSTNAME env var by
+    The hostname is interpolated from the SYSLOG_HOSTNAME env var by
     Vector at config load time. Updating the env var here triggers a Docker
     service task restart (same behavior as logspout's SYSLOG_HOSTNAME update),
     which causes Vector to re-load the config with the new value.
@@ -837,7 +834,7 @@ async def update_syslog_hostname(service_name: str, disco_host: str) -> None:
         "update",
         service_name,
         "--env-add",
-        f"DISCO_SYSLOG_HOSTNAME={disco_host}",
+        f"SYSLOG_HOSTNAME={disco_host}",
         "--detach",
     ]
     await check_call(args)

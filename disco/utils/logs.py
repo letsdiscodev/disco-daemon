@@ -30,10 +30,6 @@ def build_streaming_cmd(name: str, port: int) -> list[str]:
   docker:
     type: docker_logs
     docker_host: unix:///var/run/docker.sock
-    # Match logspout's BACKLOG=false: only stream new logs, not historical.
-    # Vector defaults to ~now-ish, but be explicit so a future default change
-    # doesn't dump a flood of old logs on every new client connection.
-    since_seconds_ago: 0
 
 transforms:
   reformat:
