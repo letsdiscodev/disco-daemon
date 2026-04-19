@@ -19,38 +19,73 @@ class ActiveSyslog:
 syslog_list_lock = asyncio.Lock()
 _active_syslogs: list[ActiveSyslog] = []
 
-LOGSPOUT_CMD = [
-    "docker",
-    "service",
-    "create",
-    "--name",
-    "{name}",
-    "--mode",
-    "global",
-    "--env",
-    "BACKLOG=false",
-    "--env",
-    'RAW_FORMAT={ "container" : "{{`{{ .Container.Name }}`}}", '
-    '"labels": {{`{{ toJSON .Container.Config.Labels }}`}}, '
-    '"timestamp": "{{`{{ .Time.Format "2006-01-02T15:04:05Z07:00" }}`}}", '
-    '"message": {{`{{ toJSON .Data }}`}} }',
-    "--mount",
-    "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
-    "--network",
-    "disco-logging",
-    "--env",
-    "ALLOW_TTY=true",
-    "--label",
-    "disco.syslogs",
-    "--log-driver",
-    "json-file",
-    "--log-opt",
-    "max-size=20m",
-    "--log-opt",
-    "max-file=5",
-    "gliderlabs/logspout:latest",
-    "raw://disco:{port}",
-]
+def build_streaming_cmd(name: str, port: int) -> list[str]:
+    """Build the docker service create command for per-client log streaming.
+
+    Replaces the old LOGSPOUT_CMD. Vector reads docker logs, reformats each
+    event into the JSON shape expected by JsonLogServer (container, labels,
+    timestamp, message), and sends each as a UDP datagram to disco:{port}.
+    """
+    config = f"""sources:
+  docker:
+    type: docker_logs
+    docker_host: unix:///var/run/docker.sock
+
+transforms:
+  reformat:
+    type: remap
+    inputs:
+      - docker
+    source: |
+      ts = format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%SZ") ?? ""
+      cn = to_string(.container_name) ?? ""
+      msg = to_string(.message) ?? ""
+      labels_obj = .label
+      . = {{
+        "container": cn,
+        "labels": labels_obj,
+        "timestamp": ts,
+        "message": msg
+      }}
+
+sinks:
+  out:
+    type: socket
+    inputs:
+      - reformat
+    address: "disco:{port}"
+    mode: udp
+    encoding:
+      codec: json
+"""
+    return [
+        "docker",
+        "service",
+        "create",
+        "--name",
+        name,
+        "--mode",
+        "global",
+        "--mount",
+        "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+        "--network",
+        "disco-logging",
+        "--label",
+        "disco.syslogs",
+        "--log-driver",
+        "json-file",
+        "--log-opt",
+        "max-size=20m",
+        "--log-opt",
+        "max-file=5",
+        "--env",
+        f"DISCO_VECTOR_CONFIG={config}",
+        "--entrypoint",
+        "sh",
+        "timberio/vector:latest-alpine",
+        "-c",
+        'printf "%s" "$DISCO_VECTOR_CONFIG" > /tmp/vector.yaml && exec vector --config /tmp/vector.yaml',
+    ]
 
 
 class JsonLogServer(asyncio.DatagramProtocol):

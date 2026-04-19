@@ -10,7 +10,7 @@ from sse_starlette.sse import EventSourceResponse
 from disco.auth import get_api_key_wo_tx
 from disco.models.db import AsyncSession
 from disco.utils import docker
-from disco.utils.logs import LOGSPOUT_CMD, JsonLogServer, monitor_syslog
+from disco.utils.logs import JsonLogServer, build_streaming_cmd, monitor_syslog
 from disco.utils.projects import get_project_by_name
 
 log = logging.getLogger(__name__)
@@ -70,15 +70,12 @@ async def read_logs(
     background_tasks: BackgroundTasks,
 ):
     port = random.randint(10000, 65535)
-    logspout_cmd = LOGSPOUT_CMD.copy()
-    assert logspout_cmd[4] == "{name}"
     syslog_service_name = f"disco-syslog-{port}"
     await monitor_syslog(syslog_service_name)
-    logspout_cmd[4] = syslog_service_name
-    logspout_cmd[-1] = logspout_cmd[-1].format(port=port)
+    streaming_cmd = build_streaming_cmd(name=syslog_service_name, port=port)
     transport = None
     log_queue: asyncio.Queue[dict[str, str | dict[str, str]]] = asyncio.Queue()
-    await asyncio.create_subprocess_exec(*logspout_cmd)
+    await asyncio.create_subprocess_exec(*streaming_cmd)
     loop = asyncio.get_running_loop()
     transport, _ = await loop.create_datagram_endpoint(
         lambda: JsonLogServer(
