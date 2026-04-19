@@ -731,6 +731,9 @@ def _vector_syslog_config(
   docker:
     type: docker_logs
     docker_host: unix:///var/run/docker.sock
+    # Only forward new logs, not historical. Persistent syslog services don't
+    # need to replay everything that happened before they started.
+    since_seconds_ago: 0
 
 transforms:
   filtered:
