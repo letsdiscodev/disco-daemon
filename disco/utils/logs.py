@@ -19,12 +19,14 @@ class ActiveSyslog:
 syslog_list_lock = asyncio.Lock()
 _active_syslogs: list[ActiveSyslog] = []
 
+
 def build_streaming_cmd(name: str, port: int) -> list[str]:
     """Build the docker service create command for per-client log streaming.
 
-    Replaces the old LOGSPOUT_CMD. Vector reads docker logs, reformats each
+    Vector reads docker logs, reformats each
     event into the JSON shape expected by JsonLogServer (container, labels,
     timestamp, message), and sends each as a UDP datagram to disco:{port}.
+
     """
     config = f"""sources:
   docker:

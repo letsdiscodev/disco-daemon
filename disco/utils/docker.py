@@ -693,13 +693,12 @@ async def list_syslog_services() -> list[SyslogService]:
 _SYSLOG_URL_RE = re.compile(r"^syslog(\+tls)?://([^:/]+:\d+)$")
 
 
-def _vector_syslog_config(
-    disco_host: str, url: str, type: Literal["CORE", "GLOBAL"]
-) -> str:
-    """Generate a Vector YAML config that matches the logspout RFC 5424 syslog output.
+def _vector_syslog_config(url: str, type: Literal["CORE", "GLOBAL"]) -> str:
+    """Generate a Vector YAML config that matches RFC 5424 syslog output.
 
-    Format produced (matches logspout):
+    Format produced:
       <PRI>1 TIMESTAMP HOSTNAME APP-NAME PROCID MSGID STRUCTURED-DATA MESSAGE
+
     """
     match = _SYSLOG_URL_RE.match(url)
     if not match:
@@ -709,24 +708,14 @@ def _vector_syslog_config(
         )
     tls = match.group(1) is not None
     address = match.group(2)
-
     if type == "CORE":
-        # Only forward containers labeled disco.log.core=true
         filter_condition = '.label."disco.log.core" == "true"'
     elif type == "GLOBAL":
-        # Forward all containers EXCEPT those labeled disco.log.exclude
-        # (mirrors logspout's EXCLUDE_LABELS=disco.log.exclude env var)
         filter_condition = '!exists(.label."disco.log.exclude")'
     else:
         raise ValueError(f"Unknown syslog type: {type!r}")
-
     sink_mode = "tcp" if tls else "udp"
     tls_block = "    tls:\n      enabled: true\n" if tls else ""
-
-    # The disco hostname is interpolated from the SYSLOG_HOSTNAME env var
-    # at config load time. This lets update_syslog_hostname() change the value
-    # by updating the env var (which triggers a Docker service restart, which
-    # causes Vector to re-load the config with the new substituted value).
     config = f"""sources:
   docker:
     type: docker_logs
@@ -749,14 +738,10 @@ transforms:
       stream = to_string(.stream) ?? "stdout"
       pri = if stream == "stderr" {{ "11" }} else {{ "14" }}
       ts = format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%SZ") ?? ""
-      # Truncate APP-NAME to RFC 5424 max of 48 chars (matches logspout behavior)
+      # Truncate APP-NAME to RFC 5424 max of 48 chars
       cn_full = to_string(.container_name) ?? "unknown"
       cn = slice!(cn_full, 0, 48)
-      # PROCID is "-" (NILVALUE per RFC 5424). Logspout uses the host PID
-      # of the container's PID 1 (one PID per container, constant for its
-      # lifetime), but Vector's docker_logs source doesn't expose State.Pid.
-      # Adding container_id here would just duplicate the container_name
-      # identifier above, so we use NILVALUE.
+      # PROCID is "-" (NILVALUE per RFC 5424).
       # Escape embedded newlines in the message so a single multi-line Docker
       # log event (e.g. a Python stack trace) becomes one syslog frame with
       # literal "\\n" sequences, not multiple broken frames.
@@ -783,7 +768,7 @@ async def start_syslog_service(
     disco_host: str, url: str, type: Literal["CORE", "GLOBAL"]
 ) -> None:
     log.info("Starting Syslog service %s %s", url, type)
-    vector_config = _vector_syslog_config(disco_host=disco_host, url=url, type=type)
+    vector_config = _vector_syslog_config(url=url, type=type)
     args = [
         "docker",
         "service",
@@ -821,13 +806,7 @@ async def start_syslog_service(
 
 
 async def update_syslog_hostname(service_name: str, disco_host: str) -> None:
-    """Update the disco hostname injected into syslog messages.
-
-    The hostname is interpolated from the SYSLOG_HOSTNAME env var by
-    Vector at config load time. Updating the env var here triggers a Docker
-    service task restart (same behavior as logspout's SYSLOG_HOSTNAME update),
-    which causes Vector to re-load the config with the new value.
-    """
+    """Update the disco hostname injected into syslog messages."""
     args = [
         "docker",
         "service",
