@@ -690,18 +690,85 @@ async def list_syslog_services() -> list[SyslogService]:
     return services
 
 
-def _logspout_url(url: str, type: Literal["CORE", "GLOBAL"]) -> str:
+_SYSLOG_URL_RE = re.compile(r"^syslog(\+tls)?://([^:/]+:\d+)$")
+
+
+def _vector_syslog_config(url: str, type: Literal["CORE", "GLOBAL"]) -> str:
+    """Generate a Vector YAML config that matches RFC 5424 syslog output.
+
+    Format produced:
+      <PRI>1 TIMESTAMP HOSTNAME APP-NAME PROCID MSGID STRUCTURED-DATA MESSAGE
+
+    """
+    match = _SYSLOG_URL_RE.match(url)
+    if not match:
+        raise ValueError(
+            f"Invalid syslog URL {url!r}: expected syslog://host:port "
+            f"or syslog+tls://host:port"
+        )
+    tls = match.group(1) is not None
+    address = match.group(2)
     if type == "CORE":
-        return f"{url}?filter.labels=disco.log.core:true"
-    assert type == "GLOBAL"
-    return url
+        filter_condition = '.label."disco.log.core" == "true"'
+    elif type == "GLOBAL":
+        filter_condition = '!exists(.label."disco.log.exclude")'
+    else:
+        raise ValueError(f"Unknown syslog type: {type!r}")
+    sink_mode = "tcp" if tls else "udp"
+    tls_block = "    tls:\n      enabled: true\n" if tls else ""
+    config = f"""sources:
+  docker:
+    type: docker_logs
+    docker_host: unix:///var/run/docker.sock
+
+transforms:
+  filtered:
+    type: filter
+    inputs:
+      - docker
+    condition: '{filter_condition}'
+
+  to_syslog:
+    type: remap
+    inputs:
+      - filtered
+    source: |
+      # Build RFC 5424 syslog line: <PRI>1 TIMESTAMP HOST APP PID MSGID SD MSG
+      # PRI: facility=user(1)*8 + severity (info=6 for stdout, err=3 for stderr)
+      stream = to_string(.stream) ?? "stdout"
+      pri = if stream == "stderr" {{ "11" }} else {{ "14" }}
+      ts = format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%SZ") ?? ""
+      # Truncate APP-NAME to RFC 5424 max of 48 chars
+      cn_full = to_string(.container_name) ?? "unknown"
+      cn = slice!(cn_full, 0, 48)
+      # PROCID is "-" (NILVALUE per RFC 5424).
+      # Escape embedded newlines in the message so a single multi-line Docker
+      # log event (e.g. a Python stack trace) becomes one syslog frame with
+      # literal "\\n" sequences, not multiple broken frames.
+      msg_raw = to_string(.message) ?? ""
+      msg = replace(msg_raw, "\\n", "\\\\n")
+      . = {{ "message": "<" + pri + ">1 " + ts + " ${{SYSLOG_HOSTNAME}} " + cn + " - - - " + msg + "\\n" }}
+
+sinks:
+  out:
+    type: socket
+    inputs:
+      - to_syslog
+    address: "{address}"
+    mode: {sink_mode}
+{tls_block}    encoding:
+      codec: text
+    framing:
+      method: newline_delimited
+"""
+    return config
 
 
 async def start_syslog_service(
     disco_host: str, url: str, type: Literal["CORE", "GLOBAL"]
 ) -> None:
     log.info("Starting Syslog service %s %s", url, type)
-    syslog_url = _logspout_url(url=url, type=type)
+    vector_config = _vector_syslog_config(url=url, type=type)
     args = [
         "docker",
         "service",
@@ -718,9 +785,9 @@ async def start_syslog_service(
         "--mount",
         "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
         "--env",
-        f"SYSLOG_HOSTNAME={disco_host}",
+        f"DISCO_VECTOR_CONFIG={vector_config}",
         "--env",
-        "EXCLUDE_LABELS=disco.log.exclude",
+        f"SYSLOG_HOSTNAME={disco_host}",
         "--mode",
         "global",
         "--log-driver",
@@ -729,13 +796,17 @@ async def start_syslog_service(
         "max-size=20m",
         "--log-opt",
         "max-file=5",
-        "gliderlabs/logspout:latest",
-        syslog_url,
+        "--entrypoint",
+        "sh",
+        "timberio/vector:latest-alpine",
+        "-c",
+        'printf "%s" "$DISCO_VECTOR_CONFIG" > /tmp/vector.yaml && exec vector --config /tmp/vector.yaml',
     ]
     await check_call(args)
 
 
 async def update_syslog_hostname(service_name: str, disco_host: str) -> None:
+    """Update the disco hostname injected into syslog messages."""
     args = [
         "docker",
         "service",
