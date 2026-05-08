@@ -45,7 +45,6 @@ def main() -> None:
     create_docker_config(host_home)
     docker_swarm_init(disco_advertise_addr)
 
-    # Generate random disco-name for first node
     disco_name = generate_random_name_sync()
     print(f"Generated disco-name for this node: {disco_name}")
 
@@ -53,14 +52,12 @@ def main() -> None:
     label_swarm_node(node_id, f"disco-name={disco_name}")
     label_swarm_node(node_id, "disco-role=main")
 
-    # Create networks
     asyncio.run(docker.create_network("disco-main"))
     asyncio.run(docker.create_network("disco-logging"))
     asyncio.run(docker.create_network("disco-dqlite"))
 
     docker_swarm_create_disco_encryption_key()
 
-    # Start dqlite bootstrap node
     print("Starting dqlite cluster (bootstrap node)")
     start_first_dqlite_service(disco_name)
     print("Waiting for dqlite to be ready")

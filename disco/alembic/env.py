@@ -10,6 +10,7 @@ from disco.models.meta import Base, DateTimeTzAware
 class DqliteImpl(DefaultImpl):
     __dialect__ = "dqlite"
 
+
 config = context.config
 
 target_metadata = Base.metadata

@@ -13,8 +13,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-# Deferred engine creation - engines are created on first access
-# because the node's disco-name may not be available at import time
 _engine: "Engine | None" = None
 _async_engine: "AsyncEngine | None" = None
 _Session: sessionmaker | None = None
@@ -22,7 +20,6 @@ _AsyncSession: async_sessionmaker | None = None
 
 
 def get_engine() -> "Engine":
-    """Get the SQLAlchemy engine, creating it if necessary."""
     global _engine
     if _engine is None:
         _engine = create_engine(get_dqlite_url())
@@ -30,7 +27,6 @@ def get_engine() -> "Engine":
 
 
 def get_async_engine() -> "AsyncEngine":
-    """Get the async SQLAlchemy engine, creating it if necessary."""
     global _async_engine
     if _async_engine is None:
         _async_engine = create_async_engine(get_dqlite_async_url())
@@ -38,7 +34,6 @@ def get_async_engine() -> "AsyncEngine":
 
 
 def get_session_factory() -> sessionmaker:
-    """Get the session factory, creating it if necessary."""
     global _Session
     if _Session is None:
         _Session = sessionmaker(autocommit=False, autoflush=False, bind=get_engine())
@@ -46,7 +41,6 @@ def get_session_factory() -> sessionmaker:
 
 
 def get_async_session_factory() -> async_sessionmaker:
-    """Get the async session factory, creating it if necessary."""
     global _AsyncSession
     if _AsyncSession is None:
         _AsyncSession = async_sessionmaker(
@@ -55,8 +49,6 @@ def get_async_session_factory() -> async_sessionmaker:
     return _AsyncSession
 
 
-# For backward compatibility, provide Session and AsyncSession as properties
-# that lazily initialize on first access
 class _LazySessionMaker:
     """Lazy session maker that initializes the engine on first use."""
 
@@ -79,10 +71,7 @@ Session = _LazySessionMaker(get_session_factory)
 AsyncSession = _LazySessionMaker(get_async_session_factory)
 
 
-# For backward compatibility, provide engine as a lazy property
 class _LazyEngine:
-    """Lazy engine that initializes on first attribute access."""
-
     def __init__(self, engine_getter):
         self._engine_getter = engine_getter
         self._engine = None

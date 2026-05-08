@@ -18,8 +18,7 @@ log = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 
 
-async def get_any_existing_dqlite_address() -> str | None:
-    """Get the address of any existing dqlite service to join."""
+async def get_any_existing_dqlite_address() -> str:
     args = [
         "docker",
         "service",
@@ -30,28 +29,18 @@ async def get_any_existing_dqlite_address() -> str | None:
         "{{ .Name }}",
     ]
     stdout, _, _ = await check_call(args)
-    if stdout:
-        # Return any existing dqlite service - client will discover leader
-        return f"{stdout[0]}:9001"
-    return None
+    if len(stdout) == 0:
+        raise RuntimeError("No existing dqlite node")
+    return f"{stdout[0]}:9001"
 
 
 async def start_dqlite_for_node(disco_name: str) -> None:
-    """Start a dqlite service on a newly joined node."""
     service_name = f"dqlite-{disco_name}"
-
-    # Check if already running
     if await docker.service_exists(service_name):
         log.info("dqlite service %s already exists", service_name)
         return
-
-    # Find an existing dqlite service to join
     join_address = await get_any_existing_dqlite_address()
-    if not join_address:
-        raise RuntimeError("No existing dqlite cluster to join")
-
     node_id = disco_name_to_node_id(disco_name)
-
     log.info(
         "Starting dqlite service %s with NODE_ID %d, joining %s",
         service_name,
@@ -111,7 +100,6 @@ async def get_node_list():
     nodes = await docker.get_node_details(node_ids)
     for node in nodes:
         if "disco-name" not in node.labels:
-            # New node detected - assign disco-name and start dqlite
             node.labels["disco-name"] = await generate_random_name()
             await docker.set_node_label(
                 node_id=node.id, key="disco-name", value=node.labels["disco-name"]
@@ -121,7 +109,6 @@ async def get_node_list():
                 node.id,
                 node.labels["disco-name"],
             )
-            # Start dqlite service for this node
             try:
                 await start_dqlite_for_node(node.labels["disco-name"])
             except Exception as e:
