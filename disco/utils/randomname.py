@@ -5,7 +5,7 @@ import friendlywords
 
 def generate_random_name_sync() -> str:
     # sync because it reads from file system
-    return friendlywords.generate("po", separator="-")
+    return friendlywords.generate("po", separator="-")  # type: ignore[attr-defined]
 
 
 async def generate_random_name() -> str:
