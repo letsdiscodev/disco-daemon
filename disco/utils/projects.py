@@ -43,29 +43,53 @@ def create_project(
 async def set_project_github_repo(
     dbsession: AsyncDBSession,
     project: Project,
-    github_repo: str,
-    branch: str | None,
+    github_repo: str | None,
     by_api_key: ApiKey,
-):
+) -> None:
     log.info(
-        "%s is setting project Github repo %s %s (branch %s)",
+        "%s is setting project Github repo %sremove_repo_from_filesystem %s",
         by_api_key.log(),
         project.log(),
         github_repo,
+    )
+    existing: ProjectGithubRepo | None = await project.awaitable_attrs.github_repo
+    if existing is not None:
+        assert project.deployment_type == "GITHUB"
+        await dbsession.delete(existing)
+        project.github_repo = None
+        project.deployment_type = None
+        await dbsession.flush()
+        await _remove_project_repo_from_filesystem(project.name)
+
+    if github_repo is not None:
+        project.deployment_type = "GITHUB"
+        project.github_repo = ProjectGithubRepo(
+            id=uuid.uuid4().hex,
+            full_name=github_repo,
+        )
+
+
+async def set_project_branch(
+    project: Project,
+    branch: str | None,
+    by_api_key: ApiKey,
+) -> None:
+    repo: ProjectGithubRepo | None = await project.awaitable_attrs.github_repo
+    assert repo is not None
+    log.info(
+        "%s is setting project Github branch %s (branch %s)",
+        by_api_key.log(),
+        project.log(),
         branch,
     )
-    if project.deployment_type is not None:
-        if project.deployment_type == "GITHUB":
-            await dbsession.delete(project.github_repo)
-        else:
-            raise NotImplementedError(f"{project.deployment_type} not handled")
+    repo.branch = branch
 
-    project.deployment_type = "GITHUB"
-    project.github_repo = ProjectGithubRepo(
-        id=uuid.uuid4().hex,
-        full_name=github_repo,
-        branch=branch,
-    )
+
+async def _remove_project_repo_from_filesystem(project_name: str) -> None:
+    try:
+        await github.remove_repo_from_filesystem(project_name)
+    except Exception:
+        log.info("Failed to remove Github repo for project %s", project_name)
 
 
 def get_project_by_id_sync(dbsession: DBSession, project_id: str) -> Project | None:

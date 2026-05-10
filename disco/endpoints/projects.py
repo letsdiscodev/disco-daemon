@@ -16,7 +16,7 @@ from disco.endpoints.dependencies import (
     get_project_from_url_sync,
 )
 from disco.endpoints.envvariables import EnvVariable
-from disco.models import ApiKey, Project
+from disco.models import ApiKey, Project, ProjectGithubRepo
 from disco.utils import keyvalues
 from disco.utils.deploymentflow import enqueue_deployment
 from disco.utils.deployments import (
@@ -42,6 +42,7 @@ from disco.utils.projects import (
     get_all_projects_sync,
     get_project_by_domain,
     get_project_by_name,
+    set_project_branch,
     set_project_github_repo,
 )
 from disco.utils.randomname import generate_random_name
@@ -76,6 +77,43 @@ class NewProjectRequestBody(BaseModel):
     generate_suffix: bool = Field(False, alias="generateSuffix")
     commit: str = "_DEPLOY_LATEST_"
     deployment_number: int | None = Field(None, alias="deploymentNumber")
+
+
+class UpdateProjectRequestBody(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    github_repo: str | None = Field(
+        default=None,
+        alias="githubRepo",
+        pattern=r"^\S+/\S+$",
+    )
+    branch: str | None = None
+
+
+async def validate_github_repo_available(
+    dbsession: AsyncDBSession, github_repo: str
+) -> None:
+    repos = await get_all_repos(dbsession)
+    if github_repo not in [
+        repo.full_name for repo in repos
+    ] and not await repo_is_public(github_repo):
+        raise RequestValidationError(
+            errors=(
+                ValidationError.from_exception_data(
+                    "ValueError",
+                    [
+                        InitErrorDetails(
+                            type=PydanticCustomError(
+                                "value_error",
+                                "You need to give permissions to this repo first",
+                            ),
+                            loc=("body", "githubRepo"),
+                            input=github_repo,
+                        )
+                    ],
+                )
+            ).errors()
+        )
 
 
 async def validate_create_project(
@@ -139,10 +177,26 @@ async def validate_create_project(
                 ).errors()
             )
     if req_body.github_repo is not None:
-        repos = await get_all_repos(dbsession)
-        if req_body.github_repo not in [
-            repo.full_name for repo in repos
-        ] and not await repo_is_public(req_body.github_repo):
+        await validate_github_repo_available(dbsession, req_body.github_repo)
+
+
+async def validate_update_project(
+    dbsession: AsyncDBSession,
+    project: Project,
+    req_body: UpdateProjectRequestBody,
+) -> None:
+    fields = req_body.model_fields_set
+    if "github_repo" in fields and req_body.github_repo is not None:
+        await validate_github_repo_available(dbsession, req_body.github_repo)
+    if "branch" in fields:
+        if "github_repo" in fields:
+            will_have_repo = req_body.github_repo is not None
+        else:
+            existing: (
+                ProjectGithubRepo | None
+            ) = await project.awaitable_attrs.github_repo
+            will_have_repo = existing is not None
+        if not will_have_repo:
             raise RequestValidationError(
                 errors=(
                     ValidationError.from_exception_data(
@@ -151,10 +205,10 @@ async def validate_create_project(
                             InitErrorDetails(
                                 type=PydanticCustomError(
                                     "value_error",
-                                    "You need to give permissions to this repo first",
+                                    "Cannot set branch: project has no Github repo",
                                 ),
-                                loc=("body", "githubRepo"),
-                                input=req_body.github_repo,
+                                loc=("body", "branch"),
+                                input=req_body.branch,
                             )
                         ],
                     )
@@ -190,9 +244,14 @@ async def projects_post(
             dbsession=dbsession,
             project=project,
             github_repo=req_body.github_repo,
-            branch=req_body.branch,
             by_api_key=api_key,
         )
+        if req_body.branch is not None:
+            await set_project_branch(
+                project=project,
+                branch=req_body.branch,
+                by_api_key=api_key,
+            )
     await set_env_variables(
         dbsession=dbsession,
         project=project,
@@ -249,6 +308,65 @@ def projects_get(dbsession: Annotated[DBSession, Depends(get_db_sync)]):
             }
             for project in projects
         ],
+    }
+
+
+@router.get("/api/projects/{project_name}")
+async def project_get(
+    project: Annotated[Project, Depends(get_project_from_url)],
+):
+    github_repo = await project.awaitable_attrs.github_repo
+    return {
+        "project": {
+            "name": project.name,
+            "github": {
+                "fullName": github_repo.full_name,
+                "branch": github_repo.branch,
+            }
+            if github_repo is not None
+            else None,
+        },
+    }
+
+
+@router.patch("/api/projects/{project_name}")
+async def projects_patch(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+    project: Annotated[Project, Depends(get_project_from_url)],
+    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    req_body: UpdateProjectRequestBody,
+):
+    await validate_update_project(
+        dbsession=dbsession, project=project, req_body=req_body
+    )
+    fields = req_body.model_fields_set
+    if "github_repo" in fields:
+        existing: ProjectGithubRepo | None = await project.awaitable_attrs.github_repo
+        existing_full_name = existing.full_name if existing is not None else None
+        if req_body.github_repo != existing_full_name:
+            await set_project_github_repo(
+                dbsession=dbsession,
+                project=project,
+                github_repo=req_body.github_repo,
+                by_api_key=api_key,
+            )
+    if "branch" in fields:
+        await set_project_branch(
+            project=project,
+            branch=req_body.branch,
+            by_api_key=api_key,
+        )
+    github_repo = await project.awaitable_attrs.github_repo
+    return {
+        "project": {
+            "name": project.name,
+            "github": {
+                "fullName": github_repo.full_name,
+                "branch": github_repo.branch,
+            }
+            if github_repo is not None
+            else None,
+        },
     }
 
 
