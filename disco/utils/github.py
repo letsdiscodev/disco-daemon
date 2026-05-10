@@ -295,7 +295,7 @@ def generate_jwt_token(app_id: int, pem: str) -> str:
     payload = {
         "iat": int(time.time()),
         "exp": int(time.time()) + 30,
-        "iss": app_id,
+        "iss": str(app_id),
     }
     return jwt.encode(payload, signing_key, algorithm="RS256")
 
