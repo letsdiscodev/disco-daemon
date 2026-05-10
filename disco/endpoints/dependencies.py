@@ -1,6 +1,7 @@
+from contextlib import AsyncExitStack
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Path
+from fastapi import Depends, HTTPException, Path, Request
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
@@ -8,14 +9,16 @@ from disco.models.db import AsyncSession, Session
 from disco.utils.projects import get_project_by_name, get_project_by_name_sync
 
 
-def get_db_sync():
-    with Session.begin() as dbsession:
-        yield dbsession
+def get_db_sync(request: Request):
+    function_astack: AsyncExitStack = request.scope["fastapi_function_astack"]
+    dbsession = function_astack.enter_context(Session.begin())
+    yield dbsession
 
 
-async def get_db():
-    async with AsyncSession.begin() as dbsession:
-        yield dbsession
+async def get_db(request: Request):
+    function_astack: AsyncExitStack = request.scope["fastapi_function_astack"]
+    dbsession = await function_astack.enter_async_context(AsyncSession.begin())
+    yield dbsession
 
 
 async def get_project_name_from_url_wo_tx(
