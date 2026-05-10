@@ -2,6 +2,7 @@ from contextlib import AsyncExitStack
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Path, Request
+from fastapi.concurrency import contextmanager_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
@@ -9,9 +10,11 @@ from disco.models.db import AsyncSession, Session
 from disco.utils.projects import get_project_by_name, get_project_by_name_sync
 
 
-def get_db_sync(request: Request):
+async def get_db_sync(request: Request):
     function_astack: AsyncExitStack = request.scope["fastapi_function_astack"]
-    dbsession = function_astack.enter_context(Session.begin())
+    dbsession = await function_astack.enter_async_context(
+        contextmanager_in_threadpool(Session.begin())
+    )
     yield dbsession
 
 
