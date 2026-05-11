@@ -81,6 +81,7 @@ def create_command_run(
 
         name = f"{project_name}-run.{run_number}"
         try:
+            extra_run_params = disco_file.services[service].extra_run_params
             await docker.run(
                 image=image,
                 project_name=project_name,
@@ -92,6 +93,13 @@ def create_command_run(
                 timeout=timeout,
                 stdout=log_output,
                 stderr=log_output,
+                extra_params=[
+                    param.strip()
+                    for param in extra_run_params.split(" ")
+                    if len(param.strip()) > 0
+                ]
+                if extra_run_params is not None
+                else None,
             )
         except TimeoutError:
             await log_output(f"Timed out after {timeout} seconds\n")

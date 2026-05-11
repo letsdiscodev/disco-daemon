@@ -1017,10 +1017,13 @@ async def run(
     stdin: AsyncGenerator[bytes, None] | None = None,
     workdir: str | None = None,
     timeout: int = 600,
+    extra_params: list[str] | None = None,
 ) -> None:
     log.info("Docker run %s (%s)", name, image)
     try:
         more_args = []
+        if extra_params is not None:
+            more_args.extend(extra_params)
         for var_name, var_value in env_variables:
             more_args.append("--env")
             more_args.append(f"{var_name}={var_value}")
