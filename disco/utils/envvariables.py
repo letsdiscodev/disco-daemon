@@ -68,3 +68,20 @@ async def delete_env_variable(
     project: Project = await env_variable.awaitable_attrs.project
     events.env_variable_removed(project_name=project.name, env_var=env_variable.name)
     await dbsession.delete(env_variable)
+
+
+async def delete_env_variables_by_name(
+    dbsession: AsyncDBSession,
+    project: Project,
+    names: list[str],
+) -> int:
+    """Delete env vars matching any of the given names. Names that don't
+    exist on the project are silently skipped. Returns the number of vars
+    actually deleted, so callers can suppress no-op deployments."""
+    name_set = set(names)
+    deleted = 0
+    for env_variable in list(await project.awaitable_attrs.env_variables):
+        if env_variable.name in name_set:
+            await delete_env_variable(dbsession, env_variable)
+            deleted += 1
+    return deleted
