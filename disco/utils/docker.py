@@ -635,6 +635,47 @@ async def list_networks_for_deployment(
     return stdout
 
 
+async def list_project_networks() -> list[str]:
+    log.info("Listing all project networks")
+    args = [
+        "docker",
+        "network",
+        "ls",
+        "--filter",
+        "label=disco.project.name",
+        "--format",
+        "{{ .Name }}",
+    ]
+    stdout, _, _ = await check_call(args)
+    return stdout
+
+
+async def inspect_network(name: str) -> dict:
+    log.info("Inspecting network %s", name)
+    args = [
+        "docker",
+        "network",
+        "inspect",
+        "--verbose",
+        name,
+    ]
+    stdout, _, _ = await check_call(args)
+    json_str = "\n".join(stdout)
+    parsed_json = json.loads(json_str)
+    return parsed_json[0]
+
+
+async def remove_network(name: str) -> None:
+    log.info("Removing network %s", name)
+    args = [
+        "docker",
+        "network",
+        "rm",
+        name,
+    ]
+    await check_call(args)
+
+
 def internal_image_name(
     registry: str | None,
     project_name: str,

@@ -59,11 +59,13 @@ async def cron_hour() -> None:
 
 async def cron_day() -> None:
     from disco.utils.logs import clean_up_rogue_syslogs
+    from disco.utils.networkcleanup import remove_unused_networks
 
     log.info("Disco day cron")
     await clean_up_rogue_syslogs()
     await remove_unused_images()
     await docker.builder_prune()
+    await remove_unused_networks()
 
 
 @dataclass

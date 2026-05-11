@@ -1,3 +1,4 @@
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
@@ -68,3 +69,17 @@ def delete_value_sync(dbsession: DBSession, key: str) -> None:
     key_value = dbsession.query(KeyValue).get(key)
     if key_value is not None:
         dbsession.delete(key_value)
+
+
+async def delete_value(dbsession: AsyncDBSession, key: str) -> None:
+    key_value = await dbsession.get(KeyValue, key)
+    if key_value is not None:
+        await dbsession.delete(key_value)
+
+
+async def all_key_values_with_prefix(
+    dbsession: AsyncDBSession, prefix: str
+) -> list[tuple[str, str | None]]:
+    stmt = select(KeyValue).where(KeyValue.key.startswith(prefix))
+    result = await dbsession.execute(stmt)
+    return [(kv.key, kv.value) for kv in result.scalars()]
