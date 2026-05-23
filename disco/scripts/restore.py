@@ -295,11 +295,14 @@ async def _replay_backup(backup_path: Path) -> None:
 
 
 def _verify_statements_reassemble(original: list[str], cleaned: list[str]) -> None:
-    """Refuse to replay if the iterdump split looks wrong."""
-    expected = "".join(original)
-    rebuilt = "".join(s if s.endswith("\n") else s + "\n" for s in original)
-    # Stripped cleaned-set must be a subset of the rebuilt set (modulo
-    # the transaction-boundary lines we deliberately dropped).
+    """Confirm we only dropped transaction-boundary statements during cleanup.
+
+    The previous version also had an "expected == rebuilt" round-trip check
+    that was logically always false (iterdump statements end with `;` not
+    `\\n`), so it always raised and restore never worked. The remaining
+    check is the load-bearing one: if our naive splitter dropped any line
+    that isn't a BEGIN/COMMIT, refuse rather than silently lose data.
+    """
     dropped = set(original) - set(cleaned)
     for d in dropped:
         if not _TRANSACTION_BOUNDARY_RE.match(d.strip()):
@@ -309,12 +312,6 @@ def _verify_statements_reassemble(original: list[str], cleaned: list[str]) -> No
                 "contain DDL not supported by the naive splitter "
                 "(triggers? multi-statement DDL?). Refusing to replay."
             )
-    if expected != rebuilt:
-        # We only changed end-of-line; if even that doesn't reassemble,
-        # something stranger is going on.
-        raise RuntimeError(
-            "iterdump statement set didn't round-trip; refusing to replay."
-        )
 
 
 if __name__ == "__main__":

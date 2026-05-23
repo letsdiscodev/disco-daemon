@@ -384,6 +384,14 @@ async def reconfigure_node_as_single_member(disco_name: str) -> None:
     # The script that runs inside the dqlite image. Care with shell
     # quoting: the f-string interpolates `bind` (which contains colons
     # but not shell metacharacters in our addresses) and that's it.
+    #
+    # Both `.reconfigure` AND the cp of cluster.yaml are required (verified
+    # empirically): `.reconfigure` rewrites the raft binary state to match
+    # the new yaml, but does NOT touch cluster.yaml on disk. dqlite-demo
+    # reads cluster.yaml at startup to know the cluster membership, so if
+    # we skip the cp it would still see the old multi-member cluster and
+    # fail. Running only the cp without `.reconfigure` would leave the
+    # raft state thinking it's part of the old cluster.
     script = (
         "set -eu\n"
         f"BIND='{bind}'\n"
@@ -395,7 +403,13 @@ async def reconfigure_node_as_single_member(disco_name: str) -> None:
         'TS=$(date -u +%Y%m%dT%H%M%SZ)\n'
         'BACKUP_DIR="$DATA_DIR.backup-$TS"\n'
         'cp -a "$DATA_DIR" "$BACKUP_DIR"\n'
-        'NODE_ID=$(awk -F": " "/^ID:/ {print \\$2; exit}" "$DATA_DIR/info.yaml")\n'
+        # Tolerant parser: handle ID:42, ID: 42, ID:  42 alike.
+        'NODE_ID=$(awk "/^ID:/ { sub(/^ID:[ \\t]*/, \\"\\"); print; exit }" '
+        '"$DATA_DIR/info.yaml")\n'
+        'if [ -z "$NODE_ID" ]; then\n'
+        '  echo "ERROR: could not parse NODE_ID from $DATA_DIR/info.yaml" >&2\n'
+        "  exit 2\n"
+        "fi\n"
         'cat > /tmp/new.yaml <<EOF\n'
         '- ID: $NODE_ID\n'
         '  Address: $BIND\n'
