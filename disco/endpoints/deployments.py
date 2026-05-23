@@ -59,6 +59,7 @@ def deployments_get(
 class DeploymentRequestBody(BaseModel):
     commit: str = Field("_DEPLOY_LATEST_", pattern=r"^\S+$")
     disco_file: DiscoFile | None = Field(None, alias="discoFile")
+    no_cache: bool = Field(False, alias="noCache")
 
     @model_validator(mode="after")
     def commit_or_disco_file_required(self) -> "DeploymentRequestBody":
@@ -91,6 +92,7 @@ async def deployments_post(
         commit_hash=req_body.commit if req_body.disco_file is None else None,
         disco_file=req_body.disco_file,
         by_api_key=api_key,
+        no_cache=req_body.no_cache,
     )
     background_tasks.add_task(enqueue_deployment, deployment.id)
     return {

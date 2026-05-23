@@ -66,6 +66,7 @@ class DeploymentInfo:
     disco_host: str
     env_variables: list[tuple[str, str]]
     scale: Mapping[str, int]
+    no_cache: bool
 
     @staticmethod
     async def from_deployment(
@@ -96,6 +97,7 @@ class DeploymentInfo:
                 (env_var.name, decrypt(env_var.value)) for env_var in env_variables
             ],
             scale=scale,
+            no_cache=deployment.no_cache,
         )
 
 
@@ -666,6 +668,7 @@ async def build_images(
             env_variables=env_variables,
             stdout=log_output,
             stderr=log_output,
+            no_cache=new_deployment_info.no_cache,
         )
     for image_name, image in new_deployment_info.disco_file.images.items():
         await log_output(f"Building image {image_name}\n")
@@ -684,6 +687,7 @@ async def build_images(
             env_variables=env_variables,
             stdout=log_output,
             stderr=log_output,
+            no_cache=new_deployment_info.no_cache,
         )
 
     return images
