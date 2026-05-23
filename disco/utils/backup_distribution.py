@@ -44,7 +44,15 @@ async def push_backup_to_all_managers(
     backups) thinning has run on each receiver.
     """
     job_name = f"disco-backup-push-{uuid.uuid4().hex[:12]}"
-    token = await backup_tokens.issue(ttl_seconds=timeout_seconds + 60)
+
+    # One pull per manager. A small slack lets us tolerate Swarm retrying
+    # a task that hit a transient transport error before the entrypoint
+    # ran; without slack the second attempt's pull would 401.
+    manager_count = await _count_manager_nodes()
+    token = await backup_tokens.issue(
+        uses=max(manager_count + 2, 2),
+        ttl_seconds=timeout_seconds + 60,
+    )
 
     async with AsyncSession.begin() as dbsession:
         host_home = await keyvalues.get_value_str(dbsession, "HOST_HOME")
@@ -76,6 +84,16 @@ async def push_backup_to_all_managers(
     finally:
         await backup_tokens.revoke(token)
         await call(["docker", "service", "rm", job_name])
+
+
+async def _count_manager_nodes() -> int:
+    """Number of Swarm manager nodes — used to size the token's use-count."""
+    stdout, _, _ = await check_call([
+        "docker", "node", "ls",
+        "--filter", "role=manager",
+        "--format", "{{.ID}}",
+    ])
+    return len(stdout) or 1
 
 
 async def cleanup_orphaned_push_jobs() -> None:

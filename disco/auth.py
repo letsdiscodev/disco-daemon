@@ -26,7 +26,10 @@ from disco.utils.apikeys import (
     record_api_key_usage,
     record_api_key_usage_sync,
 )
-from disco.utils.backup_auth import find_api_key_by_id_in_backup
+from disco.utils.backup_auth import (
+    append_emergency_auth_audit,
+    find_api_key_by_id_in_backup,
+)
 
 log = logging.getLogger(__name__)
 
@@ -246,6 +249,11 @@ async def get_api_key_emergency_capable(
     if cached is None:
         raise HTTPException(status_code=403)
     log.info("Emergency auth granted to API key %s (via backup)", cached.public_key)
+    append_emergency_auth_audit(
+        api_key_id=cached.id,
+        public_key=cached.public_key,
+        reason="db-unreachable",
+    )
     yield cached.id
 
 
