@@ -17,7 +17,7 @@ from disco.utils.subprocess import call, check_call
 
 log = logging.getLogger(__name__)
 
-DQLITE_IMAGE_TAG = "0.2.0-dns"
+DQLITE_IMAGE_TAG = "0.2.0"
 DQLITE_PORT = 9001
 DQLITE_OVERLAY_NETWORK = "disco-dqlite"
 
