@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -29,6 +30,7 @@ from disco.utils.dqlite import (
     reconfigure_node_as_single_member,
     scale_dqlite_service,
     wait_for_dqlite_service_healthy,
+    wait_for_service_tasks_stopped,
     wipe_dqlite_volume_via_job,
 )
 
@@ -199,8 +201,6 @@ async def recover_quorum(
     removeNodes is treated as a survivor whose dqlite data is wiped and
     re-joined to the new cluster as a fresh member.
     """
-    import time
-
     started = time.monotonic()
     self_name = await get_current_node_disco_name()
 
@@ -219,7 +219,9 @@ async def recover_quorum(
 
     node_ids = await docker.get_node_list()
     nodes = await docker.get_node_details(node_ids)
-    swarm_node_names = {n.labels.get("disco-name") for n in nodes if n.labels.get("disco-name")}
+    swarm_node_names = {
+        n.labels.get("disco-name") for n in nodes if n.labels.get("disco-name")
+    }
 
     for rn in body.removeNodes:
         if rn not in swarm_node_names:
@@ -227,69 +229,119 @@ async def recover_quorum(
     if body.keepNode not in swarm_node_names:
         raise HTTPException(409, f"keepNode '{body.keepNode}' is not in the Swarm")
 
-    is_locked, _ = await _probe_dqlite_locked()
-    if not is_locked:
-        raise HTTPException(409, {
-            "error": "cluster_healthy",
+    # Categorize survivors. Anything not in removeNodes and not the keepNode
+    # is implicitly a rejoin candidate — but a non-ready node can't be wiped
+    # via Swarm task (the job is constrained to that node and will hang).
+    # Force the operator to be explicit: either include it in removeNodes
+    # or get its state back to ready before retrying.
+    ready_names = {
+        n.labels.get("disco-name")
+        for n in nodes
+        if n.labels.get("disco-name") and n.state == "ready"
+    }
+    rejoin_nodes = sorted(
+        ready_names - {body.keepNode} - set(body.removeNodes)
+    )
+    undecided = sorted(
+        (swarm_node_names - ready_names - {body.keepNode}) - set(body.removeNodes)
+    )
+    if undecided:
+        raise HTTPException(400, {
+            "error": "undecided_nodes",
             "message": (
-                "dqlite cluster is currently serving requests. Recovery "
-                "would deliberately break it. Use DELETE /api/disco/swarm/"
-                "nodes/<name> to gracefully remove specific nodes instead."
+                f"Nodes {undecided} are not ready. Either add them to "
+                f"removeNodes (to force-remove from Swarm), or fix their "
+                f"state before retrying."
             ),
+            "undecidedNodes": undecided,
         })
 
-    # Implicit rejoin set: alive survivors not explicitly removed.
-    rejoin_nodes = sorted(
-        swarm_node_names - {body.keepNode} - set(body.removeNodes)
-    )
-
-    if recovery_lock.locked():
+    # Acquire the recovery lock with a tiny timeout — refuses immediately
+    # rather than queueing if another recovery is in flight. (Plain
+    # `if recovery_lock.locked(): raise` would race between check and
+    # acquire below; using wait_for makes the check-and-acquire atomic.)
+    try:
+        await asyncio.wait_for(recovery_lock.acquire(), timeout=0.01)
+    except asyncio.TimeoutError:
         raise HTTPException(409, "another recovery is already in progress")
 
-    async with recovery_lock, reconciler_lock:
-        # Phase 1: stop every existing dqlite service so volumes are free.
-        existing_services = await list_dqlite_services()
-        for svc in existing_services:
-            log.info("Scaling %s to 0", svc)
-            await docker.scale({svc: 0})
-        # Give containers a moment to actually stop and release the volume.
-        await asyncio.sleep(5)
+    try:
+        # Re-probe inside the lock — the cluster may have recovered between
+        # the request-time probe and now (e.g. another concurrent recovery
+        # just finished).
+        is_locked_now, _ = await _probe_dqlite_locked()
+        if not is_locked_now:
+            raise HTTPException(409, {
+                "error": "cluster_healthy",
+                "message": (
+                    "dqlite cluster is currently serving requests. Recovery "
+                    "would deliberately break it. Use DELETE /api/disco/swarm/"
+                    "nodes/<name> to gracefully remove specific nodes instead."
+                ),
+            })
 
-        # Phase 2: rewrite keepNode's raft state as a single-node cluster.
-        await reconfigure_node_as_single_member(body.keepNode)
+        async with reconciler_lock:
+            # Phase 1: stop every existing dqlite service so volumes are free.
+            existing_services = await list_dqlite_services()
+            for svc in existing_services:
+                log.info("Scaling %s to 0", svc)
+                await docker.scale({svc: 0})
+            # Wait for tasks to actually exit and release their volumes —
+            # docker.scale is --detach. A blind sleep would race with the
+            # reconfigure_node_as_single_member container mounting the
+            # same volume the dqlite-demo task hasn't released yet.
+            for svc in existing_services:
+                try:
+                    await wait_for_service_tasks_stopped(svc, timeout_seconds=30)
+                except Exception:
+                    log.exception(
+                        "Service %s did not stop cleanly within 30s; "
+                        "continuing — reconfigure may fail if the volume "
+                        "is still held.",
+                        svc,
+                    )
 
-        # Phase 3: bring keepNode's service back online.
-        await scale_dqlite_service(body.keepNode, 1)
-        await wait_for_dqlite_service_healthy(dqlite_service_name(body.keepNode))
+            # Phase 2: rewrite keepNode's raft state as a single-node cluster.
+            await reconfigure_node_as_single_member(body.keepNode)
 
-        # Phase 4: rejoin each surviving non-keepNode by wiping its data
-        # and restarting; it'll JOIN the new cluster via PEERS.
-        rejoin_outcomes = []
-        for rn in rejoin_nodes:
-            try:
-                await wipe_dqlite_volume_via_job(rn)
-                await scale_dqlite_service(rn, 1)
-                await wait_for_dqlite_service_healthy(dqlite_service_name(rn))
-                rejoin_outcomes.append({"name": rn, "status": "rejoined"})
-            except Exception as exc:
-                log.exception("Failed to rejoin %s", rn)
-                rejoin_outcomes.append({"name": rn, "status": "failed", "error": str(exc)})
+            # Phase 3: bring keepNode's service back online.
+            await scale_dqlite_service(body.keepNode, 1)
+            await wait_for_dqlite_service_healthy(dqlite_service_name(body.keepNode))
 
-        # Phase 5: force-remove the gone nodes from Swarm. Reconciler will
-        # then notice their service-orphans and tear them down.
-        node_by_name = {n.labels.get("disco-name"): n for n in nodes}
-        remove_outcomes = []
-        for rn in body.removeNodes:
-            node = node_by_name.get(rn)
-            if node is None:
-                remove_outcomes.append({"name": rn, "status": "not_found"})
-                continue
-            try:
-                await docker.remove_node(node_id=node.id, force=True)
-                remove_outcomes.append({"name": rn, "status": "removed"})
-            except Exception as exc:
-                log.exception("Failed to docker node rm %s", rn)
-                remove_outcomes.append({"name": rn, "status": "failed", "error": str(exc)})
+            # Phase 4: rejoin each ready survivor by wiping its data and
+            # restarting; it'll JOIN the new cluster via PEERS.
+            rejoin_outcomes = []
+            for rn in rejoin_nodes:
+                try:
+                    await wipe_dqlite_volume_via_job(rn)
+                    await scale_dqlite_service(rn, 1)
+                    await wait_for_dqlite_service_healthy(dqlite_service_name(rn))
+                    rejoin_outcomes.append({"name": rn, "status": "rejoined"})
+                except Exception as exc:
+                    log.exception("Failed to rejoin %s", rn)
+                    rejoin_outcomes.append(
+                        {"name": rn, "status": "failed", "error": str(exc)}
+                    )
+
+            # Phase 5: force-remove the gone nodes from Swarm. Reconciler
+            # will then notice their service-orphans and tear them down.
+            node_by_name = {n.labels.get("disco-name"): n for n in nodes}
+            remove_outcomes = []
+            for rn in body.removeNodes:
+                node = node_by_name.get(rn)
+                if node is None:
+                    remove_outcomes.append({"name": rn, "status": "not_found"})
+                    continue
+                try:
+                    await docker.remove_node(node_id=node.id, force=True)
+                    remove_outcomes.append({"name": rn, "status": "removed"})
+                except Exception as exc:
+                    log.exception("Failed to docker node rm %s", rn)
+                    remove_outcomes.append(
+                        {"name": rn, "status": "failed", "error": str(exc)}
+                    )
+    finally:
+        recovery_lock.release()
 
     # Phase 6 (outside the locks so reconciler can run): final sweep.
     from disco.utils.swarmreconciler import reconcile_dqlite_services

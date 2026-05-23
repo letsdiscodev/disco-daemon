@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from disco.auth import get_api_key_wo_tx
 from disco.endpoints.dependencies import get_db
 from disco.utils import docker, keyvalues
+from disco.utils.cluster_locks import pending_cluster_removes
 from disco.utils.dqlite import (
     cluster_remove,
     dqlite_bind_address,
@@ -98,8 +99,17 @@ async def node_delete(node_name: str):
         )
         # Try to evict the dqlite address proactively before tearing the
         # service down — cluster_remove uses a local container so it
-        # doesn't need the dead node to be reachable.
-        await cluster_remove(dqlite_bind_address(node_name))
+        # doesn't need the dead node to be reachable. If our local
+        # container is itself momentarily down (e.g. mid-restart),
+        # queue the address for the reconciler to retry; without that,
+        # the phantom voter would persist indefinitely because once the
+        # service is removed the reconciler can no longer detect it.
+        address = dqlite_bind_address(node_name)
+        if not await cluster_remove(address):
+            pending_cluster_removes.add(address)
+            log.warning(
+                "cluster_remove(%s) deferred; reconciler will retry", address
+            )
         await remove_dqlite_service(node_name)
         try:
             await docker.remove_node(node_id=target.id, force=True)

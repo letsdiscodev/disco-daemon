@@ -30,6 +30,7 @@ from disco.endpoints import (
 )
 from disco.middleware import middleware
 from disco.utils.asyncworker import async_worker
+from disco.utils.backup_distribution import cleanup_orphaned_push_jobs
 from disco.utils.backup_listener import watch_for_apikey_events_forever
 from disco.utils.deployments import (
     cleanup_deployments_on_disco_boot,
@@ -53,6 +54,10 @@ async def lifespan(app: FastAPI):
     backup_listener_task = loop.create_task(watch_for_apikey_events_forever())
     await cleanup_deployments_on_disco_boot()
     await enqueue_deployments_on_disco_boot()
+    # Clean up any backup-push global-job services left over from a
+    # previous daemon process (crashed mid-push, etc.). Must run before
+    # any push trigger fires.
+    await cleanup_orphaned_push_jobs()
     yield
     async_worker.stop()
     swarm_watcher_task.cancel()

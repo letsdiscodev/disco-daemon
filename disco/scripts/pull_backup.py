@@ -41,7 +41,10 @@ def main() -> None:
         headers={"Authorization": f"Bearer {token}"},
     )
     tmp = target.with_suffix(target.suffix + ".tmp")
-    with urllib.request.urlopen(req) as resp:
+    # Bounded timeout so a hung HTTP server doesn't deadlock the Swarm
+    # task indefinitely (which would in turn make the parent push job's
+    # _wait_for_global_job hit its own timeout much later).
+    with urllib.request.urlopen(req, timeout=120) as resp:
         with open(tmp, "wb") as f:
             shutil.copyfileobj(resp, f)
     tmp.replace(target)

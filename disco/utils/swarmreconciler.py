@@ -18,7 +18,11 @@ from __future__ import annotations
 import logging
 
 from disco.utils import docker
-from disco.utils.cluster_locks import reconciler_lock, recovery_lock
+from disco.utils.cluster_locks import (
+    pending_cluster_removes,
+    reconciler_lock,
+    recovery_lock,
+)
 from disco.utils.dqlite import (
     cluster_remove,
     disco_name_from_dqlite_service,
@@ -109,13 +113,27 @@ async def _reconcile_once() -> None:
         # Evict first while the service's address is still in the cluster's
         # raft view; once the service is gone there may be no peer at that
         # address for the leader to inspect on a stuck join elsewhere.
-        evicted = await cluster_remove(dqlite_bind_address(name))
+        address = dqlite_bind_address(name)
+        evicted = await cluster_remove(address)
         if not evicted:
+            # Record so future passes retry — once we remove the service
+            # below, the orphan check can no longer see this name, so
+            # without this retry queue the phantom voter would be
+            # permanent.
+            pending_cluster_removes.add(address)
             log.info(
-                "Cluster .remove for %s did not succeed; will retry on next reconcile",
+                "Cluster .remove for %s deferred; will retry on next reconcile",
                 name,
             )
         try:
             await remove_dqlite_service(name)
         except Exception:
             log.exception("Failed to remove dqlite service for %s", name)
+
+    # Retry any cluster_removes that were deferred in previous passes.
+    # The dqlite admin path needs a local running container; if it was
+    # momentarily unavailable last time, try again now.
+    for address in list(pending_cluster_removes):
+        if await cluster_remove(address):
+            pending_cluster_removes.discard(address)
+            log.info("Deferred cluster .remove for %s succeeded", address)

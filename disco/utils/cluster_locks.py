@@ -21,3 +21,11 @@ reconciler_lock = asyncio.Lock()
 # Held by recovery for the entire op. The reconciler skips its run
 # if this is locked.
 recovery_lock = asyncio.Lock()
+
+# Addresses we tried to evict from the dqlite cluster but couldn't
+# (e.g. local dqlite container was momentarily down). Each reconcile
+# pass retries them until success. Without this, a single transient
+# failure during node deletion leaves the dqlite cluster forever
+# carrying a phantom voter that the reconciler can no longer detect
+# as an orphan (the Swarm service is already gone).
+pending_cluster_removes: set[str] = set()

@@ -12,6 +12,8 @@ enables hostname-style bind addresses in dqlite-demo.
 import asyncio
 import functools
 import logging
+import time
+import uuid
 
 from disco.utils.subprocess import call, check_call
 
@@ -255,10 +257,16 @@ async def remove_dqlite_service(disco_name: str) -> None:
 async def wait_for_dqlite_service_healthy(
     service_name: str, timeout_seconds: int = 180
 ) -> None:
-    """Block until the service has a Running task and its API port is open."""
-    log.info("Waiting for %s to become healthy", service_name)
-    import time
+    """Block until the service has a Running task whose container is healthy.
 
+    Just "Running" is not enough: `--health-start-period 60s` lets the
+    container be Running but failing healthchecks (because dqlite-demo
+    hasn't opened the API port yet). Callers immediately open SQLAlchemy
+    connections, which fail. We require either a healthcheck reporting
+    `healthy` or — failing that — a successful TCP probe of the API port
+    via `docker exec`.
+    """
+    log.info("Waiting for %s to become healthy", service_name)
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         stdout, _, _ = await check_call(
@@ -270,14 +278,90 @@ async def wait_for_dqlite_service_healthy(
                 "--filter",
                 "desired-state=running",
                 "--format",
-                "{{ .CurrentState }}",
+                "{{ .ID }}|{{ .CurrentState }}",
             ]
         )
-        if any(state.startswith("Running") for state in stdout):
-            log.info("%s has a Running task", service_name)
+        running_task_id: str | None = None
+        for line in stdout:
+            try:
+                task_id, current = line.split("|", 1)
+            except ValueError:
+                continue
+            if current.startswith("Running"):
+                running_task_id = task_id
+                break
+        if running_task_id is None:
+            await asyncio.sleep(2)
+            continue
+        # Found a Running task — probe its container's health. `docker
+        # inspect` on the task ID returns its container ID; from there we
+        # can read Health.Status (if a healthcheck is configured) or fall
+        # back to a TCP probe.
+        if await _task_is_healthy(running_task_id):
+            log.info("%s has a healthy task", service_name)
             return
         await asyncio.sleep(2)
     raise Exception(f"Timeout waiting for dqlite service {service_name}")
+
+
+async def _task_is_healthy(task_id: str) -> bool:
+    """Return True iff the Swarm task's container reports healthy.
+
+    Uses docker inspect to read the container's Health.Status. The Swarm
+    task ID -> container ID indirection is handled via inspect on the
+    task, which has a .Status.ContainerStatus.ContainerID field.
+    """
+    stdout, _, _ = await check_call(
+        ["docker", "inspect", "--format",
+         "{{ .Status.ContainerStatus.ContainerID }}", task_id]
+    )
+    if not stdout or not stdout[0]:
+        return False
+    container_id = stdout[0]
+    health_stdout, _, p = await call(
+        ["docker", "inspect", "--format",
+         "{{ if .State.Health }}{{ .State.Health.Status }}{{ end }}",
+         container_id]
+    )
+    if p.returncode != 0:
+        return False
+    status = (health_stdout[0] if health_stdout else "").strip()
+    # If there's no healthcheck configured (status==""), fall back to a
+    # TCP probe inside the container. We use the API port (10001) which
+    # binds 0.0.0.0 only once dqlite-demo has finished initializing.
+    if status == "":
+        _, _, p = await call(
+            ["docker", "exec", container_id, "nc", "-z", "-w", "2",
+             "localhost", "10001"]
+        )
+        return p.returncode == 0
+    return status == "healthy"
+
+
+async def wait_for_service_tasks_stopped(
+    service_name: str, timeout_seconds: int = 60
+) -> None:
+    """After scaling a service to 0, block until its tasks have actually
+    exited and released their volumes. `docker service scale --detach`
+    returns once Swarm accepts the request, not once tasks are stopped;
+    callers that immediately mount the same volume from another container
+    race with the still-running task.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        stdout, _, _ = await check_call(
+            ["docker", "service", "ps", service_name,
+             "--filter", "desired-state=running",
+             "--format", "{{ .CurrentState }}"]
+        )
+        if not any(state.startswith("Running") or state.startswith("Starting")
+                   or state.startswith("Preparing") or state.startswith("Ready")
+                   for state in stdout):
+            return
+        await asyncio.sleep(1)
+    raise Exception(
+        f"Timeout waiting for tasks of {service_name} to stop"
+    )
 
 
 def wait_for_dqlite_service_healthy_sync(
@@ -436,7 +520,7 @@ async def wipe_dqlite_volume_via_job(disco_name: str, timeout_seconds: int = 60)
     volume lives on that node's host and can't be reached directly from
     the daemon's container.
     """
-    job_name = f"disco-wipe-dqlite-{disco_name}-{int(asyncio.get_event_loop().time() * 1000) % 1_000_000}"
+    job_name = f"disco-wipe-dqlite-{disco_name}-{uuid.uuid4().hex[:8]}"
     args = [
         "docker", "service", "create",
         "--name", job_name,
@@ -457,8 +541,6 @@ async def wipe_dqlite_volume_via_job(disco_name: str, timeout_seconds: int = 60)
 
 async def _wait_for_job_complete(job_name: str, timeout_seconds: int) -> None:
     """Wait for a replicated-job's tasks to reach Complete state."""
-    import time
-
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         stdout, _, _ = await check_call([

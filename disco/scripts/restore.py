@@ -40,6 +40,7 @@ from disco.utils.dqlite import (
     dqlite_service_name,
     scale_dqlite_service,
     wait_for_dqlite_service_healthy,
+    wait_for_service_tasks_stopped,
     wipe_dqlite_volume_via_job,
 )
 from disco.utils.subprocess import call as async_call
@@ -48,7 +49,6 @@ from disco.utils.subprocess import check_call as async_check_call
 log = logging.getLogger(__name__)
 
 CONFIRM_TOKEN = "RESTORE"
-WAIT_SETTLE_SECONDS = 8
 
 # iterdump emits these around the actual statements; the daemon's
 # outer transaction handles commit semantics so we strip them.
@@ -206,8 +206,17 @@ async def _do_restore(
     for svc in existing_services:
         log.info("Scaling %s to 0", svc)
         await async_call(["docker", "service", "scale", f"{svc}=0", "--detach"])
-    log.info("Waiting %ds for containers to stop", WAIT_SETTLE_SECONDS)
-    await asyncio.sleep(WAIT_SETTLE_SECONDS)
+    # Actively wait until tasks have exited and released their volumes
+    # rather than blind-sleeping. `docker service scale --detach` returns
+    # before the container actually stops; mounting the same volume from
+    # another container would race the still-running task.
+    for svc in existing_services:
+        try:
+            await wait_for_service_tasks_stopped(svc, timeout_seconds=30)
+        except Exception:
+            log.exception(
+                "Service %s did not stop within 30s; continuing", svc,
+            )
 
     # Phase 2: wipe keep-node's volume so dqlite-demo will fresh-bootstrap.
     log.info("Wiping dqlite volume on keep-node %s", keep_node)

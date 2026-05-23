@@ -78,6 +78,28 @@ async def push_backup_to_all_managers(
         await call(["docker", "service", "rm", job_name])
 
 
+async def cleanup_orphaned_push_jobs() -> None:
+    """Remove backup-push global-job services left over from a previous
+    daemon process. A daemon crash mid-push leaves the in-memory bearer
+    token gone and the `finally`-block `service rm` un-run, so the job
+    service lingers. Run this on daemon startup before issuing new
+    pushes, otherwise these dead services pile up.
+    """
+    try:
+        stdout, _, _ = await check_call([
+            "docker", "service", "ls",
+            "--filter", "name=disco-backup-push-",
+            "--format", "{{.Name}}",
+        ])
+    except Exception:
+        log.exception("Failed to list backup-push services for cleanup")
+        return
+    for svc in stdout:
+        if svc.startswith("disco-backup-push-"):
+            log.info("Removing orphan backup-push service %s", svc)
+            await call(["docker", "service", "rm", svc])
+
+
 async def _wait_for_global_job(job_name: str, timeout_seconds: int) -> None:
     """Block until every task of a global-job service has finished.
 
