@@ -16,8 +16,10 @@ from disco.utils import docker, keyvalues
 from disco.utils.apikeys import create_api_key
 from disco.utils.caddy import write_caddy_init_config
 from disco.utils.dqlite import (
-    start_first_dqlite_service,
-    wait_for_dqlite_service,
+    dqlite_service_name,
+    start_first_dqlite_service_sync,
+    strip_bootstrap_allowed_sync,
+    wait_for_dqlite_service_healthy_sync,
 )
 from disco.utils.encryption import generate_key
 from disco.utils.randomname import generate_random_name_sync
@@ -59,9 +61,15 @@ def main() -> None:
     docker_swarm_create_disco_encryption_key()
 
     print("Starting dqlite cluster (bootstrap node)")
-    start_first_dqlite_service(disco_name)
+    start_first_dqlite_service_sync(disco_name)
     print("Waiting for dqlite to be ready")
-    wait_for_dqlite_service(f"dqlite-{disco_name}")
+    wait_for_dqlite_service_healthy_sync(dqlite_service_name(disco_name))
+    # Strip BOOTSTRAP_ALLOWED so a future volume loss can't accidentally
+    # bootstrap a second cluster. This rolls the task once; dqlite-demo
+    # picks up the persisted bind address (a DNS name) and resumes.
+    print("Disabling bootstrap mode")
+    strip_bootstrap_allowed_sync(disco_name)
+    wait_for_dqlite_service_healthy_sync(dqlite_service_name(disco_name))
 
     init_database(
         image=image,

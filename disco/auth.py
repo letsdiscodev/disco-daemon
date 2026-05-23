@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from typing import Annotated
 
 import jwt
@@ -8,6 +10,7 @@ from fastapi.security import (
     HTTPBasicCredentials,
     HTTPBearer,
 )
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
@@ -23,6 +26,13 @@ from disco.utils.apikeys import (
     record_api_key_usage,
     record_api_key_usage_sync,
 )
+from disco.utils.backup_auth import find_api_key_by_id_in_backup
+
+log = logging.getLogger(__name__)
+
+# Short timeout for the normal DB path before we give up and fall back
+# to the local backup. Chosen so locked-cluster cases surface quickly.
+EMERGENCY_DB_TIMEOUT_S = 3.0
 
 basic_header = HTTPBasic(auto_error=False)
 bearer_header = HTTPBearer(auto_error=False)
@@ -167,6 +177,96 @@ async def get_api_key_wo_tx(
         await record_api_key_usage(dbsession, api_key)
 
     yield api_key_id
+
+
+async def get_api_key_emergency_capable(
+    basic_credentials: Annotated[HTTPBasicCredentials | None, Depends(basic_header)],
+    bearer_credentials: Annotated[
+        HTTPAuthorizationCredentials | None, Depends(bearer_header)
+    ],
+):
+    """Auth dependency that survives dqlite being locked.
+
+    Tries the normal DB path first with a short timeout. If dqlite is
+    unreachable (cluster lockup, quorum loss), falls back to reading
+    the local backup file at /disco/backups/latest.db and looking up
+    the key there. For use on status and recovery endpoints that must
+    remain reachable during a cluster outage.
+
+    Bearer-JWT auth only works in the DB path because JWT verification
+    requires reading the API key's secret from the DB. During an
+    outage, operators should use Basic auth (the CLI's default).
+    """
+    # Happy path: cluster is healthy, do normal DB auth.
+    try:
+        async with asyncio.timeout(EMERGENCY_DB_TIMEOUT_S):
+            async with AsyncSession.begin() as dbsession:
+                api_key_str = await _resolve_credentials_via_db(
+                    basic_credentials, bearer_credentials, dbsession
+                )
+                if api_key_str is None:
+                    raise HTTPException(status_code=401)
+                api_key = await get_valid_api_key_by_id(dbsession, api_key_str)
+                if api_key is None:
+                    raise HTTPException(status_code=403)
+                await record_api_key_usage(dbsession, api_key)
+                yield api_key.id
+                return
+    except HTTPException:
+        raise
+    except (asyncio.TimeoutError, OperationalError, OSError) as exc:
+        log.warning(
+            "Emergency auth: DB unreachable (%s); attempting backup fallback", exc
+        )
+
+    # Fallback: cluster is locked. Validate against the local backup file.
+    if basic_credentials is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Basic auth required while the dqlite cluster is unavailable",
+        )
+    api_key_id = basic_credentials.username
+    cached = find_api_key_by_id_in_backup(api_key_id)
+    if cached is None:
+        raise HTTPException(status_code=403)
+    log.info("Emergency auth granted to API key %s (via backup)", cached.public_key)
+    yield cached.id
+
+
+async def _resolve_credentials_via_db(
+    basic_credentials: HTTPBasicCredentials | None,
+    bearer_credentials: HTTPAuthorizationCredentials | None,
+    dbsession: AsyncDBSession,
+) -> str | None:
+    """Return the API key id from either Basic or Bearer-JWT credentials,
+    or None if neither resolves. Mirrors the logic in get_api_key()."""
+    if basic_credentials is not None:
+        return basic_credentials.username
+    if bearer_credentials is None:
+        return None
+    bearer_jwt = bearer_credentials.credentials
+    try:
+        headers = jwt.get_unverified_header(bearer_jwt)
+    except jwt.PyJWTError:
+        return None
+    public_key = headers.get("kid")
+    if public_key is None:
+        return None
+    api_key_for_public_key = await get_api_key_by_public_key(dbsession, public_key)
+    if api_key_for_public_key is None:
+        return None
+    disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
+    try:
+        jwt.decode(
+            bearer_jwt,
+            api_key_for_public_key.id,
+            algorithms=["HS256"],
+            audience=disco_host,
+            options=dict(verify_signature=True, verify_exp=True),
+        )
+    except jwt.PyJWTError:
+        return None
+    return api_key_for_public_key.id
 
 
 async def validate_token(token: str) -> ApiKey | None:

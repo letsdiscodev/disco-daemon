@@ -9,77 +9,16 @@ from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from disco.auth import get_api_key_wo_tx
 from disco.endpoints.dependencies import get_db
 from disco.utils import docker, keyvalues
-from disco.utils.dqlite import DQLITE_IMAGE_TAG, disco_name_to_node_id
-from disco.utils.randomname import generate_random_name
-from disco.utils.subprocess import check_call
+from disco.utils.dqlite import (
+    cluster_remove,
+    dqlite_bind_address,
+    remove_dqlite_service,
+)
+from disco.utils.swarmreconciler import reconcile_dqlite_services
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
-
-
-async def get_any_existing_dqlite_address() -> str:
-    args = [
-        "docker",
-        "service",
-        "ls",
-        "--filter",
-        "name=dqlite-",
-        "--format",
-        "{{ .Name }}",
-    ]
-    stdout, _, _ = await check_call(args)
-    if len(stdout) == 0:
-        raise RuntimeError("No existing dqlite node")
-    return f"{stdout[0]}:9001"
-
-
-async def start_dqlite_for_node(disco_name: str) -> None:
-    service_name = f"dqlite-{disco_name}"
-    if await docker.service_exists(service_name):
-        log.info("dqlite service %s already exists", service_name)
-        return
-    join_address = await get_any_existing_dqlite_address()
-    node_id = disco_name_to_node_id(disco_name)
-    log.info(
-        "Starting dqlite service %s with NODE_ID %d, joining %s",
-        service_name,
-        node_id,
-        join_address,
-    )
-    args = [
-        "docker",
-        "service",
-        "create",
-        "--name",
-        service_name,
-        "--network",
-        "disco-dqlite",
-        "--network",
-        "disco-main",
-        "--constraint",
-        f"node.labels.disco-name=={disco_name}",
-        "--mount",
-        f"source=dqlite-{disco_name},target=/data",
-        "--env",
-        f"NODE_ID={node_id}",
-        "--env",
-        "PORT=9001",
-        "--env",
-        f"JOIN={join_address}",
-        "--health-cmd",
-        "/app/healthcheck.sh",
-        "--health-interval",
-        "5s",
-        "--health-start-period",
-        "30s",
-        "--log-driver",
-        "json-file",
-        "--log-opt",
-        "max-size=20m",
-        f"letsdiscodev/dqlite:{DQLITE_IMAGE_TAG}",
-    ]
-    await check_call(args)
 
 
 @router.get("/api/disco/swarm/join-token")
@@ -96,35 +35,30 @@ async def join_token_get(dbsession: Annotated[AsyncDBSession, Depends(get_db)]):
 
 @router.get("/api/disco/swarm/nodes")
 async def get_node_list():
+    """Snapshot of the current Swarm membership.
+
+    This is a *Swarm-side* view, so it works even when one or more nodes
+    are unreachable — we read everything from the manager's local Swarm
+    raft state via `docker node inspect`, not from the nodes themselves.
+
+    The new disco-name assignment (for nodes that don't yet have a label)
+    and per-node dqlite service creation are owned by the reconciler now,
+    not this endpoint. We just describe what's there.
+    """
     node_ids = await docker.get_node_list()
     nodes = await docker.get_node_details(node_ids)
-    for node in nodes:
-        if "disco-name" not in node.labels:
-            node.labels["disco-name"] = await generate_random_name()
-            await docker.set_node_label(
-                node_id=node.id, key="disco-name", value=node.labels["disco-name"]
-            )
-            log.info(
-                "New node %s assigned disco-name: %s",
-                node.id,
-                node.labels["disco-name"],
-            )
-            try:
-                await start_dqlite_for_node(node.labels["disco-name"])
-            except Exception as e:
-                log.error(
-                    "Failed to start dqlite for node %s: %s",
-                    node.labels["disco-name"],
-                    e,
-                )
     return {
         "nodes": [
             {
                 "created": node.created,
-                "name": node.labels["disco-name"],
+                "name": node.labels.get("disco-name") or "",
                 "state": node.state,
+                "availability": node.availability,
+                "role": node.role,
                 "address": node.address,
                 "isLeader": node.labels.get("disco-role") == "main",
+                "isReady": node.state == "ready",
+                "isDown": node.state in ("down", "disconnected"),
             }
             for node in nodes
         ],
@@ -133,42 +67,70 @@ async def get_node_list():
 
 @router.delete("/api/disco/swarm/nodes/{node_name}")
 async def node_delete(node_name: str):
+    """Remove a node from the Swarm and clean up its dqlite footprint.
+
+    Works whether the target node is reachable or not. For unreachable
+    nodes we skip the graceful "tell the node to leave" steps (which
+    would hang) and go straight to forced removal on the manager side.
+    The dqlite service + raft membership cleanup happens via the
+    reconciler at the end — that codepath is the same for both flows
+    and is idempotent, so a partial failure just gets retried by the
+    periodic reconcile.
+    """
     log.info("Removing node %s", node_name)
     node_ids = await docker.get_node_list()
     nodes = await docker.get_node_details(node_ids)
-    node_id = None
+    target = None
     for node in nodes:
         if node.labels.get("disco-name") == node_name:
-            if node.labels.get("disco-role") == "main":
-                raise HTTPException(422, "Can't remove main node")
-            node_id = node.id
-    if node_id is None:
+            target = node
+            break
+    if target is None:
         log.info("Didn't find node %s", node_name)
         raise HTTPException(status_code=404)
+    if target.labels.get("disco-role") == "main":
+        raise HTTPException(422, "Can't remove main node")
 
-    # Remove dqlite service for this node
-    dqlite_service = f"dqlite-{node_name}"
-    if await docker.service_exists(dqlite_service):
-        log.info("Removing dqlite service %s", dqlite_service)
-        await docker.rm_service(dqlite_service)
-
-    log.info("Starting swarm leaver job for node %s", node_name)
-    service_name = await docker.leave_swarm(node_id=node_id)
-    log.info("Draining node %s", node_name)
-    await docker.drain_node(node_id=node_id)
-    log.info("Removing swarm leaver service for node %s", node_name)
-    await docker.rm_service(service_name)
-    timeout = datetime.now(timezone.utc) + timedelta(minutes=20)
-    while datetime.now(timezone.utc) < timeout:
+    node_is_down = target.state in ("down", "disconnected")
+    if node_is_down:
+        log.info(
+            "Node %s is %s; using forced removal path", node_name, target.state
+        )
+        # Try to evict the dqlite address proactively before tearing the
+        # service down — cluster_remove uses a local container so it
+        # doesn't need the dead node to be reachable.
+        await cluster_remove(dqlite_bind_address(node_name))
+        await remove_dqlite_service(node_name)
         try:
-            log.info("Removing node %s", node_name)
-            await docker.remove_node(node_id=node_id)
-            log.info("Removed node %s", node_name)
-            return {}
+            await docker.remove_node(node_id=target.id, force=True)
         except Exception:
-            log.info("Failed to remove, node, waiting 5 seconds")
-            await asyncio.sleep(5)
-    log.info("Removing node --force %s", node_name)
-    await docker.remove_node(node_id=node_id, force=True)
-    log.info("Removed node --force %s", node_name)
+            log.exception("force docker node rm %s failed", node_name)
+            raise HTTPException(500, f"Failed to force-remove node {node_name}")
+    else:
+        log.info("Starting swarm leaver job for node %s", node_name)
+        leaver_service = await docker.leave_swarm(node_id=target.id)
+        log.info("Draining node %s", node_name)
+        await docker.drain_node(node_id=target.id)
+        log.info("Removing swarm leaver service for node %s", node_name)
+        await docker.rm_service(leaver_service)
+        # Once the node has left the swarm, docker node rm will succeed.
+        # It can lag — wait for up to 20 minutes, then force.
+        deadline = datetime.now(timezone.utc) + timedelta(minutes=20)
+        removed = False
+        while datetime.now(timezone.utc) < deadline:
+            try:
+                await docker.remove_node(node_id=target.id)
+                log.info("Removed node %s", node_name)
+                removed = True
+                break
+            except Exception:
+                log.info("docker node rm failed, retrying in 5s")
+                await asyncio.sleep(5)
+        if not removed:
+            log.info("Force-removing node %s after timeout", node_name)
+            await docker.remove_node(node_id=target.id, force=True)
+
+    # Final reconciler pass: removes the per-node dqlite service if it's
+    # still around and ensures cluster .remove was called (idempotent).
+    await reconcile_dqlite_services()
     return {}

@@ -19,6 +19,11 @@ import disco
 from disco.models.db import Session
 from disco.scripts.init import start_disco_daemon
 from disco.utils import keyvalues
+from disco.utils.backup import (
+    BACKUP_DIR,
+    make_local_backup_sync,
+    special_filename,
+)
 from disco.utils.meta import save_done_updating
 from disco.utils.subprocess import decode_text
 
@@ -53,6 +58,15 @@ def main() -> None:
                 return
     print(f"Installed version: {installed_version}")
     print(f"New version: {disco.__version__}")
+    # Pre-update backup, local-only. Distribution happens later via the
+    # new daemon's hourly cron once it's healthy. This file is for
+    # manual operator inspection if something goes wrong.
+    try:
+        pre = BACKUP_DIR / special_filename("pre-update-", datetime.now(timezone.utc))
+        print(f"Taking pre-update backup at {pre}")
+        make_local_backup_sync(pre)
+    except Exception:
+        log.exception("Pre-update backup failed; continuing with update")
     print("Stopping existing Disco processes")
     try:
         stop_disco_daemon()
@@ -85,6 +99,14 @@ def main() -> None:
         host_home = keyvalues.get_value_sync(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
     start_disco_daemon(host_home, image)
+    # Post-update backup, local-only. Captures the state immediately after
+    # all version-tasks have completed.
+    try:
+        post = BACKUP_DIR / special_filename("post-update-", datetime.now(timezone.utc))
+        print(f"Taking post-update backup at {post}")
+        make_local_backup_sync(post)
+    except Exception:
+        log.exception("Post-update backup failed; update is otherwise complete")
     with Session.begin() as dbsession:
         save_done_updating(dbsession)
 

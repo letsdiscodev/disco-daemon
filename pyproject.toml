@@ -15,6 +15,8 @@ disco_init_db = "disco.scripts.init:init_database_script"
 disco_update = "disco.scripts.update:main"
 disco_set_core_logging = "disco.scripts.setcorelogging:main"
 disco_leave_swarm = "disco.scripts.leave_swarm:main"
+disco_pull_backup = "disco.scripts.pull_backup:main"
+disco_restore = "disco.scripts.restore:main"
 
 [tool.ruff.lint]
 # Enable the isort rules.
