@@ -22,13 +22,16 @@ prefixes are exempt from thinning and kept indefinitely.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import pathlib
 import re
+import shutil
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from typing import Iterable
 
+from sqlalchemy import text
 from sqlalchemy.dialects import sqlite as sqlite_dialect_module
 from sqlalchemy.schema import CreateIndex, CreateTable
 
@@ -124,9 +127,18 @@ def _build_schema_in_mem(mem: sqlite3.Connection) -> None:
 
 
 async def _copy_data_into_mem(mem: sqlite3.Connection) -> None:
-    """Snapshot-isolated copy of every table into the in-memory SQLite."""
+    """Snapshot-isolated copy of every table into the in-memory SQLite.
+
+    Forces BEGIN IMMEDIATE before the first SELECT to acquire a write
+    lock up-front. Under SQLite/dqlite semantics, a deferred read
+    transaction can lose its snapshot if it's promoted to write later or
+    if other connections commit between our SELECTs. IMMEDIATE pins the
+    snapshot for the lifetime of this transaction, so cross-table reads
+    are guaranteed consistent — important for FK validity on restore.
+    """
     async with AsyncSession() as session:
         async with session.begin():
+            await session.execute(text("BEGIN IMMEDIATE"))
             for table in base_metadata.sorted_tables:
                 result = await session.execute(table.select())
                 rows = result.all()
@@ -142,10 +154,14 @@ async def _copy_data_into_mem(mem: sqlite3.Connection) -> None:
 
 
 def replace_latest(latest_path: pathlib.Path, source: pathlib.Path) -> None:
-    """Atomically point `latest.db` at the content of `source`."""
+    """Atomically point `latest.db` at the content of `source`.
+
+    Uses shutil.copyfile so we don't materialize the whole file in
+    memory — backups can grow to hundreds of MB.
+    """
     latest_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = latest_path.with_suffix(latest_path.suffix + ".tmp")
-    tmp.write_bytes(source.read_bytes())
+    shutil.copyfile(source, tmp)
     tmp.replace(latest_path)
 
 
@@ -213,6 +229,14 @@ def list_backups(backup_dir: pathlib.Path) -> Iterable[pathlib.Path]:
             yield f
 
 
+# Serialises concurrent calls from the hourly cron and the API-key event
+# listener. Two simultaneous backups would race on latest.db, dispatch
+# two global-jobs, and produce non-deterministic latest contents on each
+# receiving manager. The lock makes the second caller wait; in practice
+# both wake-up sources fire infrequently so the wait is short.
+_periodic_backup_lock = asyncio.Lock()
+
+
 async def make_and_push_periodic_backup() -> None:
     """Create a periodic backup on local disk and distribute to all managers.
 
@@ -222,16 +246,30 @@ async def make_and_push_periodic_backup() -> None:
     """
     from disco.utils.backup_distribution import push_backup_to_all_managers
 
-    now = datetime.now(timezone.utc)
-    filename = periodic_filename(now)
-    target = BACKUP_DIR / filename
-    await make_local_backup(target)
-    replace_latest(BACKUP_DIR / LATEST_FILENAME, target)
-    await push_backup_to_all_managers(filename, is_periodic=True)
+    async with _periodic_backup_lock:
+        now = datetime.now(timezone.utc)
+        filename = periodic_filename(now)
+        target = BACKUP_DIR / filename
+        await make_local_backup(target)
+        replace_latest(BACKUP_DIR / LATEST_FILENAME, target)
+        await push_backup_to_all_managers(filename, is_periodic=True)
 
 
 def make_local_backup_sync(target: pathlib.Path) -> None:
-    """Sync wrapper for non-async callers (e.g. the update script)."""
-    import asyncio
+    """Sync wrapper for non-async callers (e.g. the update script).
 
-    asyncio.run(make_local_backup(target))
+    Disposes the module-global async engine before running. asyncio.run
+    creates a fresh event loop each call, but the SQLAlchemy engine is
+    process-global and its connection pool is bound to the first loop
+    it saw. Calling this twice in one process (pre + post-update in
+    disco_update) would otherwise reuse a destroyed loop's connections.
+    """
+    from disco.models.db import get_async_engine
+
+    async def run() -> None:
+        try:
+            await make_local_backup(target)
+        finally:
+            await get_async_engine().dispose()
+
+    asyncio.run(run())
