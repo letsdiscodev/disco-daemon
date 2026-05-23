@@ -13,7 +13,7 @@ import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
@@ -42,7 +42,24 @@ LOCK_PROBE_TIMEOUT_S = 3.0
 
 
 async def _probe_dqlite_locked() -> tuple[bool, str | None]:
-    """Returns (is_locked, last_error_message)."""
+    """Returns (is_locked, last_error_message).
+
+    Probes twice with a short gap between, both must fail for us to call
+    the cluster locked. Single transient errors (network blip, brief
+    leader-election) shouldn't trigger destructive recovery suggestions
+    or unlock the destructive endpoints.
+    """
+    is_locked_1, err_1 = await _single_probe()
+    if not is_locked_1:
+        return False, None
+    await asyncio.sleep(1)
+    is_locked_2, err_2 = await _single_probe()
+    if not is_locked_2:
+        return False, None
+    return True, err_2 or err_1
+
+
+async def _single_probe() -> tuple[bool, str | None]:
     try:
         async with asyncio.timeout(LOCK_PROBE_TIMEOUT_S):
             async with AsyncSession.begin() as dbsession:
@@ -174,14 +191,22 @@ def _disco_name_for_address(address: str) -> str | None:
         rest = address[len("tasks."):]
         if ":" in rest:
             rest = rest.split(":", 1)[0]
-        return disco_name_from_dqlite_service(rest)
-    # Older or alternate naming — best effort.
+        name = disco_name_from_dqlite_service(rest)
+        # Empty-string is not a real disco-name; bail rather than
+        # silently match other label-less nodes.
+        return name if name else None
     return None
 
 
 class RecoverQuorumRequest(BaseModel):
-    keepNode: str
-    removeNodes: list[str]
+    # snake_case fields + camelCase aliases to match the rest of disco's
+    # public API. `extra="forbid"` means a misspelled "removenodes"
+    # raises 422 instead of silently being treated as the default
+    # (empty list), which would trigger the wipe-survivors path.
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    keep_node: str = Field(..., alias="keepNode")
+    remove_nodes: list[str] = Field(..., alias="removeNodes")
 
 
 @router.post("/api/disco/swarm/dqlite/recover-quorum")
@@ -204,7 +229,7 @@ async def recover_quorum(
     started = time.monotonic()
     self_name = await get_current_node_disco_name()
 
-    if body.keepNode != self_name:
+    if body.keep_node != self_name:
         raise HTTPException(409, {
             "error": "keep_node_mismatch",
             "message": (
@@ -214,7 +239,7 @@ async def recover_quorum(
             "daemonNode": self_name,
         })
 
-    if body.keepNode in body.removeNodes:
+    if body.keep_node in body.remove_nodes:
         raise HTTPException(400, "keepNode cannot also be in removeNodes")
 
     node_ids = await docker.get_node_list()
@@ -223,11 +248,11 @@ async def recover_quorum(
         n.labels.get("disco-name") for n in nodes if n.labels.get("disco-name")
     }
 
-    for rn in body.removeNodes:
+    for rn in body.remove_nodes:
         if rn not in swarm_node_names:
             raise HTTPException(400, f"unknown node in removeNodes: {rn}")
-    if body.keepNode not in swarm_node_names:
-        raise HTTPException(409, f"keepNode '{body.keepNode}' is not in the Swarm")
+    if body.keep_node not in swarm_node_names:
+        raise HTTPException(409, f"keepNode '{body.keep_node}' is not in the Swarm")
 
     # Categorize survivors. Anything not in removeNodes and not the keepNode
     # is implicitly a rejoin candidate — but a non-ready node can't be wiped
@@ -240,10 +265,10 @@ async def recover_quorum(
         if n.labels.get("disco-name") and n.state == "ready"
     }
     rejoin_nodes = sorted(
-        ready_names - {body.keepNode} - set(body.removeNodes)
+        ready_names - {body.keep_node} - set(body.remove_nodes)
     )
     undecided = sorted(
-        (swarm_node_names - ready_names - {body.keepNode}) - set(body.removeNodes)
+        (swarm_node_names - ready_names - {body.keep_node}) - set(body.remove_nodes)
     )
     if undecided:
         raise HTTPException(400, {
@@ -302,11 +327,11 @@ async def recover_quorum(
                     )
 
             # Phase 2: rewrite keepNode's raft state as a single-node cluster.
-            await reconfigure_node_as_single_member(body.keepNode)
+            await reconfigure_node_as_single_member(body.keep_node)
 
             # Phase 3: bring keepNode's service back online.
-            await scale_dqlite_service(body.keepNode, 1)
-            await wait_for_dqlite_service_healthy(dqlite_service_name(body.keepNode))
+            await scale_dqlite_service(body.keep_node, 1)
+            await wait_for_dqlite_service_healthy(dqlite_service_name(body.keep_node))
 
             # Phase 4: rejoin each ready survivor by wiping its data and
             # restarting; it'll JOIN the new cluster via PEERS.
@@ -327,7 +352,7 @@ async def recover_quorum(
             # will then notice their service-orphans and tear them down.
             node_by_name = {n.labels.get("disco-name"): n for n in nodes}
             remove_outcomes = []
-            for rn in body.removeNodes:
+            for rn in body.remove_nodes:
                 node = node_by_name.get(rn)
                 if node is None:
                     remove_outcomes.append({"name": rn, "status": "not_found"})
@@ -349,7 +374,7 @@ async def recover_quorum(
 
     return {
         "status": "ok",
-        "keptNode": body.keepNode,
+        "keptNode": body.keep_node,
         "rejoinedNodes": rejoin_outcomes,
         "removedNodes": remove_outcomes,
         "elapsedMs": int((time.monotonic() - started) * 1000),

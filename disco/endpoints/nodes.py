@@ -9,7 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from disco.auth import get_api_key_wo_tx
 from disco.endpoints.dependencies import get_db
 from disco.utils import docker, keyvalues
-from disco.utils.cluster_locks import pending_cluster_removes
+from disco.utils.cluster_locks import (
+    pending_cluster_removes,
+    reconciler_lock,
+)
 from disco.utils.dqlite import (
     cluster_remove,
     dqlite_bind_address,
@@ -59,7 +62,11 @@ async def get_node_list():
                 "address": node.address,
                 "isLeader": node.labels.get("disco-role") == "main",
                 "isReady": node.state == "ready",
-                "isDown": node.state in ("down", "disconnected"),
+                # "unknown" can happen when a manager hasn't heard from a
+                # node yet (e.g. just-rebooted host). Treat it as down so
+                # the down-tolerant DELETE path doesn't try to ssh into
+                # an unreachable node.
+                "isDown": node.state in ("down", "disconnected", "unknown"),
             }
             for node in nodes
         ],
@@ -92,7 +99,20 @@ async def node_delete(node_name: str):
     if target.labels.get("disco-role") == "main":
         raise HTTPException(422, "Can't remove main node")
 
-    node_is_down = target.state in ("down", "disconnected")
+    node_is_down = target.state in ("down", "disconnected", "unknown")
+    # Hold the reconciler lock through the mutating section so a periodic
+    # reconcile can't race with us (e.g. recreating the dqlite service
+    # we're in the middle of tearing down).
+    async with reconciler_lock:
+        await _do_node_delete(target, node_name, node_is_down)
+
+    # Final reconciler pass: removes the per-node dqlite service if it's
+    # still around and ensures cluster .remove was called (idempotent).
+    await reconcile_dqlite_services()
+    return {}
+
+
+async def _do_node_delete(target, node_name: str, node_is_down: bool) -> None:
     if node_is_down:
         log.info(
             "Node %s is %s; using forced removal path", node_name, target.state
@@ -139,8 +159,3 @@ async def node_delete(node_name: str):
         if not removed:
             log.info("Force-removing node %s after timeout", node_name)
             await docker.remove_node(node_id=target.id, force=True)
-
-    # Final reconciler pass: removes the per-node dqlite service if it's
-    # still around and ensures cluster .remove was called (idempotent).
-    await reconcile_dqlite_services()
-    return {}

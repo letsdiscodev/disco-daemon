@@ -38,6 +38,7 @@ from disco.models.db import AsyncSession
 from disco.utils.backup import BACKUP_DIR
 from disco.utils.dqlite import (
     dqlite_service_name,
+    list_dqlite_services,
     scale_dqlite_service,
     wait_for_dqlite_service_healthy,
     wait_for_service_tasks_stopped,
@@ -194,15 +195,9 @@ async def _do_restore(
     started = time.monotonic()
 
     # Phase 1: stop every dqlite-* service so volumes can be wiped.
-    services_out, _, _ = await async_check_call([
-        "docker", "service", "ls",
-        "--filter", "name=dqlite-",
-        "--format", "{{.Name}}",
-    ])
-    existing_services = [
-        s for s in services_out
-        if s.startswith("dqlite-") and not s.startswith("dqlite-image")
-    ]
+    # Use the same helper the daemon uses so we never accidentally pick
+    # up unrelated services that happen to start with "dqlite-".
+    existing_services = await list_dqlite_services()
     for svc in existing_services:
         log.info("Scaling %s to 0", svc)
         await async_call(["docker", "service", "scale", f"{svc}=0", "--detach"])
@@ -239,14 +234,29 @@ async def _do_restore(
     await _replay_backup(backup_path)
 
     # Phase 5: strip BOOTSTRAP_ALLOWED so a future task restart doesn't
-    # accidentally create a second single-node cluster.
-    log.info("Stripping BOOTSTRAP_ALLOWED from %s", keep_service)
-    await async_check_call([
-        "docker", "service", "update",
-        "--env-rm", "BOOTSTRAP_ALLOWED",
-        "--force", "--detach", keep_service,
+    # accidentally create a second single-node cluster. We only roll the
+    # service if the env was actually added in Phase 3 — in some
+    # restore scenarios the original service already had no
+    # BOOTSTRAP_ALLOWED, and an --env-rm --force would gratuitously
+    # bounce the just-restored container.
+    inspect_out, _, _ = await async_check_call([
+        "docker", "service", "inspect", "--format",
+        "{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}",
+        keep_service,
     ])
-    await wait_for_dqlite_service_healthy(keep_service)
+    has_bootstrap_env = any(
+        line.startswith("BOOTSTRAP_ALLOWED=") for line in inspect_out
+    )
+    if has_bootstrap_env:
+        log.info("Stripping BOOTSTRAP_ALLOWED from %s", keep_service)
+        await async_check_call([
+            "docker", "service", "update",
+            "--env-rm", "BOOTSTRAP_ALLOWED",
+            "--force", "--detach", keep_service,
+        ])
+        await wait_for_dqlite_service_healthy(keep_service)
+    else:
+        log.info("%s has no BOOTSTRAP_ALLOWED env to strip; skipping roll", keep_service)
 
     # Phase 6: rejoin survivors (wipe + restart).
     for rn in rejoin_nodes:

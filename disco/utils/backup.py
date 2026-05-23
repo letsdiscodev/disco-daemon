@@ -73,12 +73,26 @@ def special_filename(prefix: str, when: datetime) -> str:
 
 
 def _adapt_value(value):
-    """Coerce SQLAlchemy row values to types stdlib sqlite3 will accept."""
+    """Coerce SQLAlchemy row values to types stdlib sqlite3 will accept.
+
+    Native-passthrough for the types sqlite3 already understands. Datetime
+    and date are normalized to ISO 8601 strings. Anything else triggers a
+    loud error rather than silently producing a broken backup — a future
+    schema migration that adds Decimal/UUID/bytes/JSON columns should
+    surface here so we update the adapter intentionally.
+    """
+    if value is None:
+        return value
+    if isinstance(value, (str, int, float, bool, bytes, bytearray)):
+        return value
     if isinstance(value, datetime):
         return value.astimezone(timezone.utc).isoformat()
     if isinstance(value, date):
         return value.isoformat()
-    return value
+    raise TypeError(
+        f"backup serializer has no adapter for {type(value).__name__}; "
+        "update _adapt_value to handle this column type"
+    )
 
 
 async def make_local_backup(target: pathlib.Path) -> None:
@@ -215,8 +229,13 @@ def thin(backup_dir: pathlib.Path, now: datetime) -> list[pathlib.Path]:
     deleted: list[pathlib.Path] = []
     for _, f in files:
         if f not in keep:
-            f.unlink()
-            deleted.append(f)
+            try:
+                f.unlink()
+                deleted.append(f)
+            except FileNotFoundError:
+                # Concurrent pull_backup on another caller may have
+                # already unlinked it; treat as a no-op.
+                pass
     return deleted
 
 

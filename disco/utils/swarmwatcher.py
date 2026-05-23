@@ -36,6 +36,9 @@ async def watch_swarm_events_forever() -> None:
 
 async def _watch_one_stream() -> None:
     log.info("Starting docker events watcher (type=node)")
+    # Discard stderr — we never read it, and leaving stderr=PIPE while not
+    # consuming it would let `docker events` block on a full pipe and
+    # silently stop emitting events.
     process = await asyncio.create_subprocess_exec(
         "docker",
         "events",
@@ -44,7 +47,7 @@ async def _watch_one_stream() -> None:
         "--format",
         "{{.Type}} {{.Action}} {{.Actor.Attributes}}",
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
     )
     assert process.stdout is not None
     try:
