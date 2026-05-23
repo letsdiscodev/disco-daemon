@@ -197,7 +197,13 @@ async def get_api_key_emergency_capable(
     requires reading the API key's secret from the DB. During an
     outage, operators should use Basic auth (the CLI's default).
     """
-    # Happy path: cluster is healthy, do normal DB auth.
+    # Resolve credentials + commit the usage record under a SHORT timeout.
+    # We must NOT hold the timeout open across `yield`: FastAPI yield-
+    # dependencies wrap the entire endpoint, and many of our emergency-
+    # capable endpoints (recover-quorum, etc.) intentionally do multi-
+    # second Docker orchestration that would otherwise be cancelled.
+    resolved_api_key_id: str | None = None
+    db_unreachable = False
     try:
         async with asyncio.timeout(EMERGENCY_DB_TIMEOUT_S):
             async with AsyncSession.begin() as dbsession:
@@ -210,22 +216,32 @@ async def get_api_key_emergency_capable(
                 if api_key is None:
                     raise HTTPException(status_code=403)
                 await record_api_key_usage(dbsession, api_key)
-                yield api_key.id
-                return
+                resolved_api_key_id = api_key.id
     except HTTPException:
         raise
     except (asyncio.TimeoutError, OperationalError, OSError) as exc:
         log.warning(
             "Emergency auth: DB unreachable (%s); attempting backup fallback", exc
         )
+        db_unreachable = True
+
+    if resolved_api_key_id is not None:
+        yield resolved_api_key_id
+        return
 
     # Fallback: cluster is locked. Validate against the local backup file.
+    if not db_unreachable:
+        # We didn't get here because of a timeout/connection error; some
+        # other code path produced None without raising. Treat as unauth.
+        raise HTTPException(status_code=401)
     if basic_credentials is None:
         raise HTTPException(
             status_code=401,
             detail="Basic auth required while the dqlite cluster is unavailable",
         )
     api_key_id = basic_credentials.username
+    if not api_key_id:
+        raise HTTPException(status_code=401)
     cached = find_api_key_by_id_in_backup(api_key_id)
     if cached is None:
         raise HTTPException(status_code=403)

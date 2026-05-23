@@ -20,6 +20,14 @@ def update_disco(
     save_is_updating(dbsession)
     if pull:
         asyncio.run(docker.pull(image))
+    # The update script (disco_update) takes pre/post-upgrade backups, so
+    # the container needs to (a) reach dqlite over the disco-dqlite overlay
+    # and (b) write to the host-side backups directory the daemon also
+    # mounts. Without these, the backups silently fail (the script catches
+    # exceptions) and the update goes through with no restorable rollback
+    # point.
+    host_home = keyvalues.get_value_sync(dbsession, "HOST_HOME")
+    assert host_home is not None
     _run_cmd(
         [
             "docker",
@@ -28,10 +36,14 @@ def update_disco(
             "--detach",
             "--label",
             "disco.log.core=true",
+            "--network",
+            "disco-dqlite",
             "--env",
             f"DISCO_IMAGE={image}",
             "--mount",
             "source=disco-data,target=/disco/data",
+            "--mount",
+            f"type=bind,source={host_home}/disco/backups,target=/disco/backups",
             "--mount",
             "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
             image,

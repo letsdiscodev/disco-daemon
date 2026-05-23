@@ -43,6 +43,7 @@ def main() -> None:
     create_caddy_socket_dir(host_home)
     create_projects_dir(host_home)
     create_static_site_dir(host_home)
+    create_backups_dir(host_home)
     print("Initializing Docker Swarm")
     create_docker_config(host_home)
     docker_swarm_init(disco_advertise_addr)
@@ -241,6 +242,13 @@ def create_static_site_dir(host_home: str) -> None:
     os.makedirs(f"/host{host_home}/disco/srv")
 
 
+def create_backups_dir(host_home: str) -> None:
+    # Holds the dqlite backup file (latest.db + rotated timestamped copies).
+    # Bind-mounted into the daemon container and into one-shot tooling
+    # (disco_update, disco_restore) that needs to read/write it.
+    os.makedirs(f"/host{host_home}/disco/backups", exist_ok=True)
+
+
 def create_docker_config(host_home: str) -> None:
     # If the file doesn't exist, we create it so that we can mount it.
     # It's needed when we authenticate to a Docker Registry.
@@ -309,6 +317,8 @@ def start_disco_daemon(host_home: str, image: str) -> None:
             f"type=bind,source={host_home}/disco/srv,target=/disco/srv",
             "--mount",
             f"type=bind,source={host_home}/disco/caddy-socket,target=/disco/caddy-socket",
+            "--mount",
+            f"type=bind,source={host_home}/disco/backups,target=/disco/backups",
             "--mount",
             "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
             "--mount",
