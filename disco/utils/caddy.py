@@ -316,34 +316,19 @@ def write_caddy_init_config(disco_host: str, tunnel: bool) -> None:
                                         "routes": [
                                             {
                                                 "handle": [
-                                                    # NOTE: no `encode` handler here.
-                                                    # The disco-domain route fronts the
-                                                    # daemon's SSE / WebSocket endpoints
-                                                    # (/api/logs, /api/.../output,
-                                                    # /api/.../run). Project routes
-                                                    # still encode since they're user
-                                                    # apps where compression matters.
+                                                    {
+                                                        "handler": "encode",
+                                                        "encodings": {
+                                                            "gzip": {},
+                                                            "zstd": {},
+                                                        },
+                                                    },
                                                     {
                                                         "@id": "domain-handle-disco-handle",
                                                         "handler": "reverse_proxy",
                                                         "upstreams": [
                                                             {"dial": "disco:80"}
                                                         ],
-                                                        # Disable upstream keep-alive
-                                                        # so every request opens a
-                                                        # fresh TCP connection. The
-                                                        # pool's idle-vs-active
-                                                        # accounting deterministically
-                                                        # stalls the third+ concurrent
-                                                        # SSE request to disco:80 —
-                                                        # without pooling, each SSE
-                                                        # stream is independent.
-                                                        "transport": {
-                                                            "protocol": "http",
-                                                            "keep_alive": {
-                                                                "enabled": False,
-                                                            },
-                                                        },
                                                     },
                                                 ],
                                             }

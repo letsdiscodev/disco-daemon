@@ -17,10 +17,9 @@ ruff==0.15.12
 SQLAlchemy==2.0.49
 sse-starlette==3.4.2
 uvicorn==0.46.0
-httptools==0.7.1
 websockets==16.0
 # dqlite client + SQLAlchemy dialect.
-dqlite-wire==0.2.0
-dqlite-client==0.2.0
-dqlite-dbapi==0.2.0
-sqlalchemy-dqlite==0.2.0
+dqlite-wire==0.2.1
+dqlite-client==0.2.1
+dqlite-dbapi==0.2.1
+sqlalchemy-dqlite==0.2.1

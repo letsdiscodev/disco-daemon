@@ -40,16 +40,16 @@ cryptography==48.0.0
     # via
     #   -r requirements.in
     #   pyjwt
-dqlite-client==0.2.0
+dqlite-client==0.2.1
     # via
     #   -r requirements.in
     #   dqlite-dbapi
     #   sqlalchemy-dqlite
-dqlite-dbapi==0.2.0
+dqlite-dbapi==0.2.1
     # via
     #   -r requirements.in
     #   sqlalchemy-dqlite
-dqlite-wire==0.2.0
+dqlite-wire==0.2.1
     # via
     #   -r requirements.in
     #   dqlite-client
@@ -69,8 +69,6 @@ greenlet==3.5.0
     #   sqlalchemy
 h11==0.16.0
     # via uvicorn
-httptools==0.7.1
-    # via -r requirements.in
 idna==3.16
     # via
     #   anyio
@@ -119,7 +117,7 @@ sqlalchemy==2.0.49
     #   -r requirements.in
     #   alembic
     #   sqlalchemy-dqlite
-sqlalchemy-dqlite==0.2.0
+sqlalchemy-dqlite==0.2.1
     # via -r requirements.in
 sse-starlette==3.4.2
     # via -r requirements.in
