@@ -320,18 +320,30 @@ def write_caddy_init_config(disco_host: str, tunnel: bool) -> None:
                                                     # The disco-domain route fronts the
                                                     # daemon's SSE / WebSocket endpoints
                                                     # (/api/logs, /api/.../output,
-                                                    # /api/.../run). Caddy's encode
-                                                    # handler interferes with concurrent
-                                                    # streaming responses — the third
-                                                    # parallel SSE request stops
-                                                    # reaching the upstream entirely.
-                                                    # Project routes still encode normally.
+                                                    # /api/.../run). Project routes
+                                                    # still encode since they're user
+                                                    # apps where compression matters.
                                                     {
                                                         "@id": "domain-handle-disco-handle",
                                                         "handler": "reverse_proxy",
                                                         "upstreams": [
                                                             {"dial": "disco:80"}
                                                         ],
+                                                        # Disable upstream keep-alive
+                                                        # so every request opens a
+                                                        # fresh TCP connection. The
+                                                        # pool's idle-vs-active
+                                                        # accounting deterministically
+                                                        # stalls the third+ concurrent
+                                                        # SSE request to disco:80 —
+                                                        # without pooling, each SSE
+                                                        # stream is independent.
+                                                        "transport": {
+                                                            "protocol": "http",
+                                                            "keep_alive": {
+                                                                "enabled": False,
+                                                            },
+                                                        },
                                                     },
                                                 ],
                                             }
