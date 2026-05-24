@@ -69,6 +69,8 @@ greenlet==3.5.0
     #   sqlalchemy
 h11==0.16.0
     # via uvicorn
+httptools==0.7.1
+    # via -r requirements.in
 idna==3.16
     # via
     #   anyio
