@@ -240,6 +240,19 @@ async def run_ws(
         # ===== STEP 4: Bridge PTY <-> WebSocket =====
         await bridge_pty_websocket(websocket, master_fd, proc)
 
+        # bridge_pty_websocket returns on FIRST_COMPLETED — when the
+        # process exits, the PTY hits EOF and pty_to_websocket usually
+        # completes before proc.wait(). The watcher task gets cancelled
+        # mid-wait, leaving proc.returncode unset even though the
+        # subprocess is already a zombie ready to be reaped. Reap it
+        # explicitly so the client sees the real exit code (e.g. bash
+        # exiting via `exit` is 0, not the misreported 1 fallback).
+        if proc.returncode is None:
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=2.0)
+            except asyncio.TimeoutError:
+                pass
+
         # Send exit message with exit code (useful for command mode)
         exit_code = proc.returncode if proc.returncode is not None else 1
         try:
