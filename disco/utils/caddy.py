@@ -316,13 +316,16 @@ def write_caddy_init_config(disco_host: str, tunnel: bool) -> None:
                                         "routes": [
                                             {
                                                 "handle": [
-                                                    {
-                                                        "handler": "encode",
-                                                        "encodings": {
-                                                            "gzip": {},
-                                                            "zstd": {},
-                                                        },
-                                                    },
+                                                    # NOTE: no `encode` handler here.
+                                                    # The disco-domain route fronts the
+                                                    # daemon's SSE / WebSocket endpoints
+                                                    # (/api/logs, /api/.../output,
+                                                    # /api/.../run). Caddy's encode
+                                                    # handler interferes with concurrent
+                                                    # streaming responses — the third
+                                                    # parallel SSE request stops
+                                                    # reaching the upstream entirely.
+                                                    # Project routes still encode normally.
                                                     {
                                                         "@id": "domain-handle-disco-handle",
                                                         "handler": "reverse_proxy",
