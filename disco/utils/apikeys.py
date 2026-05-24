@@ -97,8 +97,54 @@ def delete_api_key(api_key: ApiKey, by_api_key: ApiKey) -> None:
 
 
 def record_api_key_usage_sync(dbsession: DBSession, api_key: ApiKey) -> None:
-    dbsession.add(ApiKeyUsage(created=datetime.now(timezone.utc), api_key=api_key))
+    # Buffer in memory; a periodic flusher writes them in one batched
+    # transaction. Doing the INSERT inline made every authenticated
+    # request a writer, so N concurrent requests fought dqlite's
+    # single-writer lock and timed out under load (this is the
+    # observed regression vs SQLite, where the same writes were free).
+    _buffer_usage(api_key.id)
 
 
 async def record_api_key_usage(dbsession: AsyncDBSession, api_key: ApiKey) -> None:
-    dbsession.add(ApiKeyUsage(created=datetime.now(timezone.utc), api_key=api_key))
+    _buffer_usage(api_key.id)
+
+
+# ---- Buffered usage writer ------------------------------------------------
+
+import asyncio  # noqa: E402
+
+_pending_usages: list[tuple[str, datetime]] = []
+_pending_usages_lock = asyncio.Lock()
+_FLUSH_INTERVAL_SECONDS = 5.0
+
+
+def _buffer_usage(api_key_id: str) -> None:
+    _pending_usages.append((api_key_id, datetime.now(timezone.utc)))
+
+
+async def flush_api_key_usages_forever() -> None:
+    """Background task: periodically flush buffered ApiKeyUsage rows.
+
+    One batched INSERT per interval. Avoids per-request dqlite writes
+    that would otherwise serialise the entire request stream on the
+    single-writer lock.
+    """
+    from disco.models.db import AsyncSession
+
+    while True:
+        try:
+            await asyncio.sleep(_FLUSH_INTERVAL_SECONDS)
+            async with _pending_usages_lock:
+                batch = _pending_usages[:]
+                _pending_usages.clear()
+            if not batch:
+                continue
+            async with AsyncSession.begin() as dbsession:
+                dbsession.add_all(
+                    ApiKeyUsage(created=ts, api_key_id=key_id)
+                    for key_id, ts in batch
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Failed to flush api_key_usages batch")
