@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import random
 import time
@@ -7,6 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
+from sqlalchemy.util import await_only
 
 from disco.config import get_dqlite_async_url, get_dqlite_url
 
@@ -24,7 +26,7 @@ log = logging.getLogger(__name__)
 # attempt that fails with a "is locked" OperationalError waits and
 # retries until the budget runs out. This is the SQLAlchemy-recommended
 # pattern when the DBAPI doesn't honour busy_timeout itself.
-_BUSY_RETRY_TOTAL_SECONDS = 30.0
+_BUSY_RETRY_TOTAL_SECONDS = 120.0
 _BUSY_RETRY_INITIAL_BACKOFF = 0.05
 _BUSY_RETRY_MAX_BACKOFF = 1.0
 
@@ -37,18 +39,30 @@ def _is_busy(exc: BaseException) -> bool:
     return "is locked" in str(exc)
 
 
-def _install_busy_retry(dialect) -> None:
+def _install_busy_retry(dialect, *, is_async: bool) -> None:
     """Wrap the dialect's do_execute / do_executemany with a BUSY retry loop.
 
     Statement-level (not transaction-level) retry: if a write fails because
     another writer holds the lock, we wait and re-execute the same statement
     against the same cursor. The cursor's existing transaction context is
     untouched.
+
+    `is_async=True` routes the wait through `await_only(asyncio.sleep(...))`
+    so we yield back to the event loop instead of blocking it inside the
+    greenlet — otherwise the other writer we're waiting on can never make
+    progress and the retry deadlocks. `is_async=False` uses time.sleep,
+    which is correct on the FastAPI threadpool path.
     """
     from dqlitedbapi.exceptions import OperationalError as DqliteOperationalError
 
     original_do_execute = dialect.do_execute
     original_do_executemany = dialect.do_executemany
+
+    def _sleep(seconds: float) -> None:
+        if is_async:
+            await_only(asyncio.sleep(seconds))
+        else:
+            time.sleep(seconds)
 
     def _retry(fn, *args, **kwargs):
         deadline = time.monotonic() + _BUSY_RETRY_TOTAL_SECONDS
@@ -60,7 +74,7 @@ def _install_busy_retry(dialect) -> None:
                 if not _is_busy(exc) or time.monotonic() >= deadline:
                     raise
                 # Jitter to spread retry storms when several callers race.
-                time.sleep(backoff * (0.5 + random.random()))
+                _sleep(backoff * (0.5 + random.random()))
                 backoff = min(backoff * 2, _BUSY_RETRY_MAX_BACKOFF)
 
     def do_execute(cursor, statement, parameters, context=None):
@@ -91,7 +105,7 @@ def get_engine() -> "Engine":
         # is always the caller thread. The async engine doesn't need this
         # because it stays on the event-loop thread.
         _engine = create_engine(get_dqlite_url(), poolclass=NullPool)
-        _install_busy_retry(_engine.dialect)
+        _install_busy_retry(_engine.dialect, is_async=False)
     return _engine
 
 
@@ -99,7 +113,7 @@ def get_async_engine() -> "AsyncEngine":
     global _async_engine
     if _async_engine is None:
         _async_engine = create_async_engine(get_dqlite_async_url())
-        _install_busy_retry(_async_engine.sync_engine.dialect)
+        _install_busy_retry(_async_engine.sync_engine.dialect, is_async=True)
     return _async_engine
 
 
