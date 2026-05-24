@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
-from disco.auth import get_api_key, get_api_key_sync
+from disco.auth import get_api_key, get_api_key_sync, get_api_key_wo_tx
 from disco.endpoints.dependencies import (
     get_db,
     get_db_sync,
@@ -27,7 +27,10 @@ from disco.utils.envvariables import (
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(dependencies=[Depends(get_api_key_sync)])
+# See projects.py for why this is `_wo_tx`: holding the auth dep's
+# transaction across the endpoint races the endpoint's own commit on
+# dqlite's single-writer lock when both try to insert api_key_usages.
+router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 
 
 @router.get("/api/projects/{project_name}/env")

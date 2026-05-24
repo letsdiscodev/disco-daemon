@@ -8,7 +8,7 @@ from pydantic_core import InitErrorDetails, PydanticCustomError
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
-from disco.auth import get_api_key, get_api_key_sync
+from disco.auth import get_api_key, get_api_key_sync, get_api_key_wo_tx
 from disco.endpoints.dependencies import (
     get_db,
     get_db_sync,
@@ -49,7 +49,14 @@ from disco.utils.randomname import generate_random_name
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(dependencies=[Depends(get_api_key_sync)])
+# Router-level auth uses `_wo_tx` so it commits before the endpoint runs.
+# Endpoints whose body uses a per-request session (sync or async) declare
+# their own `get_api_key[_sync]` param — that runs in the same transaction
+# as the endpoint body and supplies the `api_key` value. If the router
+# held a long-lived transaction across the endpoint, its eventual commit
+# of `api_key_usages` would race the endpoint's own commit on dqlite's
+# single-writer lock.
+router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 
 
 class Ssh(BaseModel):
