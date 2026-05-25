@@ -45,29 +45,33 @@ router = APIRouter()
 
 def get_pending_app_from_url(
     pending_app_id: Annotated[str, Path()],
+    dbsession: Annotated[DBSession, Depends(get_db_sync)],
 ):
-    with Session.begin() as dbsession:
-        pending_app = get_github_pending_app_by_id(dbsession, pending_app_id)
-        if pending_app is None:
-            raise HTTPException(status_code=404)
-        if pending_app.expires < datetime.now(timezone.utc):
-            raise HTTPException(status_code=404)
-        yield pending_app
+    # Share the endpoint's dbsession (via FastAPI dep cache) instead of
+    # opening our own. Opening a second session would hold a parallel
+    # BEGIN IMMEDIATE transaction across the entire endpoint, blocking
+    # the endpoint's session from acquiring the writer lock.
+    pending_app = get_github_pending_app_by_id(dbsession, pending_app_id)
+    if pending_app is None:
+        raise HTTPException(status_code=404)
+    if pending_app.expires < datetime.now(timezone.utc):
+        raise HTTPException(status_code=404)
+    return pending_app
 
 
 def get_pending_app_id_from_url_with_state(
     pending_app_id: Annotated[str, Path()],
     state: str,
+    dbsession: Annotated[DBSession, Depends(get_db_sync)],
 ):
-    with Session.begin() as dbsession:
-        pending_app = get_github_pending_app_by_id(dbsession, pending_app_id)
-        if pending_app is None:
-            raise HTTPException(status_code=404)
-        if pending_app.expires < datetime.now(timezone.utc):
-            raise HTTPException(status_code=404)
-        if pending_app.state != state:
-            raise HTTPException(status_code=404)
-        yield pending_app.id
+    pending_app = get_github_pending_app_by_id(dbsession, pending_app_id)
+    if pending_app is None:
+        raise HTTPException(status_code=404)
+    if pending_app.expires < datetime.now(timezone.utc):
+        raise HTTPException(status_code=404)
+    if pending_app.state != state:
+        raise HTTPException(status_code=404)
+    return pending_app.id
 
 
 class NewGithubAppRequestBody(BaseModel):
