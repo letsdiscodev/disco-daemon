@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import NullPool
 
 from disco.config import get_dqlite_async_url, get_dqlite_url
 
@@ -14,32 +13,79 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# dqlite-dbapi 0.2.2 exposes:
+#   - busy_timeout (default 5s) — matches stdlib sqlite3's busy_timeout,
+#     so concurrent writers block-and-retry instead of failing immediately.
+#   - check_same_thread (default True) — set False so the same connection
+#     can be reused across FastAPI threadpool workers.
+#   - session_mode — controls how `BEGIN` is emitted to the server:
+#       * "immediate" (default for writers): rewrites BEGIN → BEGIN
+#         IMMEDIATE, taking the writer lock at session start. Avoids
+#         the SQLITE_BUSY_SNAPSHOT race in the SELECT-then-INSERT
+#         pattern; concurrent writers serialise via busy_timeout.
+#       * "read_only": passes BEGIN through as DEFERRED *and* sets
+#         PRAGMA query_only=1, so any accidental write fails fast at
+#         PREPARE rather than locking. Use this for sessions that
+#         only read.
+
+# `check_same_thread` only applies to the sync dqlite-dbapi Connection.
+# The async surface (AsyncConnection) is loop-bound by construction and
+# rejects the kwarg outright.
+_WRITE_SYNC_CONNECT_ARGS = {
+    "check_same_thread": False,
+    "session_mode": "immediate",
+}
+_READ_SYNC_CONNECT_ARGS = {
+    "check_same_thread": False,
+    "session_mode": "read_only",
+}
+_WRITE_ASYNC_CONNECT_ARGS = {"session_mode": "immediate"}
+_READ_ASYNC_CONNECT_ARGS = {"session_mode": "read_only"}
+
 _engine: "Engine | None" = None
 _async_engine: "AsyncEngine | None" = None
+_read_engine: "Engine | None" = None
+_async_read_engine: "AsyncEngine | None" = None
 _Session: sessionmaker | None = None
 _AsyncSession: async_sessionmaker | None = None
+_ReadSession: sessionmaker | None = None
+_AsyncReadSession: async_sessionmaker | None = None
 
 
 def get_engine() -> "Engine":
     global _engine
     if _engine is None:
-        # dqlite-dbapi enforces a stdlib-sqlite3-style thread-affinity
-        # rule: a Connection can only be used from the thread that
-        # created it. FastAPI runs sync deps on a threadpool, so a
-        # pooled connection that was opened by one worker thread can't
-        # safely be checked out by another. NullPool opens a fresh
-        # connection per checkout (creator thread == caller thread).
-        # The async engine doesn't need this because it stays on the
-        # event-loop thread.
-        _engine = create_engine(get_dqlite_url(), poolclass=NullPool)
+        _engine = create_engine(
+            get_dqlite_url(), connect_args=_WRITE_SYNC_CONNECT_ARGS
+        )
     return _engine
 
 
 def get_async_engine() -> "AsyncEngine":
     global _async_engine
     if _async_engine is None:
-        _async_engine = create_async_engine(get_dqlite_async_url())
+        _async_engine = create_async_engine(
+            get_dqlite_async_url(), connect_args=_WRITE_ASYNC_CONNECT_ARGS
+        )
     return _async_engine
+
+
+def get_read_engine() -> "Engine":
+    global _read_engine
+    if _read_engine is None:
+        _read_engine = create_engine(
+            get_dqlite_url(), connect_args=_READ_SYNC_CONNECT_ARGS
+        )
+    return _read_engine
+
+
+def get_async_read_engine() -> "AsyncEngine":
+    global _async_read_engine
+    if _async_read_engine is None:
+        _async_read_engine = create_async_engine(
+            get_dqlite_async_url(), connect_args=_READ_ASYNC_CONNECT_ARGS
+        )
+    return _async_read_engine
 
 
 def get_session_factory() -> sessionmaker:
@@ -56,6 +102,24 @@ def get_async_session_factory() -> async_sessionmaker:
             autocommit=False, autoflush=False, bind=get_async_engine()
         )
     return _AsyncSession
+
+
+def get_read_session_factory() -> sessionmaker:
+    global _ReadSession
+    if _ReadSession is None:
+        _ReadSession = sessionmaker(
+            autocommit=False, autoflush=False, bind=get_read_engine()
+        )
+    return _ReadSession
+
+
+def get_async_read_session_factory() -> async_sessionmaker:
+    global _AsyncReadSession
+    if _AsyncReadSession is None:
+        _AsyncReadSession = async_sessionmaker(
+            autocommit=False, autoflush=False, bind=get_async_read_engine()
+        )
+    return _AsyncReadSession
 
 
 class _LazySessionMaker:
@@ -78,6 +142,8 @@ class _LazySessionMaker:
 
 Session = _LazySessionMaker(get_session_factory)
 AsyncSession = _LazySessionMaker(get_async_session_factory)
+ReadSession = _LazySessionMaker(get_read_session_factory)
+AsyncReadSession = _LazySessionMaker(get_async_read_session_factory)
 
 
 class _LazyEngine:
@@ -92,3 +158,4 @@ class _LazyEngine:
 
 
 engine = _LazyEngine(get_engine)
+read_engine = _LazyEngine(get_read_engine)
