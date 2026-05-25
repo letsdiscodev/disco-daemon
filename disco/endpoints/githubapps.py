@@ -19,10 +19,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
-from disco.auth import get_api_key, get_api_key_sync
+from disco.auth import get_api_key, get_api_key_sync, get_api_key_wo_tx
 from disco.endpoints.dependencies import get_db, get_db_sync
 from disco.models import ApiKey, PendingGithubApp
-from disco.models.db import Session
+from disco.models.db import AsyncSession, Session
 from disco.utils import keyvalues
 from disco.utils.github import (
     create_pending_github_app,
@@ -269,15 +269,16 @@ def list_github_repos(
 
 @router.post(
     "/api/github-apps/installations/{installation_id}/access-token",
-    dependencies=[Depends(get_api_key)],
+    dependencies=[Depends(get_api_key_wo_tx)],
 )
 async def get_installation_access_token(
     installation_id: Annotated[int, Path()],
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
 ):
-    installation = await get_github_app_installation_by_id(dbsession, installation_id)
-    if installation is None:
-        raise HTTPException(status_code=404, detail="Installation not found")
+    # No long-lived `dbsession` dep here on purpose:
+    # `get_access_token_for_installation_id` opens its own short-lived
+    # sessions (read installation, maybe write new token). If we held a
+    # parallel session open for the duration of the endpoint we'd
+    # contend for the writer lock with the helper's update session.
     try:
         token = await get_access_token_for_installation_id(installation_id)
     except Exception as e:
@@ -285,10 +286,15 @@ async def get_installation_access_token(
         raise HTTPException(
             status_code=502, detail="Failed to get access token from GitHub"
         ) from e
-    await dbsession.refresh(installation)  # access_token_expires
-    return {
-        "token": token,
-        "expiresAt": installation.access_token_expires.isoformat()
-        if installation.access_token_expires
-        else None,
-    }
+    async with AsyncSession.begin() as dbsession:
+        installation = await get_github_app_installation_by_id(
+            dbsession, installation_id
+        )
+        if installation is None:
+            raise HTTPException(status_code=404, detail="Installation not found")
+        expires_at = (
+            installation.access_token_expires.isoformat()
+            if installation.access_token_expires
+            else None
+        )
+    return {"token": token, "expiresAt": expires_at}
