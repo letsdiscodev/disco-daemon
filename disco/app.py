@@ -31,7 +31,6 @@ from disco.endpoints import (
 from disco.middleware import middleware
 from disco.utils.asyncworker import async_worker
 from disco.utils.backup_distribution import cleanup_orphaned_push_jobs
-from disco.utils.apikeys import flush_api_key_usages_forever
 from disco.utils.backup_listener import watch_for_apikey_events_forever
 from disco.utils.deployments import (
     cleanup_deployments_on_disco_boot,
@@ -53,7 +52,6 @@ async def lifespan(app: FastAPI):
     worker_task = loop.create_task(async_worker.work())
     swarm_watcher_task = loop.create_task(watch_swarm_events_forever())
     backup_listener_task = loop.create_task(watch_for_apikey_events_forever())
-    usage_flusher_task = loop.create_task(flush_api_key_usages_forever())
     await cleanup_deployments_on_disco_boot()
     await enqueue_deployments_on_disco_boot()
     # Clean up any backup-push global-job services left over from a
@@ -64,9 +62,8 @@ async def lifespan(app: FastAPI):
     async_worker.stop()
     swarm_watcher_task.cancel()
     backup_listener_task.cancel()
-    usage_flusher_task.cancel()
     await worker_task
-    for task in (swarm_watcher_task, backup_listener_task, usage_flusher_task):
+    for task in (swarm_watcher_task, backup_listener_task):
         try:
             await task
         except asyncio.CancelledError:
