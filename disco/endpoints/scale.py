@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from typing import Annotated
 
@@ -7,23 +6,20 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ValidationError
 from pydantic_core import InitErrorDetails, PydanticCustomError
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
-from sqlalchemy.orm.session import Session as DBSession
 
-from disco.auth import get_api_key_sync
+from disco.auth import get_api_key
 from disco.endpoints.dependencies import (
     get_db,
-    get_db_sync,
     get_project_from_url,
-    get_project_from_url_sync,
 )
 from disco.models import ApiKey, Project
 from disco.utils import docker
-from disco.utils.deployments import get_live_deployment, get_live_deployment_sync
+from disco.utils.deployments import get_live_deployment
 from disco.utils.discofile import ServiceType, get_disco_file_from_str
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(dependencies=[Depends(get_api_key_sync)])
+router = APIRouter(dependencies=[Depends(get_api_key)])
 
 
 @router.get("/api/projects/{project_name}/scale")
@@ -54,13 +50,13 @@ class ScaleRequestBody(BaseModel):
 
 
 @router.post("/api/projects/{project_name}/scale")
-def scale_post(
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
-    project: Annotated[Project, Depends(get_project_from_url_sync)],
-    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
+async def scale_post(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+    project: Annotated[Project, Depends(get_project_from_url)],
+    api_key: Annotated[ApiKey, Depends(get_api_key)],
     req_body: ScaleRequestBody,
 ):
-    deployment = get_live_deployment_sync(dbsession, project)
+    deployment = await get_live_deployment(dbsession, project)
     if deployment is None:
         services = set()
     else:
@@ -112,4 +108,4 @@ def scale_post(
             )
             for service, scale in req_body.services.items()
         )
-        asyncio.run(docker.scale(internal_name_scale))
+        await docker.scale(internal_name_scale)

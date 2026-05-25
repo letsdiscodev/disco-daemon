@@ -6,14 +6,11 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_core import InitErrorDetails, PydanticCustomError
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
-from sqlalchemy.orm.session import Session as DBSession
 
-from disco.auth import get_api_key, get_api_key_sync
+from disco.auth import get_api_key
 from disco.endpoints.dependencies import (
     get_db,
-    get_db_sync,
     get_project_from_url,
-    get_project_from_url_sync,
 )
 from disco.endpoints.envvariables import EnvVariable
 from disco.models import ApiKey, Project, ProjectGithubRepo
@@ -21,12 +18,12 @@ from disco.utils import keyvalues
 from disco.utils.deploymentflow import enqueue_deployment
 from disco.utils.deployments import (
     create_deployment,
-    get_live_deployment_sync,
+    get_live_deployment,
 )
 from disco.utils.discofile import get_disco_file_from_str
 from disco.utils.encryption import decrypt
 from disco.utils.envvariables import (
-    get_env_variables_for_project_sync,
+    get_env_variables_for_project,
     set_env_variables,
 )
 from disco.utils.filesystem import (
@@ -39,7 +36,7 @@ from disco.utils.projectdomains import DOMAIN_REGEX, add_domain
 from disco.utils.projects import (
     create_project,
     delete_project,
-    get_all_projects_sync,
+    get_all_projects,
     get_project_by_domain,
     get_project_by_name,
     set_project_branch,
@@ -49,7 +46,7 @@ from disco.utils.randomname import generate_random_name
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(dependencies=[Depends(get_api_key_sync)])
+router = APIRouter(dependencies=[Depends(get_api_key)])
 
 
 class Ssh(BaseModel):
@@ -293,22 +290,23 @@ async def projects_post(
 
 
 @router.get("/api/projects")
-def projects_get(dbsession: Annotated[DBSession, Depends(get_db_sync)]):
-    projects = get_all_projects_sync(dbsession)
-    return {
-        "projects": [
+async def projects_get(dbsession: Annotated[AsyncDBSession, Depends(get_db)]):
+    projects = await get_all_projects(dbsession)
+    result = []
+    for project in projects:
+        github_repo = await project.awaitable_attrs.github_repo
+        result.append(
             {
                 "name": project.name,
                 "github": {
-                    "fullName": project.github_repo.full_name,
-                    "branch": project.github_repo.branch,
+                    "fullName": github_repo.full_name,
+                    "branch": github_repo.branch,
                 }
-                if project.github_repo is not None
+                if github_repo is not None
                 else None,
             }
-            for project in projects
-        ],
-    }
+        )
+    return {"projects": result}
 
 
 @router.get("/api/projects/{project_name}")
@@ -381,23 +379,24 @@ async def projects_delete(
 
 
 @router.get("/api/projects/{project_name}/export")
-def export_get(
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
-    project: Annotated[Project, Depends(get_project_from_url_sync)],
-    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
+async def export_get(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+    project: Annotated[Project, Depends(get_project_from_url)],
+    api_key: Annotated[ApiKey, Depends(get_api_key)],
 ):
     log.info("Exporting project %s by %s", project.log(), api_key.log())
-    env_variables = get_env_variables_for_project_sync(dbsession, project)
-    deployment = get_live_deployment_sync(dbsession, project)
+    env_variables = await get_env_variables_for_project(dbsession, project)
+    deployment = await get_live_deployment(dbsession, project)
     volume_names = []
     if deployment is not None:
         disco_file = get_disco_file_from_str(deployment.disco_file)
         for service in disco_file.services.values():
             for volume in service.volumes:
                 volume_names.append(volume.name)
+    domains = await project.awaitable_attrs.domains
     return {
         "name": project.name,
-        "domains": [domain.name for domain in project.domains],
+        "domains": [domain.name for domain in domains],
         "envVariables": [
             {
                 "name": env_variable.name,
@@ -408,11 +407,11 @@ def export_get(
         "caddy": [
             {
                 "name": domain.name,
-                "crt": get_caddy_key_crt(domain.name),
-                "key": get_caddy_key_key(domain.name),
-                "meta": get_caddy_key_meta(domain.name),
+                "crt": await get_caddy_key_crt(domain.name),
+                "key": await get_caddy_key_key(domain.name),
+                "meta": await get_caddy_key_meta(domain.name),
             }
-            for domain in project.domains
+            for domain in domains
         ],
         "deployment": {
             "number": deployment.number,

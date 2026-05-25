@@ -14,7 +14,7 @@ from disco import config
 from disco.models.db import Session, engine
 from disco.models.meta import base_metadata
 from disco.utils import docker, keyvalues
-from disco.utils.apikeys import create_api_key
+from disco.utils.apikeys import create_api_key_sync
 from disco.utils.caddy import write_caddy_init_config
 from disco.utils.encryption import generate_key
 from disco.utils.subprocess import decode_text
@@ -55,7 +55,7 @@ def main() -> None:
                 key="CLOUDFLARE_TUNNEL_TOKEN",
                 value=cloudflare_tunnel_token,
             )
-        api_key = create_api_key(dbsession=dbsession, name="First API key")
+        api_key = create_api_key_sync(dbsession=dbsession, name="First API key")
         print("Created API key:", api_key.id)
     create_caddy_socket_dir(host_home)
     create_projects_dir(host_home)

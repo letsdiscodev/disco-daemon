@@ -10,11 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sse_starlette import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
-from disco.auth import get_api_key, get_api_key_sync, get_api_key_wo_tx
+from disco.auth import get_api_key, get_api_key_wo_tx
 from disco.endpoints.dependencies import (
     get_db,
     get_project_from_url,
-    get_project_from_url_sync,
 )
 from disco.models import ApiKey, Project
 from disco.models.db import AsyncSession
@@ -38,11 +37,12 @@ router = APIRouter()
 
 @router.get(
     "/api/projects/{project_name}/deployments",
-    dependencies=[Depends(get_api_key_sync)],
+    dependencies=[Depends(get_api_key)],
 )
-def deployments_get(
-    project: Annotated[Project, Depends(get_project_from_url_sync)],
+async def deployments_get(
+    project: Annotated[Project, Depends(get_project_from_url)],
 ):
+    deployments = await project.awaitable_attrs.deployments
     return {
         "deployments": [
             {
@@ -51,7 +51,7 @@ def deployments_get(
                 "status": deployment.status,
                 "commitHash": deployment.commit_hash,
             }
-            for deployment in project.deployments
+            for deployment in deployments
         ]
     }
 
@@ -76,7 +76,7 @@ class DeploymentRequestBody(BaseModel):
 @router.post(
     "/api/projects/{project_name}/deployments",
     status_code=201,
-    dependencies=[Depends(get_api_key_sync)],
+    dependencies=[Depends(get_api_key)],
 )
 async def deployments_post(
     dbsession: Annotated[AsyncDBSession, Depends(get_db)],

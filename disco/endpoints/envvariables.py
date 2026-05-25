@@ -4,14 +4,11 @@ from typing import Annotated
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
-from sqlalchemy.orm.session import Session as DBSession
 
-from disco.auth import get_api_key, get_api_key_sync
+from disco.auth import get_api_key
 from disco.endpoints.dependencies import (
     get_db,
-    get_db_sync,
     get_project_from_url,
-    get_project_from_url_sync,
 )
 from disco.models import ApiKey, Project, ProjectEnvironmentVariable
 from disco.utils.deploymentflow import enqueue_deployment
@@ -21,21 +18,21 @@ from disco.utils.envvariables import (
     delete_env_variable,
     delete_env_variables_by_name,
     get_env_variable_by_name,
-    get_env_variables_for_project_sync,
+    get_env_variables_for_project,
     set_env_variables,
 )
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(dependencies=[Depends(get_api_key_sync)])
+router = APIRouter(dependencies=[Depends(get_api_key)])
 
 
 @router.get("/api/projects/{project_name}/env")
-def env_variables_get(
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
-    project: Annotated[Project, Depends(get_project_from_url_sync)],
+async def env_variables_get(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+    project: Annotated[Project, Depends(get_project_from_url)],
 ):
-    env_variables = get_env_variables_for_project_sync(dbsession, project)
+    env_variables = await get_env_variables_for_project(dbsession, project)
     return {
         "envVariables": [
             {

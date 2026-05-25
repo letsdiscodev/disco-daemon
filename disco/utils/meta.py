@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import subprocess
 
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
@@ -12,15 +11,17 @@ from disco.utils.subprocess import decode_text
 log = logging.getLogger(__name__)
 
 
-def update_disco(
-    dbsession: DBSession, image: str = "letsdiscodev/daemon:latest", pull: bool = True
+async def update_disco(
+    dbsession: AsyncDBSession,
+    image: str = "letsdiscodev/daemon:latest",
+    pull: bool = True,
 ) -> None:
-    if is_updating(dbsession):
+    if await is_updating(dbsession):
         raise Exception("An update is already in progress")
-    save_is_updating(dbsession)
+    await save_is_updating(dbsession)
     if pull:
-        asyncio.run(docker.pull(image))
-    _run_cmd(
+        await docker.pull(image)
+    await _run_cmd(
         [
             "docker",
             "run",
@@ -40,30 +41,29 @@ def update_disco(
     )
 
 
-def _run_cmd(args: list[str], timeout=600) -> str:
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+async def _run_cmd(args: list[str]) -> str:
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
     )
     assert process.stdout is not None
     output = ""
-    for line in process.stdout:
-        decoded_line = decode_text(line)
-        output += decoded_line
-    process.wait()
+    async for line in process.stdout:
+        output += decode_text(line)
+    await process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}:\n{output}")
     return output
 
 
-def is_updating(dbsession: DBSession) -> bool:
-    updating = keyvalues.get_value_sync(dbsession, "DISCO_IS_UPDATING")
+async def is_updating(dbsession: AsyncDBSession) -> bool:
+    updating = await keyvalues.get_value(dbsession, "DISCO_IS_UPDATING")
     return updating is not None
 
 
-def save_is_updating(dbsession: DBSession) -> None:
-    keyvalues.set_value_sync(dbsession, "DISCO_IS_UPDATING", "true")
+async def save_is_updating(dbsession: AsyncDBSession) -> None:
+    await keyvalues.set_value(dbsession, "DISCO_IS_UPDATING", "true")
 
 
 def save_done_updating(dbsession: DBSession) -> None:

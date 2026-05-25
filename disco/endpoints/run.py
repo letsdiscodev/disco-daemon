@@ -24,18 +24,18 @@ from fastapi import (
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_core import InitErrorDetails, PydanticCustomError
-from sqlalchemy.orm.session import Session as DBSession
+from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sse_starlette import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
-from disco.auth import get_api_key_sync, get_api_key_wo_tx, validate_token
-from disco.endpoints.dependencies import get_db_sync, get_project_from_url_sync
+from disco.auth import get_api_key, get_api_key_wo_tx, validate_token
+from disco.endpoints.dependencies import get_db, get_project_from_url
 from disco.models import ApiKey, Project
-from disco.models.db import AsyncSession, Session
+from disco.models.db import AsyncSession
 from disco.models.deploymentenvironmentvariable import DeploymentEnvironmentVariable
 from disco.utils import commandoutputs, keyvalues
 from disco.utils.commandruns import create_command_run, get_command_run_by_number
-from disco.utils.deployments import get_live_deployment, get_live_deployment_sync
+from disco.utils.deployments import get_live_deployment
 from disco.utils.discofile import DiscoFile, ServiceType, get_disco_file_from_str
 from disco.utils.docker import (
     deployment_network_name,
@@ -45,7 +45,6 @@ from disco.utils.docker import (
 from disco.utils.encryption import decrypt
 from disco.utils.projects import (
     get_project_by_name,
-    get_project_by_name_sync,
     volume_name_for_project,
 )
 
@@ -432,16 +431,16 @@ class RunReqBody(BaseModel):
 @router.post(
     "/api/projects/{project_name}/runs",
     status_code=202,
-    dependencies=[Depends(get_api_key_sync)],
+    dependencies=[Depends(get_api_key)],
 )
-def run_post(
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
-    project: Annotated[Project, Depends(get_project_from_url_sync)],
-    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
+async def run_post(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+    project: Annotated[Project, Depends(get_project_from_url)],
+    api_key: Annotated[ApiKey, Depends(get_api_key)],
     req_body: RunReqBody,
     background_tasks: BackgroundTasks,
 ):
-    deployment = get_live_deployment_sync(dbsession, project)
+    deployment = await get_live_deployment(dbsession, project)
     if deployment is None:
         raise HTTPException(422, "Must deploy first")
     disco_file: DiscoFile = get_disco_file_from_str(deployment.disco_file)
@@ -502,7 +501,7 @@ def run_post(
                 ).errors()
             )
         service = req_body.service
-    command_run, func = create_command_run(
+    command_run, func = await create_command_run(
         dbsession=dbsession,
         project=project,
         deployment=deployment,
@@ -528,11 +527,11 @@ async def run_output_get(
     run_number: int,
     last_event_id: Annotated[str | None, Header()] = None,
 ):
-    with Session.begin() as dbsession:
-        project = get_project_by_name_sync(dbsession, project_name)
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
         if project is None:
             raise HTTPException(status_code=404)
-        run = get_command_run_by_number(dbsession, project, run_number)
+        run = await get_command_run_by_number(dbsession, project, run_number)
         if run is None:
             raise HTTPException(status_code=404)
         after = None

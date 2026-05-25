@@ -1,6 +1,6 @@
+import asyncio
 import json
 import logging
-import time
 from datetime import datetime, timezone
 from html import escape
 from typing import Annotated
@@ -17,37 +17,36 @@ from fastapi import (
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
-from sqlalchemy.orm.session import Session as DBSession
 
-from disco.auth import get_api_key, get_api_key_sync
-from disco.endpoints.dependencies import get_db, get_db_sync
+from disco.auth import get_api_key
+from disco.endpoints.dependencies import get_db
 from disco.models import ApiKey, PendingGithubApp
-from disco.models.db import Session
+from disco.models.db import AsyncSession
 from disco.utils import keyvalues
 from disco.utils.github import (
     create_pending_github_app,
     generate_new_pending_app_state,
     get_access_token_for_installation_id,
     get_all_github_apps,
-    get_all_repos_sync,
+    get_all_repos,
     get_github_app_installation_by_id,
     get_github_pending_app_by_id,
     handle_app_created_on_github,
     process_github_app_webhook,
     prune,
 )
-from disco.utils.randomname import generate_random_name_sync
+from disco.utils.randomname import generate_random_name
 
 log = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-def get_pending_app_from_url(
+async def get_pending_app_from_url(
     pending_app_id: Annotated[str, Path()],
 ):
-    with Session.begin() as dbsession:
-        pending_app = get_github_pending_app_by_id(dbsession, pending_app_id)
+    async with AsyncSession.begin() as dbsession:
+        pending_app = await get_github_pending_app_by_id(dbsession, pending_app_id)
         if pending_app is None:
             raise HTTPException(status_code=404)
         if pending_app.expires < datetime.now(timezone.utc):
@@ -55,12 +54,12 @@ def get_pending_app_from_url(
         yield pending_app
 
 
-def get_pending_app_id_from_url_with_state(
+async def get_pending_app_id_from_url_with_state(
     pending_app_id: Annotated[str, Path()],
     state: str,
 ):
-    with Session.begin() as dbsession:
-        pending_app = get_github_pending_app_by_id(dbsession, pending_app_id)
+    async with AsyncSession.begin() as dbsession:
+        pending_app = await get_github_pending_app_by_id(dbsession, pending_app_id)
         if pending_app is None:
             raise HTTPException(status_code=404)
         if pending_app.expires < datetime.now(timezone.utc):
@@ -81,18 +80,18 @@ class NewGithubAppRequestBody(BaseModel):
 
 
 @router.post("/api/github-apps/create", status_code=201)
-def github_app_prune_post(
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
-    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
+async def github_app_prune_post(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+    api_key: Annotated[ApiKey, Depends(get_api_key)],
     req_body: NewGithubAppRequestBody,
 ):
-    pending_app = create_pending_github_app(
+    pending_app = await create_pending_github_app(
         dbsession=dbsession,
         organization=req_body.organization,
         setup_url=req_body.setup_url,
         by_api_key=api_key,
     )
-    disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
+    disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
     assert disco_host is not None
     return {
         "pendingApp": {
@@ -124,11 +123,11 @@ CREATE_APP_HTML = """<!DOCTYPE html>
     "/github-apps/{pending_app_id}/create",
     response_class=HTMLResponse,
 )
-def github_app_create_get(
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
+async def github_app_create_get(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
     pending_app: Annotated[PendingGithubApp, Depends(get_pending_app_from_url)],
 ):
-    disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
+    disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
     assert disco_host is not None
     generate_new_pending_app_state(pending_app)
     if pending_app.organization is not None:
@@ -136,7 +135,7 @@ def github_app_create_get(
     else:
         github_url = f"https://github.com/settings/apps/new?state={pending_app.state}"
     manifest = {
-        "name": f"Disco {generate_random_name_sync()}",
+        "name": f"Disco {await generate_random_name()}",
         "url": f"https://{disco_host}/github-apps/home",
         "redirect_url": f"https://{disco_host}/github-apps/{pending_app.id}/created",
         "callback_urls": [],
@@ -161,15 +160,15 @@ def github_app_create_get(
     "/github-apps/{pending_app_id}/created",
     response_class=HTMLResponse,
 )
-def github_app_created_get(
+async def github_app_created_get(
     pending_app_id: Annotated[str, Depends(get_pending_app_id_from_url_with_state)],
     code: str,
 ):
-    app_install_url = handle_app_created_on_github(
+    app_install_url = await handle_app_created_on_github(
         pending_app_id=pending_app_id, code=code
     )
     # the app_install_url sometimes return 404 if we're too fast
-    time.sleep(1)
+    await asyncio.sleep(1)
     return RedirectResponse(url=app_install_url, status_code=302)
 
 
@@ -242,11 +241,11 @@ async def github_webhook_service_post(
     return {}
 
 
-@router.get("/api/github-app-repos", dependencies=[Depends(get_api_key_sync)])
-def list_github_repos(
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
+@router.get("/api/github-app-repos", dependencies=[Depends(get_api_key)])
+async def list_github_repos(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
 ):
-    repos = get_all_repos_sync(dbsession)
+    repos = await get_all_repos(dbsession)
     return {
         "repos": [
             {

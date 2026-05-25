@@ -1,36 +1,33 @@
 import asyncio
 import logging
-import subprocess
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm.session import Session as DBSession
+from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 
 from disco import config
-from disco.auth import get_api_key_sync, get_api_key_wo_tx
-from disco.endpoints.dependencies import get_db_sync, get_project_from_url_sync
+from disco.auth import get_api_key, get_api_key_wo_tx
+from disco.endpoints.dependencies import get_db, get_project_from_url
 from disco.models import ApiKey, Project
-from disco.models.db import Session
+from disco.models.db import AsyncSession
 from disco.utils import docker
-from disco.utils.apikeys import get_api_key_by_id_sync
-from disco.utils.deployments import get_live_deployment_sync
+from disco.utils.apikeys import get_api_key_by_id
+from disco.utils.deployments import get_live_deployment
 from disco.utils.discofile import get_disco_file_from_str
-from disco.utils.projects import get_project_by_name_sync, volume_name_for_project
+from disco.utils.projects import get_project_by_name, volume_name_for_project
 
 log = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-@router.get(
-    "/api/projects/{project_name}/volumes", dependencies=[Depends(get_api_key_sync)]
-)
-def volumes_get(
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
-    project: Annotated[Project, Depends(get_project_from_url_sync)],
+@router.get("/api/projects/{project_name}/volumes", dependencies=[Depends(get_api_key)])
+async def volumes_get(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+    project: Annotated[Project, Depends(get_project_from_url)],
 ):
-    deployment = get_live_deployment_sync(dbsession, project)
+    deployment = await get_live_deployment(dbsession, project)
     volume_names = []
     if deployment is not None:
         disco_file = get_disco_file_from_str(deployment.disco_file)
@@ -41,13 +38,13 @@ def volumes_get(
 
 
 @router.get("/api/projects/{project_name}/volumes/{volume_name}")
-def volume_get(
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
-    project: Annotated[Project, Depends(get_project_from_url_sync)],
+async def volume_get(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+    project: Annotated[Project, Depends(get_project_from_url)],
     volume_name: str,
-    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
+    api_key: Annotated[ApiKey, Depends(get_api_key)],
 ):
-    deployment = get_live_deployment_sync(dbsession, project)
+    deployment = await get_live_deployment(dbsession, project)
     volume_names = []
     if deployment is not None:
         disco_file = get_disco_file_from_str(deployment.disco_file)
@@ -65,8 +62,8 @@ def volume_get(
     )
     source = volume_name_for_project(volume_name, project.id)
 
-    def iterfile():
-        args = [
+    async def iterfile():
+        process = await asyncio.create_subprocess_exec(
             "docker",
             "run",
             "--rm",
@@ -83,13 +80,14 @@ def volume_get(
             "--file",
             "-",
             ".",
-        ]
-        with subprocess.Popen(
-            args=args,
-            stdout=subprocess.PIPE,
-        ) as process:
-            assert process.stdout is not None
-            yield from process.stdout
+            stdout=asyncio.subprocess.PIPE,
+        )
+        assert process.stdout is not None
+        try:
+            async for chunk in process.stdout:
+                yield chunk
+        finally:
+            await process.wait()
 
     return StreamingResponse(iterfile(), media_type="application/x-tar")
 
@@ -101,12 +99,12 @@ async def volume_set(
     api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
     request: Request,
 ):
-    with Session.begin() as dbsession:
-        project = get_project_by_name_sync(dbsession, project_name)
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
         if project is None:
             raise HTTPException(status_code=404)
         project_id = project.id
-        deployment = get_live_deployment_sync(dbsession, project)
+        deployment = await get_live_deployment(dbsession, project)
         volume_names = []
         if deployment is not None:
             disco_file = get_disco_file_from_str(deployment.disco_file)
@@ -117,7 +115,7 @@ async def volume_set(
             raise HTTPException(status_code=404)
         assert deployment is not None
         deployment_number = deployment.number
-        api_key = get_api_key_by_id_sync(dbsession, api_key_id)
+        api_key = await get_api_key_by_id(dbsession, api_key_id)
         assert api_key is not None
         api_key_log = api_key.log()
 

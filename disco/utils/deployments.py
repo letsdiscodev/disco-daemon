@@ -4,7 +4,6 @@ from typing import Literal, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
-from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import (
     ApiKey,
@@ -118,17 +117,6 @@ async def get_deployment_by_id(
     dbsession: AsyncDBSession, deployment_id: str
 ) -> Deployment | None:
     return await dbsession.get(Deployment, deployment_id)
-
-
-def get_deployment_by_number_sync(
-    dbsession: DBSession, project: Project, deployment_number: int
-) -> Deployment | None:
-    return (
-        dbsession.query(Deployment)
-        .filter(Deployment.project == project)
-        .filter(Deployment.number == deployment_number)
-        .first()
-    )
 
 
 async def get_deployment_by_number(
@@ -283,18 +271,6 @@ async def get_live_deployment(
     )
     result = await dbsession.execute(stmt)
     return result.scalars().first()
-
-
-def get_live_deployment_sync(
-    dbsession: DBSession, project: Project
-) -> Deployment | None:
-    return (
-        dbsession.query(Deployment)
-        .filter(Deployment.project == project)
-        .filter(Deployment.status == "COMPLETE")
-        .order_by(Deployment.number.desc())
-        .first()
-    )
 
 
 async def get_last_deployment(
