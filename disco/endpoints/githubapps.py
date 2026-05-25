@@ -62,16 +62,21 @@ def get_pending_app_from_url(
 def get_pending_app_id_from_url_with_state(
     pending_app_id: Annotated[str, Path()],
     state: str,
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
 ):
-    pending_app = get_github_pending_app_by_id(dbsession, pending_app_id)
-    if pending_app is None:
-        raise HTTPException(status_code=404)
-    if pending_app.expires < datetime.now(timezone.utc):
-        raise HTTPException(status_code=404)
-    if pending_app.state != state:
-        raise HTTPException(status_code=404)
-    return pending_app.id
+    # Returns just the id string, so we don't need to keep an attached
+    # session around for the endpoint. Open a short-lived session,
+    # validate, commit, *then* yield — keeps the writer lock for only
+    # the duration of the SELECTs, not the whole endpoint.
+    with Session.begin() as dbsession:
+        pending_app = get_github_pending_app_by_id(dbsession, pending_app_id)
+        if pending_app is None:
+            raise HTTPException(status_code=404)
+        if pending_app.expires < datetime.now(timezone.utc):
+            raise HTTPException(status_code=404)
+        if pending_app.state != state:
+            raise HTTPException(status_code=404)
+        validated_id = pending_app.id
+    return validated_id
 
 
 class NewGithubAppRequestBody(BaseModel):
