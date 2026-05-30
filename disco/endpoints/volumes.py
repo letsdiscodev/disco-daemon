@@ -4,12 +4,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 
 from disco import config
-from disco.auth import get_api_key, get_api_key_wo_tx
-from disco.endpoints.dependencies import get_db, get_project_from_url
-from disco.models import ApiKey, Project
+from disco.auth import get_api_key_wo_tx
+from disco.endpoints.dependencies import get_project_name_from_url_wo_tx
 from disco.models.db import AsyncSession
 from disco.utils import docker
 from disco.utils.apikeys import get_api_key_by_id
@@ -22,45 +20,54 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("/api/projects/{project_name}/volumes", dependencies=[Depends(get_api_key)])
+@router.get(
+    "/api/projects/{project_name}/volumes",
+    dependencies=[Depends(get_api_key_wo_tx)],
+)
 async def volumes_get(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
-    project: Annotated[Project, Depends(get_project_from_url)],
+    project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
 ):
-    deployment = await get_live_deployment(dbsession, project)
-    volume_names = []
-    if deployment is not None:
-        disco_file = get_disco_file_from_str(deployment.disco_file)
-        for service in disco_file.services.values():
-            for volume in service.volumes:
-                volume_names.append(volume.name)
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
+        assert project is not None
+        deployment = await get_live_deployment(dbsession, project)
+        volume_names = []
+        if deployment is not None:
+            disco_file = get_disco_file_from_str(deployment.disco_file)
+            for service in disco_file.services.values():
+                for volume in service.volumes:
+                    volume_names.append(volume.name)
     return {"volumes": [{"name": name} for name in volume_names]}
 
 
 @router.get("/api/projects/{project_name}/volumes/{volume_name}")
 async def volume_get(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
-    project: Annotated[Project, Depends(get_project_from_url)],
+    project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
     volume_name: str,
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
 ):
-    deployment = await get_live_deployment(dbsession, project)
-    volume_names = []
-    if deployment is not None:
-        disco_file = get_disco_file_from_str(deployment.disco_file)
-        for service in disco_file.services.values():
-            for volume in service.volumes:
-                volume_names.append(volume.name)
-    if volume_name not in volume_names:
-        raise HTTPException(status_code=404)
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
+        assert project is not None
+        api_key = await get_api_key_by_id(dbsession, api_key_id)
+        assert api_key is not None
+        deployment = await get_live_deployment(dbsession, project)
+        volume_names = []
+        if deployment is not None:
+            disco_file = get_disco_file_from_str(deployment.disco_file)
+            for service in disco_file.services.values():
+                for volume in service.volumes:
+                    volume_names.append(volume.name)
+        if volume_name not in volume_names:
+            raise HTTPException(status_code=404)
 
-    log.info(
-        "Exporting volume from project %s %s by %s",
-        project.name,
-        volume_name,
-        api_key.log(),
-    )
-    source = volume_name_for_project(volume_name, project.id)
+        log.info(
+            "Exporting volume from project %s %s by %s",
+            project.name,
+            volume_name,
+            api_key.log(),
+        )
+        source = volume_name_for_project(volume_name, project.id)
 
     async def iterfile():
         process = await asyncio.create_subprocess_exec(

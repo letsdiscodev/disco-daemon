@@ -24,6 +24,7 @@ async def allow_origin(
             by_api_key=by_api_key,
         )
         dbsession.add(cors_origin)
+        await dbsession.flush()
         all_origins = await get_all_cors_origins(dbsession)
         log.info(
             "Added CORS origin to allowed origins in database %s", cors_origin.log()

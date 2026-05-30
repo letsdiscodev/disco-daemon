@@ -3,12 +3,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 
 import disco
-from disco.auth import get_api_key, get_api_key_wo_tx
-from disco.endpoints.dependencies import get_db
-from disco.models import ApiKey
+from disco.auth import get_api_key_wo_tx
 from disco.models.db import AsyncSession
 from disco.utils import docker, keyvalues
 from disco.utils.apikeys import get_valid_api_key_by_id
@@ -126,43 +123,47 @@ class SetRegistryRequestBody(BaseModel):
 
 @router.post("/api/disco/registry")
 async def registry_post(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+    api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
     req_body: SetRegistryRequestBody,
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
 ):
-    log.info("%s is setting Docker Registry to %s", api_key.log(), req_body.address)
-    disco_host_home = await keyvalues.get_value(dbsession, "HOST_HOME")
-    assert disco_host_home is not None
-    await keyvalues.set_value(
-        dbsession=dbsession, key="REGISTRY", value=req_body.address
-    )
-    return {
-        "version": disco.__version__,
-        "discoHost": await keyvalues.get_value(dbsession, "DISCO_HOST"),
-        "registry": await keyvalues.get_value(dbsession, "REGISTRY"),
-        # registryHost for backward compat, remove after 2027-02-01
-        "registryHost": await keyvalues.get_value(dbsession, "REGISTRY"),
-    }
+    async with AsyncSession.begin() as dbsession:
+        api_key = await get_valid_api_key_by_id(dbsession, api_key_id)
+        assert api_key is not None
+        log.info("%s is setting Docker Registry to %s", api_key.log(), req_body.address)
+        disco_host_home = await keyvalues.get_value(dbsession, "HOST_HOME")
+        assert disco_host_home is not None
+        await keyvalues.set_value(
+            dbsession=dbsession, key="REGISTRY", value=req_body.address
+        )
+        return {
+            "version": disco.__version__,
+            "discoHost": await keyvalues.get_value(dbsession, "DISCO_HOST"),
+            "registry": await keyvalues.get_value(dbsession, "REGISTRY"),
+            # registryHost for backward compat, remove after 2027-02-01
+            "registryHost": await keyvalues.get_value(dbsession, "REGISTRY"),
+        }
 
 
 @router.delete("/api/disco/registry")
 async def registry_delete(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
 ):
-    disco_host_home = await keyvalues.get_value(dbsession, "HOST_HOME")
-    assert disco_host_home is not None
-    registry = await keyvalues.get_value(dbsession, "REGISTRY")
-    if registry is not None:
-        node_ids = await docker.get_node_list()
-        if len(node_ids) > 1:
-            raise HTTPException(422, "Can't unset registry with many nodes running")
-    log.info("%s is unsetting Docker Registry (was %s)", api_key.log(), registry)
-    await keyvalues.set_value(dbsession=dbsession, key="REGISTRY", value=None)
-    return {
-        "version": disco.__version__,
-        "discoHost": await keyvalues.get_value(dbsession, "DISCO_HOST"),
-        "registry": await keyvalues.get_value(dbsession, "REGISTRY"),
-        # registryHost for backward compat, remove after 2027-02-01
-        "registryHost": await keyvalues.get_value(dbsession, "REGISTRY"),
-    }
+    async with AsyncSession.begin() as dbsession:
+        api_key = await get_valid_api_key_by_id(dbsession, api_key_id)
+        assert api_key is not None
+        disco_host_home = await keyvalues.get_value(dbsession, "HOST_HOME")
+        assert disco_host_home is not None
+        registry = await keyvalues.get_value(dbsession, "REGISTRY")
+        if registry is not None:
+            node_ids = await docker.get_node_list()
+            if len(node_ids) > 1:
+                raise HTTPException(422, "Can't unset registry with many nodes running")
+        log.info("%s is unsetting Docker Registry (was %s)", api_key.log(), registry)
+        await keyvalues.set_value(dbsession=dbsession, key="REGISTRY", value=None)
+        return {
+            "version": disco.__version__,
+            "discoHost": await keyvalues.get_value(dbsession, "DISCO_HOST"),
+            "registry": await keyvalues.get_value(dbsession, "REGISTRY"),
+            # registryHost for backward compat, remove after 2027-02-01
+            "registryHost": await keyvalues.get_value(dbsession, "REGISTRY"),
+        }

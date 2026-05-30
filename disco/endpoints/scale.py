@@ -5,35 +5,35 @@ from fastapi import APIRouter, Depends
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ValidationError
 from pydantic_core import InitErrorDetails, PydanticCustomError
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 
-from disco.auth import get_api_key
-from disco.endpoints.dependencies import (
-    get_db,
-    get_project_from_url,
-)
-from disco.models import ApiKey, Project
+from disco.auth import get_api_key_wo_tx
+from disco.endpoints.dependencies import get_project_name_from_url_wo_tx
+from disco.models.db import AsyncSession
 from disco.utils import docker
+from disco.utils.apikeys import get_api_key_by_id
 from disco.utils.deployments import get_live_deployment
 from disco.utils.discofile import ServiceType, get_disco_file_from_str
+from disco.utils.projects import get_project_by_name
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(dependencies=[Depends(get_api_key)])
+router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 
 
 @router.get("/api/projects/{project_name}/scale")
 async def scale_get(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
-    project: Annotated[Project, Depends(get_project_from_url)],
+    project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
 ):
-    deployment = await get_live_deployment(dbsession, project)
-    if deployment is None:
-        services = []
-    else:
-        services = await docker.list_services_for_deployment(
-            project.name, deployment.number
-        )
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
+        assert project is not None
+        deployment = await get_live_deployment(dbsession, project)
+        if deployment is None:
+            services = []
+        else:
+            services = await docker.list_services_for_deployment(
+                project.name, deployment.number
+            )
     return {
         "services": [
             {
@@ -51,61 +51,65 @@ class ScaleRequestBody(BaseModel):
 
 @router.post("/api/projects/{project_name}/scale")
 async def scale_post(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
-    project: Annotated[Project, Depends(get_project_from_url)],
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
+    api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
     req_body: ScaleRequestBody,
 ):
-    deployment = await get_live_deployment(dbsession, project)
-    if deployment is None:
-        services = set()
-    else:
-        disco_file = get_disco_file_from_str(deployment.disco_file)
-        services = set(
-            [
-                service
-                for service in disco_file.services
-                if disco_file.services[service].type == ServiceType.container
-            ]
-        )
-    invalid_services = []
-    for service in req_body.services:
-        if service not in services:
-            invalid_services.append(service)
-    if len(invalid_services) > 0:
-        raise RequestValidationError(
-            errors=(
-                ValidationError.from_exception_data(
-                    "ValueError",
-                    [
-                        InitErrorDetails(
-                            type=PydanticCustomError(
-                                "value_error",
-                                "Service name not in current deployment",
-                            ),
-                            loc=("body", "services"),
-                            input=service,
-                        )
-                        for service in invalid_services
-                    ],
-                )
-            ).errors()
-        )
-    if len(req_body.services) > 0:
-        assert deployment is not None
-        log.info(
-            "Scaling services for project %s %s by %s",
-            project.log(),
-            " ".join([f"{s}={n}" for s, n in req_body.services.items()]),
-            api_key.log(),
-        )
-        internal_name_scale = dict(
-            (
-                docker.service_name(
-                    deployment.project_name, service, deployment.number
-                ),
-                scale,
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
+        assert project is not None
+        api_key = await get_api_key_by_id(dbsession, api_key_id)
+        assert api_key is not None
+        deployment = await get_live_deployment(dbsession, project)
+        if deployment is None:
+            services = set()
+        else:
+            disco_file = get_disco_file_from_str(deployment.disco_file)
+            services = set(
+                [
+                    service
+                    for service in disco_file.services
+                    if disco_file.services[service].type == ServiceType.container
+                ]
             )
-            for service, scale in req_body.services.items()
-        )
-        await docker.scale(internal_name_scale)
+        invalid_services = []
+        for service in req_body.services:
+            if service not in services:
+                invalid_services.append(service)
+        if len(invalid_services) > 0:
+            raise RequestValidationError(
+                errors=(
+                    ValidationError.from_exception_data(
+                        "ValueError",
+                        [
+                            InitErrorDetails(
+                                type=PydanticCustomError(
+                                    "value_error",
+                                    "Service name not in current deployment",
+                                ),
+                                loc=("body", "services"),
+                                input=service,
+                            )
+                            for service in invalid_services
+                        ],
+                    )
+                ).errors()
+            )
+        if len(req_body.services) > 0:
+            assert deployment is not None
+            log.info(
+                "Scaling services for project %s %s by %s",
+                project.log(),
+                " ".join([f"{s}={n}" for s, n in req_body.services.items()]),
+                api_key.log(),
+            )
+            internal_name_scale = dict(
+                (
+                    docker.service_name(
+                        deployment.project_name, service, deployment.number
+                    ),
+                    scale,
+                )
+                for service, scale in req_body.services.items()
+            )
+            await docker.scale(internal_name_scale)

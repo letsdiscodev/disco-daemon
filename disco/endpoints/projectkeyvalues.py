@@ -5,11 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_core import InitErrorDetails, PydanticCustomError
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 
-from disco.auth import get_api_key
-from disco.endpoints.dependencies import get_db, get_project_from_url
-from disco.models import ApiKey, Project
+from disco.auth import get_api_key_wo_tx
+from disco.endpoints.dependencies import get_project_name_from_url_wo_tx
+from disco.models.db import AsyncSession
+from disco.utils.apikeys import get_api_key_by_id
 from disco.utils.encryption import decrypt
 from disco.utils.projectkeyvalues import (
     delete_value,
@@ -17,47 +17,62 @@ from disco.utils.projectkeyvalues import (
     get_value,
     set_value,
 )
+from disco.utils.projects import get_project_by_name
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(dependencies=[Depends(get_api_key)])
+router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 
 
 @router.get("/api/projects/{project_name}/keyvalues")
 async def key_values_get(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
-    project: Annotated[Project, Depends(get_project_from_url)],
+    project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
 ):
-    key_values = await get_all_key_values_for_project(dbsession, project)
-    return {
-        "keyValues": dict(
-            [(key_value.key, decrypt(key_value.value)) for key_value in key_values]
-        )
-    }
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
+        assert project is not None
+        key_values = await get_all_key_values_for_project(dbsession, project)
+        return {
+            "keyValues": dict(
+                [(key_value.key, decrypt(key_value.value)) for key_value in key_values]
+            )
+        }
 
 
-async def get_value_from_key_in_url(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
-    project: Annotated[Project, Depends(get_project_from_url)],
+async def get_key_from_url(
+    project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
     key: Annotated[str, Path(max_length=255)],
 ):
-    value = await get_value(
-        dbsession=dbsession,
-        project=project,
-        key=key,
-    )
-    if value is None:
-        raise HTTPException(status_code=404)
-    yield value
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
+        assert project is not None
+        value = await get_value(
+            dbsession=dbsession,
+            project=project,
+            key=key,
+        )
+        if value is None:
+            raise HTTPException(status_code=404)
+    yield key
 
 
 @router.get("/api/projects/{project_name}/keyvalues/{key}")
 async def key_value_get(
-    value: Annotated[str, Depends(get_value_from_key_in_url)],
+    project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
+    key: Annotated[str, Depends(get_key_from_url)],
 ):
-    return {
-        "value": value,
-    }
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
+        assert project is not None
+        value = await get_value(
+            dbsession=dbsession,
+            project=project,
+            key=key,
+        )
+        assert value is not None
+        return {
+            "value": value,
+        }
 
 
 class SetKeyValueRequestBody(BaseModel):
@@ -67,52 +82,60 @@ class SetKeyValueRequestBody(BaseModel):
 
 @router.put("/api/projects/{project_name}/keyvalues/{key}")
 async def key_value_put(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+    project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
     key: Annotated[str, Path(max_length=255)],
     req_body: SetKeyValueRequestBody,
-    project: Annotated[Project, Depends(get_project_from_url)],
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
 ):
-    prev_value = await get_value(dbsession=dbsession, project=project, key=key)
-    if "previous_value" in req_body.model_fields_set:
-        if req_body.previous_value != prev_value:
-            raise RequestValidationError(
-                errors=(
-                    ValidationError.from_exception_data(
-                        "ValueError",
-                        [
-                            InitErrorDetails(
-                                type=PydanticCustomError(
-                                    "value_error", "Previous value mismatch"
-                                ),
-                                loc=("body", "previousValue"),
-                                input=req_body.previous_value,
-                            )
-                        ],
-                    )
-                ).errors()
-            )
-    await set_value(
-        dbsession=dbsession,
-        project=project,
-        key=key,
-        value=req_body.value,
-        by_api_key=api_key,
-    )
-    return {"value": req_body.value}
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
+        assert project is not None
+        api_key = await get_api_key_by_id(dbsession, api_key_id)
+        assert api_key is not None
+        prev_value = await get_value(dbsession=dbsession, project=project, key=key)
+        if "previous_value" in req_body.model_fields_set:
+            if req_body.previous_value != prev_value:
+                raise RequestValidationError(
+                    errors=(
+                        ValidationError.from_exception_data(
+                            "ValueError",
+                            [
+                                InitErrorDetails(
+                                    type=PydanticCustomError(
+                                        "value_error", "Previous value mismatch"
+                                    ),
+                                    loc=("body", "previousValue"),
+                                    input=req_body.previous_value,
+                                )
+                            ],
+                        )
+                    ).errors()
+                )
+        await set_value(
+            dbsession=dbsession,
+            project=project,
+            key=key,
+            value=req_body.value,
+            by_api_key=api_key,
+        )
+        return {"value": req_body.value}
 
 
 @router.delete("/api/projects/{project_name}/keyvalues/{key}")
 async def key_value_delete(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
-    project: Annotated[Project, Depends(get_project_from_url)],
+    project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
     key: Annotated[str, Path(max_length=255)],
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
 ):
-    await delete_value(
-        dbsession=dbsession,
-        project=project,
-        key=key,
-        by_api_key=api_key,
-    )
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
+        assert project is not None
+        api_key = await get_api_key_by_id(dbsession, api_key_id)
+        assert api_key is not None
+        await delete_value(
+            dbsession=dbsession,
+            project=project,
+            key=key,
+            by_api_key=api_key,
+        )
     return {"deleted": True}
