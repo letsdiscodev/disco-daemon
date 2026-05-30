@@ -1,6 +1,19 @@
+# TODO(dqlite-merge): this file was taken from main's sync->async conversion as
+# the merge base; the dqlite branch's changes here were NOT re-applied and must
+# be ported on top of the async handlers in a follow-up commit. Re-apply the
+# intent of these dqlite commits (all about avoiding parallel/long-lived
+# sessions that contend on dqlite's single-writer lock):
+#   4ac2775 Share dbsession in pending-app deps instead of opening a parallel one
+#   f9949c3 Close pending-app validation session before yielding the id
+#   f48945d Avoid parallel sessions on installation-access-token endpoint
+#   d853b22 Security: token use-count + TTL, hardened internal endpoint, audit log
+# Specifically: get_pending_app_from_url / get_pending_app_id_from_url_with_state
+# should not hold a session open across the endpoint, and
+# get_installation_access_token should open its own short-lived session AFTER
+# fetching the token rather than holding the request's session the whole time.
+import asyncio
 import json
 import logging
-import time
 from datetime import datetime, timezone
 from html import escape
 from typing import Annotated
@@ -17,66 +30,56 @@ from fastapi import (
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
-from sqlalchemy.orm.session import Session as DBSession
 
-from disco.auth import get_api_key, get_api_key_sync, get_api_key_wo_tx
-from disco.endpoints.dependencies import get_db, get_db_sync
+from disco.auth import get_api_key
+from disco.endpoints.dependencies import get_db
 from disco.models import ApiKey, PendingGithubApp
-from disco.models.db import AsyncSession, Session
+from disco.models.db import AsyncSession
 from disco.utils import keyvalues
 from disco.utils.github import (
     create_pending_github_app,
     generate_new_pending_app_state,
     get_access_token_for_installation_id,
     get_all_github_apps,
-    get_all_repos_sync,
+    get_all_repos,
     get_github_app_installation_by_id,
     get_github_pending_app_by_id,
     handle_app_created_on_github,
     process_github_app_webhook,
     prune,
 )
-from disco.utils.randomname import generate_random_name_sync
+from disco.utils.randomname import generate_random_name
 
 log = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-def get_pending_app_from_url(
+async def get_pending_app_from_url(
     pending_app_id: Annotated[str, Path()],
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
 ):
-    # Share the endpoint's dbsession (via FastAPI dep cache) instead of
-    # opening our own. Opening a second session would hold a parallel
-    # BEGIN IMMEDIATE transaction across the entire endpoint, blocking
-    # the endpoint's session from acquiring the writer lock.
-    pending_app = get_github_pending_app_by_id(dbsession, pending_app_id)
-    if pending_app is None:
-        raise HTTPException(status_code=404)
-    if pending_app.expires < datetime.now(timezone.utc):
-        raise HTTPException(status_code=404)
-    return pending_app
+    async with AsyncSession.begin() as dbsession:
+        pending_app = await get_github_pending_app_by_id(dbsession, pending_app_id)
+        if pending_app is None:
+            raise HTTPException(status_code=404)
+        if pending_app.expires < datetime.now(timezone.utc):
+            raise HTTPException(status_code=404)
+        yield pending_app
 
 
-def get_pending_app_id_from_url_with_state(
+async def get_pending_app_id_from_url_with_state(
     pending_app_id: Annotated[str, Path()],
     state: str,
 ):
-    # Returns just the id string, so we don't need to keep an attached
-    # session around for the endpoint. Open a short-lived session,
-    # validate, commit, *then* yield — keeps the writer lock for only
-    # the duration of the SELECTs, not the whole endpoint.
-    with Session.begin() as dbsession:
-        pending_app = get_github_pending_app_by_id(dbsession, pending_app_id)
+    async with AsyncSession.begin() as dbsession:
+        pending_app = await get_github_pending_app_by_id(dbsession, pending_app_id)
         if pending_app is None:
             raise HTTPException(status_code=404)
         if pending_app.expires < datetime.now(timezone.utc):
             raise HTTPException(status_code=404)
         if pending_app.state != state:
             raise HTTPException(status_code=404)
-        validated_id = pending_app.id
-    return validated_id
+        yield pending_app.id
 
 
 class NewGithubAppRequestBody(BaseModel):
@@ -90,18 +93,18 @@ class NewGithubAppRequestBody(BaseModel):
 
 
 @router.post("/api/github-apps/create", status_code=201)
-def github_app_prune_post(
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
-    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
+async def github_app_prune_post(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+    api_key: Annotated[ApiKey, Depends(get_api_key)],
     req_body: NewGithubAppRequestBody,
 ):
-    pending_app = create_pending_github_app(
+    pending_app = await create_pending_github_app(
         dbsession=dbsession,
         organization=req_body.organization,
         setup_url=req_body.setup_url,
         by_api_key=api_key,
     )
-    disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
+    disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
     assert disco_host is not None
     return {
         "pendingApp": {
@@ -133,11 +136,11 @@ CREATE_APP_HTML = """<!DOCTYPE html>
     "/github-apps/{pending_app_id}/create",
     response_class=HTMLResponse,
 )
-def github_app_create_get(
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
+async def github_app_create_get(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
     pending_app: Annotated[PendingGithubApp, Depends(get_pending_app_from_url)],
 ):
-    disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
+    disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
     assert disco_host is not None
     generate_new_pending_app_state(pending_app)
     if pending_app.organization is not None:
@@ -145,7 +148,7 @@ def github_app_create_get(
     else:
         github_url = f"https://github.com/settings/apps/new?state={pending_app.state}"
     manifest = {
-        "name": f"Disco {generate_random_name_sync()}",
+        "name": f"Disco {await generate_random_name()}",
         "url": f"https://{disco_host}/github-apps/home",
         "redirect_url": f"https://{disco_host}/github-apps/{pending_app.id}/created",
         "callback_urls": [],
@@ -170,15 +173,15 @@ def github_app_create_get(
     "/github-apps/{pending_app_id}/created",
     response_class=HTMLResponse,
 )
-def github_app_created_get(
+async def github_app_created_get(
     pending_app_id: Annotated[str, Depends(get_pending_app_id_from_url_with_state)],
     code: str,
 ):
-    app_install_url = handle_app_created_on_github(
+    app_install_url = await handle_app_created_on_github(
         pending_app_id=pending_app_id, code=code
     )
     # the app_install_url sometimes return 404 if we're too fast
-    time.sleep(1)
+    await asyncio.sleep(1)
     return RedirectResponse(url=app_install_url, status_code=302)
 
 
@@ -251,11 +254,11 @@ async def github_webhook_service_post(
     return {}
 
 
-@router.get("/api/github-app-repos", dependencies=[Depends(get_api_key_sync)])
-def list_github_repos(
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
+@router.get("/api/github-app-repos", dependencies=[Depends(get_api_key)])
+async def list_github_repos(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
 ):
-    repos = get_all_repos_sync(dbsession)
+    repos = await get_all_repos(dbsession)
     return {
         "repos": [
             {
@@ -269,16 +272,15 @@ def list_github_repos(
 
 @router.post(
     "/api/github-apps/installations/{installation_id}/access-token",
-    dependencies=[Depends(get_api_key_wo_tx)],
+    dependencies=[Depends(get_api_key)],
 )
 async def get_installation_access_token(
     installation_id: Annotated[int, Path()],
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
 ):
-    # No long-lived `dbsession` dep here on purpose:
-    # `get_access_token_for_installation_id` opens its own short-lived
-    # sessions (read installation, maybe write new token). If we held a
-    # parallel session open for the duration of the endpoint we'd
-    # contend for the writer lock with the helper's update session.
+    installation = await get_github_app_installation_by_id(dbsession, installation_id)
+    if installation is None:
+        raise HTTPException(status_code=404, detail="Installation not found")
     try:
         token = await get_access_token_for_installation_id(installation_id)
     except Exception as e:
@@ -286,15 +288,10 @@ async def get_installation_access_token(
         raise HTTPException(
             status_code=502, detail="Failed to get access token from GitHub"
         ) from e
-    async with AsyncSession.begin() as dbsession:
-        installation = await get_github_app_installation_by_id(
-            dbsession, installation_id
-        )
-        if installation is None:
-            raise HTTPException(status_code=404, detail="Installation not found")
-        expires_at = (
-            installation.access_token_expires.isoformat()
-            if installation.access_token_expires
-            else None
-        )
-    return {"token": token, "expiresAt": expires_at}
+    await dbsession.refresh(installation)  # access_token_expires
+    return {
+        "token": token,
+        "expiresAt": installation.access_token_expires.isoformat()
+        if installation.access_token_expires
+        else None,
+    }

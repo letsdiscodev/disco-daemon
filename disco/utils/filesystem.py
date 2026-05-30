@@ -122,10 +122,10 @@ def _certificate_directory(domain: str) -> str:
     return f"/disco/caddy/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/{domain}"
 
 
-def get_caddy_key_crt(domain: str) -> str:
+async def get_caddy_key_crt(domain: str) -> str:
     path = f"{_certificate_directory(domain)}/{domain}.crt"
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
+    async with aiofiles.open(path, "r", encoding="utf-8") as f:
+        return await f.read()
 
 
 def set_caddy_key_crt(domain: str, value: str) -> None:
@@ -137,10 +137,10 @@ def set_caddy_key_crt(domain: str, value: str) -> None:
         f.write(value)
 
 
-def get_caddy_key_key(domain: str) -> str:
+async def get_caddy_key_key(domain: str) -> str:
     path = f"{_certificate_directory(domain)}/{domain}.key"
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
+    async with aiofiles.open(path, "r", encoding="utf-8") as f:
+        return await f.read()
 
 
 def set_caddy_key_key(domain: str, value: str) -> None:
@@ -152,10 +152,10 @@ def set_caddy_key_key(domain: str, value: str) -> None:
         f.write(value)
 
 
-def get_caddy_key_meta(domain: str) -> str:
+async def get_caddy_key_meta(domain: str) -> str:
     path = f"{_certificate_directory(domain)}/{domain}.json"
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
+    async with aiofiles.open(path, "r", encoding="utf-8") as f:
+        return await f.read()
 
 
 def set_caddy_key_meta(domain: str, value: str) -> None:

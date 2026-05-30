@@ -2,7 +2,8 @@ import logging
 import uuid
 from typing import Awaitable, Callable
 
-from sqlalchemy.orm.session import Session as DBSession
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 
 from disco.models import ApiKey, CommandRun, Deployment, Project
 from disco.utils import commandoutputs, docker, keyvalues
@@ -13,8 +14,8 @@ from disco.utils.projects import volume_name_for_project
 log = logging.getLogger(__name__)
 
 
-def create_command_run(
-    dbsession: DBSession,
+async def create_command_run(
+    dbsession: AsyncDBSession,
     project: Project,
     deployment: Deployment,
     service: str,
@@ -25,7 +26,7 @@ def create_command_run(
     disco_file: DiscoFile = get_disco_file_from_str(deployment.disco_file)
     assert deployment.status == "COMPLETE"
     assert service in disco_file.services
-    number = get_next_run_number(dbsession, project)
+    number = await get_next_run_number(dbsession, project)
     command_run = CommandRun(
         id=uuid.uuid4().hex,
         number=number,
@@ -37,7 +38,7 @@ def create_command_run(
         by_api_key=by_api_key,
     )
     dbsession.add(command_run)
-    registry = keyvalues.get_value_sync(dbsession, "REGISTRY")
+    registry = await keyvalues.get_value(dbsession, "REGISTRY")
     image = docker.get_image_name_for_service(
         disco_file=disco_file,
         service_name=service,
@@ -50,13 +51,14 @@ def create_command_run(
     run_id = command_run.id
     if disco_file.services[service].type == ServiceType.command:
         command = f"{disco_file.services[service].command} {command}"
+    deployment_env_variables = await deployment.awaitable_attrs.env_variables
     env_variables = [
-        (env_var.name, decrypt(env_var.value)) for env_var in deployment.env_variables
+        (env_var.name, decrypt(env_var.value)) for env_var in deployment_env_variables
     ]
     env_variables += [
         ("DISCO_PROJECT_NAME", project_name),
         ("DISCO_SERVICE_NAME", service),
-        ("DISCO_HOST", keyvalues.get_value_str_sync(dbsession, "DISCO_HOST")),
+        ("DISCO_HOST", await keyvalues.get_value_str(dbsession, "DISCO_HOST")),
         ("DISCO_DEPLOYMENT_NUMBER", str(deployment.number)),
     ]
     if deployment.commit_hash is not None:
@@ -106,24 +108,28 @@ def create_command_run(
     return command_run, func
 
 
-def get_command_run_by_number(
-    dbsession: DBSession, project: Project, number: int
+async def get_command_run_by_number(
+    dbsession: AsyncDBSession, project: Project, number: int
 ) -> CommandRun | None:
-    return (
-        dbsession.query(CommandRun)
-        .filter(CommandRun.project == project)
-        .filter(CommandRun.number == number)
-        .first()
+    stmt = (
+        select(CommandRun)
+        .where(CommandRun.project == project)
+        .where(CommandRun.number == number)
+        .limit(1)
     )
+    result = await dbsession.execute(stmt)
+    return result.scalars().first()
 
 
-def get_next_run_number(dbsession: DBSession, project: Project) -> int:
-    run = (
-        dbsession.query(CommandRun)
-        .filter(CommandRun.project == project)
+async def get_next_run_number(dbsession: AsyncDBSession, project: Project) -> int:
+    stmt = (
+        select(CommandRun)
+        .where(CommandRun.project == project)
         .order_by(CommandRun.number.desc())
-        .first()
+        .limit(1)
     )
+    result = await dbsession.execute(stmt)
+    run = result.scalars().first()
     if run is None:
         number = 0
     else:

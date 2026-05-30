@@ -1,6 +1,6 @@
+import asyncio
 import json
 import logging
-import time
 from datetime import datetime, timezone
 from typing import Annotated
 
@@ -9,12 +9,11 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_core import InitErrorDetails, PydanticCustomError
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
-from sqlalchemy.orm.session import Session as DBSession
 from sse_starlette import EventSourceResponse, ServerSentEvent
 
 import disco
 from disco.auth import get_api_key, get_api_key_wo_tx
-from disco.endpoints.dependencies import get_db, get_db_sync
+from disco.endpoints.dependencies import get_db
 from disco.models import ApiKey
 from disco.utils import docker, keyvalues
 from disco.utils.meta import set_disco_host, update_disco
@@ -49,10 +48,10 @@ class UpdateRequestBody(BaseModel):
 
 
 @router.post("/api/disco/upgrade")
-def upgrade_post(
-    dbsession: Annotated[DBSession, Depends(get_db_sync)], req_body: UpdateRequestBody
+async def upgrade_post(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)], req_body: UpdateRequestBody
 ):
-    update_disco(dbsession=dbsession, image=req_body.image, pull=req_body.pull)
+    await update_disco(dbsession=dbsession, image=req_body.image, pull=req_body.pull)
     return {"updating": True}
 
 
@@ -120,6 +119,6 @@ async def read_stats():
                 event="stats",
                 data=json.dumps(node_stats),
             )
-            time.sleep(3)
+            await asyncio.sleep(3)
     finally:
         log.info("Stopping stats")

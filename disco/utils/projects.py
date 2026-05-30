@@ -4,7 +4,6 @@ from typing import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
-from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import (
     ApiKey,
@@ -92,33 +91,16 @@ async def _remove_project_repo_from_filesystem(project_name: str) -> None:
         log.info("Failed to remove Github repo for project %s", project_name)
 
 
-def get_project_by_id_sync(dbsession: DBSession, project_id: str) -> Project | None:
-    return dbsession.query(Project).get(project_id)
-
-
 async def get_project_by_id(
     dbsession: AsyncDBSession, project_id: str
 ) -> Project | None:
     return await dbsession.get(Project, project_id)
 
 
-def get_project_by_name_sync(dbsession: DBSession, name: str) -> Project | None:
-    return dbsession.query(Project).filter(Project.name == name).first()
-
-
 async def get_project_by_name(dbsession: AsyncDBSession, name: str) -> Project | None:
     stmt = select(Project).where(Project.name == name).limit(1)
     result = await dbsession.execute(stmt)
     return result.scalars().first()
-
-
-def get_project_by_domain_sync(dbsession: DBSession, domain: str) -> Project | None:
-    return (
-        dbsession.query(Project)
-        .join(ProjectDomain)
-        .filter(ProjectDomain.name == domain)
-        .first()
-    )
 
 
 async def get_project_by_domain(
@@ -147,10 +129,6 @@ async def get_all_projects(dbsession: AsyncDBSession) -> Sequence[Project]:
     stmt = select(Project).order_by(Project.name)
     result = await dbsession.execute(stmt)
     return result.scalars().all()
-
-
-def get_all_projects_sync(dbsession: DBSession) -> list[Project]:
-    return dbsession.query(Project).order_by(Project.name).all()
 
 
 async def delete_project(

@@ -4,11 +4,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
-from sqlalchemy.orm.session import Session as DBSession
+from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 
 import disco
-from disco.auth import get_api_key_sync
-from disco.endpoints.dependencies import get_db_sync
+from disco.auth import get_api_key
+from disco.endpoints.dependencies import get_db
 from disco.models import ApiKey, ApiKeyInvite
 from disco.utils import keyvalues
 from disco.utils.apikeyinvites import (
@@ -28,13 +28,13 @@ class NewApiKeyRequestBody(BaseModel):
 
 
 @router.post("/api/api-key-invites", status_code=201)
-def api_keys_post(
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
-    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
+async def api_keys_post(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+    api_key: Annotated[ApiKey, Depends(get_api_key)],
     req_body: NewApiKeyRequestBody,
 ):
-    disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
-    invite = create_api_key_invite(
+    disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
+    invite = await create_api_key_invite(
         dbsession=dbsession,
         name=req_body.name,
         by_api_key=api_key,
@@ -47,11 +47,11 @@ def api_keys_post(
     }
 
 
-def get_api_key_invite_from_url(
+async def get_api_key_invite_from_url(
     invite_id: Annotated[str, Path()],
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
 ):
-    invite = get_api_key_invite_by_id(dbsession, invite_id)
+    invite = await get_api_key_invite_by_id(dbsession, invite_id)
     if invite is None:
         raise HTTPException(status_code=404)
     yield invite
@@ -65,22 +65,22 @@ RESP_TXT = (
 
 
 @router.get("/api-key-invites/{invite_id}", response_class=PlainTextResponse)
-def api_key_invite_get(
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
-    invite: Annotated[ApiKey, Depends(get_api_key_invite_from_url)],
+async def api_key_invite_get(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+    invite: Annotated[ApiKeyInvite, Depends(get_api_key_invite_from_url)],
 ):
-    disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
+    disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
     return RESP_TXT.format(disco_host=disco_host, invite_id=invite.id)
 
 
 @router.post("/api-key-invites/{invite_id}")
-def api_key_invite_post(
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
+async def api_key_invite_post(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
     invite: Annotated[ApiKeyInvite, Depends(get_api_key_invite_from_url)],
 ):
     if not invite_is_active(invite):
         raise HTTPException(422, "Invite expired")
-    api_key = use_api_key_invite(dbsession, invite)
+    api_key = await use_api_key_invite(dbsession, invite)
     return {
         "apiKey": {
             "name": api_key.name,
@@ -89,9 +89,9 @@ def api_key_invite_post(
         },
         "meta": {
             "version": disco.__version__,
-            "discoHost": keyvalues.get_value_sync(dbsession, "DISCO_HOST"),
-            "registry": keyvalues.get_value_sync(dbsession, "REGISTRY"),
+            "discoHost": await keyvalues.get_value(dbsession, "DISCO_HOST"),
+            "registry": await keyvalues.get_value(dbsession, "REGISTRY"),
             # registryHost for backward compat, remove after 2027-02-01
-            "registryHost": keyvalues.get_value_sync(dbsession, "REGISTRY"),
+            "registryHost": await keyvalues.get_value(dbsession, "REGISTRY"),
         },
     }

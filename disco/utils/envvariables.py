@@ -2,7 +2,6 @@ import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
-from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import ApiKey, Project, ProjectEnvironmentVariable
 from disco.utils import events
@@ -24,15 +23,16 @@ async def get_env_variable_by_name(
     return result.scalars().first()
 
 
-def get_env_variables_for_project_sync(
-    dbsession: DBSession, project: Project
+async def get_env_variables_for_project(
+    dbsession: AsyncDBSession, project: Project
 ) -> list[ProjectEnvironmentVariable]:
-    return (
-        dbsession.query(ProjectEnvironmentVariable)
-        .filter(ProjectEnvironmentVariable.project == project)
+    stmt = (
+        select(ProjectEnvironmentVariable)
+        .where(ProjectEnvironmentVariable.project == project)
         .order_by(ProjectEnvironmentVariable.name)
-        .all()
     )
+    result = await dbsession.execute(stmt)
+    return list(result.scalars().all())
 
 
 async def set_env_variables(

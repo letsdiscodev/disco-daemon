@@ -5,10 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_core import InitErrorDetails, PydanticCustomError
-from sqlalchemy.orm.session import Session as DBSession
+from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 
-from disco.auth import get_api_key_sync
-from disco.endpoints.dependencies import get_db_sync, get_project_from_url_sync
+from disco.auth import get_api_key
+from disco.endpoints.dependencies import get_db, get_project_from_url
 from disco.models import ApiKey, Project
 from disco.utils.encryption import decrypt
 from disco.utils.projectkeyvalues import (
@@ -20,15 +20,15 @@ from disco.utils.projectkeyvalues import (
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(dependencies=[Depends(get_api_key_sync)])
+router = APIRouter(dependencies=[Depends(get_api_key)])
 
 
 @router.get("/api/projects/{project_name}/keyvalues")
-def key_values_get(
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
-    project: Annotated[Project, Depends(get_project_from_url_sync)],
+async def key_values_get(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+    project: Annotated[Project, Depends(get_project_from_url)],
 ):
-    key_values = get_all_key_values_for_project(dbsession, project)
+    key_values = await get_all_key_values_for_project(dbsession, project)
     return {
         "keyValues": dict(
             [(key_value.key, decrypt(key_value.value)) for key_value in key_values]
@@ -36,12 +36,12 @@ def key_values_get(
     }
 
 
-def get_value_from_key_in_url(
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
-    project: Annotated[Project, Depends(get_project_from_url_sync)],
+async def get_value_from_key_in_url(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+    project: Annotated[Project, Depends(get_project_from_url)],
     key: Annotated[str, Path(max_length=255)],
 ):
-    value = get_value(
+    value = await get_value(
         dbsession=dbsession,
         project=project,
         key=key,
@@ -52,7 +52,7 @@ def get_value_from_key_in_url(
 
 
 @router.get("/api/projects/{project_name}/keyvalues/{key}")
-def key_value_get(
+async def key_value_get(
     value: Annotated[str, Depends(get_value_from_key_in_url)],
 ):
     return {
@@ -66,14 +66,14 @@ class SetKeyValueRequestBody(BaseModel):
 
 
 @router.put("/api/projects/{project_name}/keyvalues/{key}")
-def key_value_put(
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
+async def key_value_put(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
     key: Annotated[str, Path(max_length=255)],
     req_body: SetKeyValueRequestBody,
-    project: Annotated[Project, Depends(get_project_from_url_sync)],
-    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
+    project: Annotated[Project, Depends(get_project_from_url)],
+    api_key: Annotated[ApiKey, Depends(get_api_key)],
 ):
-    prev_value = get_value(dbsession=dbsession, project=project, key=key)
+    prev_value = await get_value(dbsession=dbsession, project=project, key=key)
     if "previous_value" in req_body.model_fields_set:
         if req_body.previous_value != prev_value:
             raise RequestValidationError(
@@ -92,7 +92,7 @@ def key_value_put(
                     )
                 ).errors()
             )
-    set_value(
+    await set_value(
         dbsession=dbsession,
         project=project,
         key=key,
@@ -103,13 +103,13 @@ def key_value_put(
 
 
 @router.delete("/api/projects/{project_name}/keyvalues/{key}")
-def key_value_delete(
-    dbsession: Annotated[DBSession, Depends(get_db_sync)],
-    project: Annotated[Project, Depends(get_project_from_url_sync)],
+async def key_value_delete(
+    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
+    project: Annotated[Project, Depends(get_project_from_url)],
     key: Annotated[str, Path(max_length=255)],
-    api_key: Annotated[ApiKey, Depends(get_api_key_sync)],
+    api_key: Annotated[ApiKey, Depends(get_api_key)],
 ):
-    delete_value(
+    await delete_value(
         dbsession=dbsession,
         project=project,
         key=key,

@@ -15,7 +15,6 @@ import jwt
 import requests
 from sqlalchemy import delete, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
-from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import (
     ApiKey,
@@ -25,7 +24,7 @@ from disco.models import (
     PendingGithubApp,
     ProjectGithubRepo,
 )
-from disco.models.db import AsyncSession, Session
+from disco.models.db import AsyncSession
 from disco.utils import events
 from disco.utils.filesystem import project_path, projects_root, rmtree
 from disco.utils.subprocess import decode_text
@@ -300,8 +299,8 @@ def generate_jwt_token(app_id: int, pem: str) -> str:
     return jwt.encode(payload, signing_key, algorithm="RS256")
 
 
-def create_pending_github_app(
-    dbsession: DBSession,
+async def create_pending_github_app(
+    dbsession: AsyncDBSession,
     organization: str | None,
     setup_url: str | None,
     by_api_key: ApiKey,
@@ -325,19 +324,21 @@ def generate_new_pending_app_state(pending_app: PendingGithubApp) -> None:
     pending_app.state = token_hex(16)
 
 
-def get_github_pending_app_by_id(
-    dbsession: DBSession, pending_app_id: str
+async def get_github_pending_app_by_id(
+    dbsession: AsyncDBSession, pending_app_id: str
 ) -> PendingGithubApp | None:
-    return dbsession.get(PendingGithubApp, pending_app_id)
+    return await dbsession.get(PendingGithubApp, pending_app_id)
 
 
-def delete_pending_github_app(dbsession, pending_app: PendingGithubApp) -> None:
+async def delete_pending_github_app(
+    dbsession: AsyncDBSession, pending_app: PendingGithubApp
+) -> None:
     log.info("Deleting Github pending app %s", pending_app.id)
-    dbsession.delete(pending_app)
+    await dbsession.delete(pending_app)
 
 
 def create_github_app(
-    dbsession: DBSession,
+    dbsession: AsyncDBSession,
     app_id: int,
     slug: str,
     name: str,
@@ -372,10 +373,6 @@ async def get_all_github_apps(dbsession: AsyncDBSession) -> Sequence[GithubApp]:
     stmt = select(GithubApp).order_by(GithubApp.owner_login)
     result = await dbsession.execute(stmt)
     return result.scalars().all()
-
-
-def get_github_app_by_id_sync(dbsession: DBSession, app_id: int) -> GithubApp | None:
-    return dbsession.query(GithubApp).get(app_id)
 
 
 async def get_github_app_by_id(
@@ -574,46 +571,10 @@ async def create_github_app_installation(
     return installation
 
 
-def get_github_app_installation_by_id_sync(
-    dbsession: DBSession, installation_id: int
-) -> GithubAppInstallation | None:
-    return dbsession.query(GithubAppInstallation).get(installation_id)
-
-
 async def get_github_app_installation_by_id(
     dbsession: AsyncDBSession, installation_id: int
 ) -> GithubAppInstallation | None:
     return await dbsession.get(GithubAppInstallation, installation_id)
-
-
-def add_repository_to_installation_sync(
-    dbsession: DBSession, installation: GithubAppInstallation, repo_full_name: str
-) -> GithubAppRepo:
-    log.info(
-        "Adding Github repo %s to installation %d", repo_full_name, installation.id
-    )
-    stmt = (
-        select(GithubAppRepo)
-        .where(GithubAppRepo.full_name == repo_full_name)
-        .where(GithubAppRepo.installation == installation)
-        .limit(1)
-    )
-    result = dbsession.execute(stmt)
-    repo = result.scalars().first()
-    if repo is not None:
-        log.info(
-            "Github repo %s aleady existed for installation %d",
-            repo_full_name,
-            installation.id,
-        )
-        return repo
-    repo = GithubAppRepo(
-        id=uuid.uuid4().hex,
-        full_name=repo_full_name,
-        installation=installation,
-    )
-    dbsession.add(repo)
-    return repo
 
 
 async def add_repository_to_installation(
@@ -646,17 +607,6 @@ async def add_repository_to_installation(
     return repo
 
 
-def remove_repository_from_installation_sync(
-    dbsession: DBSession, installation: GithubAppInstallation, repo_full_name: str
-) -> None:
-    log.info(
-        "Removing Github repo %s from installation %d", repo_full_name, installation.id
-    )
-    dbsession.query(GithubAppRepo).filter(
-        GithubAppRepo.installation == installation
-    ).filter(GithubAppRepo.full_name == repo_full_name).delete()
-
-
 async def remove_repository_from_installation(
     dbsession: AsyncDBSession, installation: GithubAppInstallation, repo_full_name: str
 ) -> None:
@@ -669,23 +619,6 @@ async def remove_repository_from_installation(
         .where(GithubAppRepo.full_name == repo_full_name)
     )
     await dbsession.execute(stmt)
-
-
-def delete_github_app_installation_sync(
-    dbsession: DBSession, installation: GithubAppInstallation
-) -> None:
-    for github_repo in installation.github_app_repos:
-        remove_repository_from_installation_sync(
-            dbsession, installation, github_repo.full_name
-        )
-    log.info(
-        "Deleting Github app installation %d of app %d %s (%s)",
-        installation.id,
-        installation.github_app_id,
-        installation.github_app.owner_login,
-        installation.github_app.owner_type,
-    )
-    dbsession.delete(installation)
 
 
 async def delete_github_app_installation(
@@ -707,36 +640,9 @@ async def delete_github_app_installation(
     await dbsession.delete(installation)
 
 
-def get_all_repos_sync(dbsession: DBSession) -> list[GithubAppRepo]:
-    return dbsession.query(GithubAppRepo).order_by(GithubAppRepo.full_name).all()
-
-
 async def get_all_repos(dbsession: AsyncDBSession) -> Sequence[GithubAppRepo]:
     stmt = select(GithubAppRepo).order_by(GithubAppRepo.full_name)
     result = await dbsession.execute(stmt)
-    return result.scalars().all()
-
-
-def get_repo_by_full_name_sync(
-    dbsession: DBSession, full_name: str
-) -> GithubAppRepo | None:
-    return (
-        dbsession.query(GithubAppRepo)
-        .filter(GithubAppRepo.full_name == full_name)
-        .first()
-    )
-
-
-def get_repos_by_full_name_sync(
-    dbsession: DBSession, full_name: str
-) -> Sequence[GithubAppRepo]:
-    stmt = (
-        select(GithubAppRepo)
-        .join(GithubAppInstallation)
-        .where(GithubAppRepo.full_name == full_name)
-        .order_by(desc(GithubAppInstallation.access_token_expires))
-    )
-    result = dbsession.execute(stmt)
     return result.scalars().all()
 
 
@@ -759,12 +665,6 @@ async def get_repo_by_full_name(
     stmt = select(GithubAppRepo).where(GithubAppRepo.full_name == full_name).limit(1)
     result = await dbsession.execute(stmt)
     return result.scalars().first()
-
-
-def get_repo_by_id_sync(
-    dbsession: DBSession, github_repo_id: str
-) -> GithubAppRepo | None:
-    return dbsession.get(GithubAppRepo, github_repo_id)
 
 
 async def get_repo_by_id(
@@ -1002,13 +902,17 @@ async def fetch_repository_list_for_github_app_installation(
     return all_repos
 
 
-def handle_app_created_on_github(pending_app_id: str, code: str) -> str:
+async def handle_app_created_on_github(pending_app_id: str, code: str) -> str:
     log.info("Handling returning user from Github app creation")
     url = f"https://api.github.com/app-manifests/{code}/conversions"
-    response = requests.post(url, headers={"Accept": "application/json"}, timeout=120)
+
+    def query() -> requests.Response:
+        return requests.post(url, headers={"Accept": "application/json"}, timeout=120)
+
+    response = await asyncio.get_event_loop().run_in_executor(None, query)
     resp_body = response.json()
-    with Session.begin() as dbsession:
-        pending_app = get_github_pending_app_by_id(dbsession, pending_app_id)
+    async with AsyncSession.begin() as dbsession:
+        pending_app = await get_github_pending_app_by_id(dbsession, pending_app_id)
         assert pending_app is not None
         github_app = create_github_app(
             dbsession=dbsession,
@@ -1024,7 +928,7 @@ def handle_app_created_on_github(pending_app_id: str, code: str) -> str:
             html_url=resp_body["html_url"],
             app_info=response.text,
         )
-        delete_pending_github_app(dbsession, pending_app)
+        await delete_pending_github_app(dbsession, pending_app)
         owner_id = resp_body["owner"]["id"]
         install_url = (
             f"{github_app.html_url}/installations/new/permissions?target_id={owner_id}"
