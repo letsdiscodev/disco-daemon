@@ -4,10 +4,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 
 from disco.auth import get_api_key_wo_tx
-from disco.endpoints.dependencies import get_db
 from disco.models.db import AsyncSession
 from disco.utils import keyvalues
 from disco.utils.apikeys import get_valid_api_key_by_id
@@ -62,10 +60,9 @@ async def syslog_post(
 
 
 @router.get("/api/syslog")
-async def syslog_get(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
-):
-    syslog_urls = await get_syslog_urls(dbsession)
+async def syslog_get():
+    async with AsyncSession.begin() as dbsession:
+        syslog_urls = await get_syslog_urls(dbsession)
     return {
         "urls": [
             syslog_url["url"]

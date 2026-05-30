@@ -6,19 +6,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sse_starlette import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
-from disco.auth import get_api_key, get_api_key_wo_tx
-from disco.endpoints.dependencies import (
-    get_db,
-    get_project_from_url,
-)
-from disco.models import ApiKey, Project
+from disco.auth import get_api_key_wo_tx
+from disco.endpoints.dependencies import get_project_name_from_url_wo_tx
 from disco.models.db import AsyncSession
 from disco.utils import commandoutputs
-from disco.utils.apikeys import get_valid_api_key_by_id
+from disco.utils.apikeys import get_api_key_by_id, get_valid_api_key_by_id
 from disco.utils.deploymentflow import enqueue_deployment, process_deployment_if_any
 from disco.utils.deployments import (
     cancel_deployment,
@@ -37,23 +32,26 @@ router = APIRouter()
 
 @router.get(
     "/api/projects/{project_name}/deployments",
-    dependencies=[Depends(get_api_key)],
+    dependencies=[Depends(get_api_key_wo_tx)],
 )
 async def deployments_get(
-    project: Annotated[Project, Depends(get_project_from_url)],
+    project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
 ):
-    deployments = await project.awaitable_attrs.deployments
-    return {
-        "deployments": [
-            {
-                "number": deployment.number,
-                "created": deployment.created.isoformat(),
-                "status": deployment.status,
-                "commitHash": deployment.commit_hash,
-            }
-            for deployment in deployments
-        ]
-    }
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
+        assert project is not None
+        deployments = await project.awaitable_attrs.deployments
+        return {
+            "deployments": [
+                {
+                    "number": deployment.number,
+                    "created": deployment.created.isoformat(),
+                    "status": deployment.status,
+                    "commitHash": deployment.commit_hash,
+                }
+                for deployment in deployments
+            ]
+        }
 
 
 class DeploymentRequestBody(BaseModel):
@@ -76,28 +74,32 @@ class DeploymentRequestBody(BaseModel):
 @router.post(
     "/api/projects/{project_name}/deployments",
     status_code=201,
-    dependencies=[Depends(get_api_key)],
+    dependencies=[Depends(get_api_key_wo_tx)],
 )
 async def deployments_post(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
-    project: Annotated[Project, Depends(get_project_from_url)],
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
+    api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
     req_body: DeploymentRequestBody,
     background_tasks: BackgroundTasks,
 ):
-    deployment = await create_deployment(
-        dbsession=dbsession,
-        project=project,
-        commit_hash=req_body.commit if req_body.disco_file is None else None,
-        disco_file=req_body.disco_file,
-        by_api_key=api_key,
-    )
-    background_tasks.add_task(enqueue_deployment, deployment.id)
-    return {
-        "deployment": {
-            "number": deployment.number,
-        },
-    }
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
+        assert project is not None
+        api_key = await get_api_key_by_id(dbsession, api_key_id)
+        assert api_key is not None
+        deployment = await create_deployment(
+            dbsession=dbsession,
+            project=project,
+            commit_hash=req_body.commit if req_body.disco_file is None else None,
+            disco_file=req_body.disco_file,
+            by_api_key=api_key,
+        )
+        background_tasks.add_task(enqueue_deployment, deployment.id)
+        return {
+            "deployment": {
+                "number": deployment.number,
+            },
+        }
 
 
 @router.delete(

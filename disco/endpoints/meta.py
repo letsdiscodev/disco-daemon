@@ -8,14 +8,13 @@ from fastapi import APIRouter, Depends
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_core import InitErrorDetails, PydanticCustomError
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sse_starlette import EventSourceResponse, ServerSentEvent
 
 import disco
-from disco.auth import get_api_key, get_api_key_wo_tx
-from disco.endpoints.dependencies import get_db
-from disco.models import ApiKey
+from disco.auth import get_api_key_wo_tx
+from disco.models.db import AsyncSession
 from disco.utils import docker, keyvalues
+from disco.utils.apikeys import get_valid_api_key_by_id
 from disco.utils.meta import set_disco_host, update_disco
 from disco.utils.projectdomains import DOMAIN_REGEX
 from disco.utils.projects import get_project_by_domain
@@ -28,18 +27,20 @@ router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 
 @router.get("/api/disco/meta")
 async def meta_get(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
 ):
-    return {
-        "version": disco.__version__,
-        "discoHost": await keyvalues.get_value(dbsession, "DISCO_HOST"),
-        "registry": await keyvalues.get_value(dbsession, "REGISTRY"),
-        # registryHost for backward compat, remove after 2027-02-01
-        "registryHost": await keyvalues.get_value(dbsession, "REGISTRY"),
-        "publicKey": api_key.public_key,
-        "docker": {"version": await docker.get_docker_version()},
-    }
+    async with AsyncSession.begin() as dbsession:
+        api_key = await get_valid_api_key_by_id(dbsession, api_key_id)
+        assert api_key is not None
+        return {
+            "version": disco.__version__,
+            "discoHost": await keyvalues.get_value(dbsession, "DISCO_HOST"),
+            "registry": await keyvalues.get_value(dbsession, "REGISTRY"),
+            # registryHost for backward compat, remove after 2027-02-01
+            "registryHost": await keyvalues.get_value(dbsession, "REGISTRY"),
+            "publicKey": api_key.public_key,
+            "docker": {"version": await docker.get_docker_version()},
+        }
 
 
 class UpdateRequestBody(BaseModel):
@@ -48,10 +49,11 @@ class UpdateRequestBody(BaseModel):
 
 
 @router.post("/api/disco/upgrade")
-async def upgrade_post(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)], req_body: UpdateRequestBody
-):
-    await update_disco(dbsession=dbsession, image=req_body.image, pull=req_body.pull)
+async def upgrade_post(req_body: UpdateRequestBody):
+    async with AsyncSession.begin() as dbsession:
+        await update_disco(
+            dbsession=dbsession, image=req_body.image, pull=req_body.pull
+        )
     return {"updating": True}
 
 
@@ -61,37 +63,41 @@ class SetDiscoHostRequestBody(BaseModel):
 
 @router.post("/api/disco/host")
 async def host_post(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
     req_body: SetDiscoHostRequestBody,
 ):
-    project = await get_project_by_domain(dbsession, req_body.host)
-    if project is not None:
-        raise RequestValidationError(
-            errors=(
-                ValidationError.from_exception_data(
-                    "ValueError",
-                    [
-                        InitErrorDetails(
-                            type=PydanticCustomError(
-                                "value_error",
-                                "Domain already taken by other project",
-                            ),
-                            loc=("body", "domain"),
-                            input=req_body.host,
-                        )
-                    ],
-                )
-            ).errors()
+    async with AsyncSession.begin() as dbsession:
+        api_key = await get_valid_api_key_by_id(dbsession, api_key_id)
+        assert api_key is not None
+        project = await get_project_by_domain(dbsession, req_body.host)
+        if project is not None:
+            raise RequestValidationError(
+                errors=(
+                    ValidationError.from_exception_data(
+                        "ValueError",
+                        [
+                            InitErrorDetails(
+                                type=PydanticCustomError(
+                                    "value_error",
+                                    "Domain already taken by other project",
+                                ),
+                                loc=("body", "domain"),
+                                input=req_body.host,
+                            )
+                        ],
+                    )
+                ).errors()
+            )
+        await set_disco_host(
+            dbsession=dbsession, host=req_body.host, by_api_key=api_key
         )
-    await set_disco_host(dbsession=dbsession, host=req_body.host, by_api_key=api_key)
-    return {
-        "version": disco.__version__,
-        "discoHost": await keyvalues.get_value_str(dbsession, "DISCO_HOST"),
-        "registry": await keyvalues.get_value(dbsession, "REGISTRY"),
-        # registryHost for backward compat, remove after 2027-02-01
-        "registryHost": await keyvalues.get_value(dbsession, "REGISTRY"),
-    }
+        return {
+            "version": disco.__version__,
+            "discoHost": await keyvalues.get_value_str(dbsession, "DISCO_HOST"),
+            "registry": await keyvalues.get_value(dbsession, "REGISTRY"),
+            # registryHost for backward compat, remove after 2027-02-01
+            "registryHost": await keyvalues.get_value(dbsession, "REGISTRY"),
+        }
 
 
 @router.get("/api/disco/stats-experimental")

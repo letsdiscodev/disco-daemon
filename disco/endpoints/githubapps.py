@@ -16,13 +16,11 @@ from fastapi import (
 )
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 
-from disco.auth import get_api_key
-from disco.endpoints.dependencies import get_db
-from disco.models import ApiKey, PendingGithubApp
+from disco.auth import get_api_key_wo_tx
 from disco.models.db import AsyncSession
 from disco.utils import keyvalues
+from disco.utils.apikeys import get_api_key_by_id
 from disco.utils.github import (
     create_pending_github_app,
     generate_new_pending_app_state,
@@ -42,7 +40,7 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
-async def get_pending_app_from_url(
+async def get_pending_app_id_from_url(
     pending_app_id: Annotated[str, Path()],
 ):
     async with AsyncSession.begin() as dbsession:
@@ -51,7 +49,7 @@ async def get_pending_app_from_url(
             raise HTTPException(status_code=404)
         if pending_app.expires < datetime.now(timezone.utc):
             raise HTTPException(status_code=404)
-        yield pending_app
+    yield pending_app_id
 
 
 async def get_pending_app_id_from_url_with_state(
@@ -81,25 +79,27 @@ class NewGithubAppRequestBody(BaseModel):
 
 @router.post("/api/github-apps/create", status_code=201)
 async def github_app_prune_post(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
     req_body: NewGithubAppRequestBody,
 ):
-    pending_app = await create_pending_github_app(
-        dbsession=dbsession,
-        organization=req_body.organization,
-        setup_url=req_body.setup_url,
-        by_api_key=api_key,
-    )
-    disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
-    assert disco_host is not None
-    return {
-        "pendingApp": {
-            "id": pending_app.id,
-            "expires": pending_app.expires.isoformat(),
-            "url": f"https://{disco_host}/github-apps/{pending_app.id}/create",
+    async with AsyncSession.begin() as dbsession:
+        api_key = await get_api_key_by_id(dbsession, api_key_id)
+        assert api_key is not None
+        pending_app = await create_pending_github_app(
+            dbsession=dbsession,
+            organization=req_body.organization,
+            setup_url=req_body.setup_url,
+            by_api_key=api_key,
+        )
+        disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
+        assert disco_host is not None
+        return {
+            "pendingApp": {
+                "id": pending_app.id,
+                "expires": pending_app.expires.isoformat(),
+                "url": f"https://{disco_host}/github-apps/{pending_app.id}/create",
+            }
         }
-    }
 
 
 CREATE_APP_HTML = """<!DOCTYPE html>
@@ -124,36 +124,40 @@ CREATE_APP_HTML = """<!DOCTYPE html>
     response_class=HTMLResponse,
 )
 async def github_app_create_get(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
-    pending_app: Annotated[PendingGithubApp, Depends(get_pending_app_from_url)],
+    pending_app_id: Annotated[str, Depends(get_pending_app_id_from_url)],
 ):
-    disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
-    assert disco_host is not None
-    generate_new_pending_app_state(pending_app)
-    if pending_app.organization is not None:
-        github_url = f"https://github.com/organizations/{pending_app.organization}/settings/apps/new?state={pending_app.state}"
-    else:
-        github_url = f"https://github.com/settings/apps/new?state={pending_app.state}"
-    manifest = {
-        "name": f"Disco {await generate_random_name()}",
-        "url": f"https://{disco_host}/github-apps/home",
-        "redirect_url": f"https://{disco_host}/github-apps/{pending_app.id}/created",
-        "callback_urls": [],
-        "hook_attributes": {
-            "url": f"https://{disco_host}/.webhooks/github-apps",
-        },
-        "public": False,
-        "default_permissions": {
-            "contents": "read",
-        },
-        "default_events": ["push"],
-    }
-    if pending_app.setup_url is not None:
-        manifest["setup_url"] = pending_app.setup_url
-        manifest["setup_on_update"] = False
-    return CREATE_APP_HTML.format(
-        github_url=github_url, manifest_data=escape(json.dumps(manifest))
-    )
+    async with AsyncSession.begin() as dbsession:
+        pending_app = await get_github_pending_app_by_id(dbsession, pending_app_id)
+        assert pending_app is not None
+        disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
+        assert disco_host is not None
+        generate_new_pending_app_state(pending_app)
+        if pending_app.organization is not None:
+            github_url = f"https://github.com/organizations/{pending_app.organization}/settings/apps/new?state={pending_app.state}"
+        else:
+            github_url = (
+                f"https://github.com/settings/apps/new?state={pending_app.state}"
+            )
+        manifest = {
+            "name": f"Disco {await generate_random_name()}",
+            "url": f"https://{disco_host}/github-apps/home",
+            "redirect_url": f"https://{disco_host}/github-apps/{pending_app.id}/created",
+            "callback_urls": [],
+            "hook_attributes": {
+                "url": f"https://{disco_host}/.webhooks/github-apps",
+            },
+            "public": False,
+            "default_permissions": {
+                "contents": "read",
+            },
+            "default_events": ["push"],
+        }
+        if pending_app.setup_url is not None:
+            manifest["setup_url"] = pending_app.setup_url
+            manifest["setup_on_update"] = False
+        return CREATE_APP_HTML.format(
+            github_url=github_url, manifest_data=escape(json.dumps(manifest))
+        )
 
 
 @router.get(
@@ -176,41 +180,40 @@ async def get_body(request: Request):
     return await request.body()
 
 
-@router.get("/api/github-apps", dependencies=[Depends(get_api_key)])
-async def list_github_apps(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
-):
-    github_apps = await get_all_github_apps(dbsession)
-    return {
-        "githubApps": [
-            {
-                "id": github_app.id,
-                "owner": {
-                    "id": github_app.owner_id,
-                    "login": github_app.owner_login,
-                    "type": github_app.owner_type,
-                },
-                "appUrl": github_app.html_url,
-                "installUrl": f"{github_app.html_url}/installations"
-                f"/new/permissions?target_id={github_app.owner_id}",
-                "installation": {
-                    "id": (await github_app.awaitable_attrs.installations)[0].id,
-                    "manageUrl": "https://github.com/settings/installations"
-                    f"/{(await github_app.awaitable_attrs.installations)[0].id}"
-                    if github_app.owner_type == "User"
-                    else f"https://github.com/organizations/{github_app.owner_login}"
-                    f"/settings/installations/{(await github_app.awaitable_attrs.installations)[0].id}",
+@router.get("/api/github-apps", dependencies=[Depends(get_api_key_wo_tx)])
+async def list_github_apps():
+    async with AsyncSession.begin() as dbsession:
+        github_apps = await get_all_github_apps(dbsession)
+        return {
+            "githubApps": [
+                {
+                    "id": github_app.id,
+                    "owner": {
+                        "id": github_app.owner_id,
+                        "login": github_app.owner_login,
+                        "type": github_app.owner_type,
+                    },
+                    "appUrl": github_app.html_url,
+                    "installUrl": f"{github_app.html_url}/installations"
+                    f"/new/permissions?target_id={github_app.owner_id}",
+                    "installation": {
+                        "id": (await github_app.awaitable_attrs.installations)[0].id,
+                        "manageUrl": "https://github.com/settings/installations"
+                        f"/{(await github_app.awaitable_attrs.installations)[0].id}"
+                        if github_app.owner_type == "User"
+                        else f"https://github.com/organizations/{github_app.owner_login}"
+                        f"/settings/installations/{(await github_app.awaitable_attrs.installations)[0].id}",
+                    }
+                    if len((await github_app.awaitable_attrs.installations)) > 0
+                    else None,
                 }
-                if len((await github_app.awaitable_attrs.installations)) > 0
-                else None,
-            }
-            for github_app in github_apps
-        ],
-    }
+                for github_app in github_apps
+            ],
+        }
 
 
 @router.post(
-    "/api/github-apps/prune", status_code=200, dependencies=[Depends(get_api_key)]
+    "/api/github-apps/prune", status_code=200, dependencies=[Depends(get_api_key_wo_tx)]
 )
 async def github_app_create_post():
     await prune()
@@ -241,44 +244,47 @@ async def github_webhook_service_post(
     return {}
 
 
-@router.get("/api/github-app-repos", dependencies=[Depends(get_api_key)])
-async def list_github_repos(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
-):
-    repos = await get_all_repos(dbsession)
-    return {
-        "repos": [
-            {
-                "fullName": repo.full_name,
-                "installationId": repo.installation_id,
-            }
-            for repo in repos
-        ],
-    }
+@router.get("/api/github-app-repos", dependencies=[Depends(get_api_key_wo_tx)])
+async def list_github_repos():
+    async with AsyncSession.begin() as dbsession:
+        repos = await get_all_repos(dbsession)
+        return {
+            "repos": [
+                {
+                    "fullName": repo.full_name,
+                    "installationId": repo.installation_id,
+                }
+                for repo in repos
+            ],
+        }
 
 
 @router.post(
     "/api/github-apps/installations/{installation_id}/access-token",
-    dependencies=[Depends(get_api_key)],
+    dependencies=[Depends(get_api_key_wo_tx)],
 )
 async def get_installation_access_token(
     installation_id: Annotated[int, Path()],
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
 ):
-    installation = await get_github_app_installation_by_id(dbsession, installation_id)
-    if installation is None:
-        raise HTTPException(status_code=404, detail="Installation not found")
-    try:
-        token = await get_access_token_for_installation_id(installation_id)
-    except Exception as e:
-        log.exception("Failed to get access token for installation %d", installation_id)
-        raise HTTPException(
-            status_code=502, detail="Failed to get access token from GitHub"
-        ) from e
-    await dbsession.refresh(installation)  # access_token_expires
-    return {
-        "token": token,
-        "expiresAt": installation.access_token_expires.isoformat()
-        if installation.access_token_expires
-        else None,
-    }
+    async with AsyncSession.begin() as dbsession:
+        installation = await get_github_app_installation_by_id(
+            dbsession, installation_id
+        )
+        if installation is None:
+            raise HTTPException(status_code=404, detail="Installation not found")
+        try:
+            token = await get_access_token_for_installation_id(installation_id)
+        except Exception as e:
+            log.exception(
+                "Failed to get access token for installation %d", installation_id
+            )
+            raise HTTPException(
+                status_code=502, detail="Failed to get access token from GitHub"
+            ) from e
+        await dbsession.refresh(installation)  # access_token_expires
+        return {
+            "token": token,
+            "expiresAt": installation.access_token_expires.isoformat()
+            if installation.access_token_expires
+            else None,
+        }

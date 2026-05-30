@@ -7,14 +7,13 @@ from pydantic import BaseModel, Field, ValidationError
 from pydantic_core import InitErrorDetails, PydanticCustomError
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 
-from disco.auth import get_api_key
-from disco.endpoints.dependencies import (
-    get_db,
-    get_project_from_url,
-)
+from disco.auth import get_api_key_wo_tx
+from disco.endpoints.dependencies import get_project_name_from_url_wo_tx
 from disco.endpoints.envvariables import EnvVariable
-from disco.models import ApiKey, Project, ProjectGithubRepo
+from disco.models import Project, ProjectGithubRepo
+from disco.models.db import AsyncSession
 from disco.utils import keyvalues
+from disco.utils.apikeys import get_api_key_by_id
 from disco.utils.deploymentflow import enqueue_deployment
 from disco.utils.deployments import (
     create_deployment,
@@ -46,7 +45,7 @@ from disco.utils.randomname import generate_random_name
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(dependencies=[Depends(get_api_key)])
+router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 
 
 class Ssh(BaseModel):
@@ -215,88 +214,113 @@ async def validate_update_project(
 
 @router.post("/api/projects", status_code=201)
 async def projects_post(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
     req_body: NewProjectRequestBody,
     background_tasks: BackgroundTasks,
 ):
-    if req_body.generate_suffix:
-        suffix = await generate_random_name()
-        req_body.name = f"{req_body.name}-{suffix}"
-    await validate_create_project(dbsession=dbsession, req_body=req_body)
-    if req_body.caddy is not None and req_body.domain is not None:
-        # TODO rewrite with await
-        pass
-        # # TODO validation (raise exception if domain not set and caddy is set)
-        # set_caddy_key_crt(req_body.domain, req_body.caddy.crt)
-        # set_caddy_key_key(req_body.domain, req_body.caddy.key)
-        # set_caddy_key_meta(req_body.domain, req_body.caddy.meta)
-    project = create_project(
-        dbsession=dbsession,
-        name=req_body.name,
-        by_api_key=api_key,
-    )
-    if req_body.github_repo is not None:
-        await set_project_github_repo(
+    async with AsyncSession.begin() as dbsession:
+        api_key = await get_api_key_by_id(dbsession, api_key_id)
+        assert api_key is not None
+        if req_body.generate_suffix:
+            suffix = await generate_random_name()
+            req_body.name = f"{req_body.name}-{suffix}"
+        await validate_create_project(dbsession=dbsession, req_body=req_body)
+        if req_body.caddy is not None and req_body.domain is not None:
+            # TODO rewrite with await
+            pass
+            # # TODO validation (raise exception if domain not set and caddy is set)
+            # set_caddy_key_crt(req_body.domain, req_body.caddy.crt)
+            # set_caddy_key_key(req_body.domain, req_body.caddy.key)
+            # set_caddy_key_meta(req_body.domain, req_body.caddy.meta)
+        project = create_project(
             dbsession=dbsession,
-            project=project,
-            github_repo=req_body.github_repo,
+            name=req_body.name,
             by_api_key=api_key,
         )
-        if req_body.branch is not None:
-            await set_project_branch(
+        if req_body.github_repo is not None:
+            await set_project_github_repo(
+                dbsession=dbsession,
                 project=project,
-                branch=req_body.branch,
+                github_repo=req_body.github_repo,
                 by_api_key=api_key,
             )
-    await set_env_variables(
-        dbsession=dbsession,
-        project=project,
-        env_variables=[
-            (env_var.name, env_var.value) for env_var in req_body.env_variables
-        ],
-        by_api_key=api_key,
-    )
-    if req_body.domain is not None:
-        await add_domain(
+            if req_body.branch is not None:
+                await set_project_branch(
+                    project=project,
+                    branch=req_body.branch,
+                    by_api_key=api_key,
+                )
+        await set_env_variables(
             dbsession=dbsession,
             project=project,
-            domain_name=req_body.domain,
+            env_variables=[
+                (env_var.name, env_var.value) for env_var in req_body.env_variables
+            ],
             by_api_key=api_key,
         )
+        if req_body.domain is not None:
+            await add_domain(
+                dbsession=dbsession,
+                project=project,
+                domain_name=req_body.domain,
+                by_api_key=api_key,
+            )
 
-    if req_body.github_repo is not None:
-        deployment = await create_deployment(
-            dbsession=dbsession,
-            project=project,
-            commit_hash=req_body.commit,
-            disco_file=None,
-            number=req_body.deployment_number,
-            by_api_key=api_key,
-        )
-        background_tasks.add_task(enqueue_deployment, deployment.id)
-    else:
-        deployment = None
-    return {
-        "project": {
-            "name": project.name,
-        },
-        "deployment": {
-            "number": deployment.number,
+        if req_body.github_repo is not None:
+            deployment = await create_deployment(
+                dbsession=dbsession,
+                project=project,
+                commit_hash=req_body.commit,
+                disco_file=None,
+                number=req_body.deployment_number,
+                by_api_key=api_key,
+            )
+            background_tasks.add_task(enqueue_deployment, deployment.id)
+        else:
+            deployment = None
+        return {
+            "project": {
+                "name": project.name,
+            },
+            "deployment": {
+                "number": deployment.number,
+            }
+            if deployment is not None
+            else None,
         }
-        if deployment is not None
-        else None,
-    }
 
 
 @router.get("/api/projects")
-async def projects_get(dbsession: Annotated[AsyncDBSession, Depends(get_db)]):
-    projects = await get_all_projects(dbsession)
-    result = []
-    for project in projects:
+async def projects_get():
+    async with AsyncSession.begin() as dbsession:
+        projects = await get_all_projects(dbsession)
+        result = []
+        for project in projects:
+            github_repo = await project.awaitable_attrs.github_repo
+            result.append(
+                {
+                    "name": project.name,
+                    "github": {
+                        "fullName": github_repo.full_name,
+                        "branch": github_repo.branch,
+                    }
+                    if github_repo is not None
+                    else None,
+                }
+            )
+        return {"projects": result}
+
+
+@router.get("/api/projects/{project_name}")
+async def project_get(
+    project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
+):
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
+        assert project is not None
         github_repo = await project.awaitable_attrs.github_repo
-        result.append(
-            {
+        return {
+            "project": {
                 "name": project.name,
                 "github": {
                     "fullName": github_repo.full_name,
@@ -304,120 +328,115 @@ async def projects_get(dbsession: Annotated[AsyncDBSession, Depends(get_db)]):
                 }
                 if github_repo is not None
                 else None,
-            }
-        )
-    return {"projects": result}
-
-
-@router.get("/api/projects/{project_name}")
-async def project_get(
-    project: Annotated[Project, Depends(get_project_from_url)],
-):
-    github_repo = await project.awaitable_attrs.github_repo
-    return {
-        "project": {
-            "name": project.name,
-            "github": {
-                "fullName": github_repo.full_name,
-                "branch": github_repo.branch,
-            }
-            if github_repo is not None
-            else None,
-        },
-    }
+            },
+        }
 
 
 @router.patch("/api/projects/{project_name}")
 async def projects_patch(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
-    project: Annotated[Project, Depends(get_project_from_url)],
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
+    api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
     req_body: UpdateProjectRequestBody,
 ):
-    await validate_update_project(
-        dbsession=dbsession, project=project, req_body=req_body
-    )
-    fields = req_body.model_fields_set
-    if "github_repo" in fields:
-        existing: ProjectGithubRepo | None = await project.awaitable_attrs.github_repo
-        existing_full_name = existing.full_name if existing is not None else None
-        if req_body.github_repo != existing_full_name:
-            await set_project_github_repo(
-                dbsession=dbsession,
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
+        assert project is not None
+        api_key = await get_api_key_by_id(dbsession, api_key_id)
+        assert api_key is not None
+        await validate_update_project(
+            dbsession=dbsession, project=project, req_body=req_body
+        )
+        fields = req_body.model_fields_set
+        if "github_repo" in fields:
+            existing: (
+                ProjectGithubRepo | None
+            ) = await project.awaitable_attrs.github_repo
+            existing_full_name = existing.full_name if existing is not None else None
+            if req_body.github_repo != existing_full_name:
+                await set_project_github_repo(
+                    dbsession=dbsession,
+                    project=project,
+                    github_repo=req_body.github_repo,
+                    by_api_key=api_key,
+                )
+        if "branch" in fields:
+            await set_project_branch(
                 project=project,
-                github_repo=req_body.github_repo,
+                branch=req_body.branch,
                 by_api_key=api_key,
             )
-    if "branch" in fields:
-        await set_project_branch(
-            project=project,
-            branch=req_body.branch,
-            by_api_key=api_key,
-        )
-    github_repo = await project.awaitable_attrs.github_repo
-    return {
-        "project": {
-            "name": project.name,
-            "github": {
-                "fullName": github_repo.full_name,
-                "branch": github_repo.branch,
-            }
-            if github_repo is not None
-            else None,
-        },
-    }
+        github_repo = await project.awaitable_attrs.github_repo
+        return {
+            "project": {
+                "name": project.name,
+                "github": {
+                    "fullName": github_repo.full_name,
+                    "branch": github_repo.branch,
+                }
+                if github_repo is not None
+                else None,
+            },
+        }
 
 
 @router.delete("/api/projects/{project_name}", status_code=200)
 async def projects_delete(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
-    project: Annotated[Project, Depends(get_project_from_url)],
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
+    api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
 ):
-    await delete_project(dbsession, project, api_key)
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
+        assert project is not None
+        api_key = await get_api_key_by_id(dbsession, api_key_id)
+        assert api_key is not None
+        await delete_project(dbsession, project, api_key)
     return {"deleted": True}
 
 
 @router.get("/api/projects/{project_name}/export")
 async def export_get(
-    dbsession: Annotated[AsyncDBSession, Depends(get_db)],
-    project: Annotated[Project, Depends(get_project_from_url)],
-    api_key: Annotated[ApiKey, Depends(get_api_key)],
+    project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
+    api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
 ):
-    log.info("Exporting project %s by %s", project.log(), api_key.log())
-    env_variables = await get_env_variables_for_project(dbsession, project)
-    deployment = await get_live_deployment(dbsession, project)
-    volume_names = []
-    if deployment is not None:
-        disco_file = get_disco_file_from_str(deployment.disco_file)
-        for service in disco_file.services.values():
-            for volume in service.volumes:
-                volume_names.append(volume.name)
-    domains = await project.awaitable_attrs.domains
-    return {
-        "name": project.name,
-        "domains": [domain.name for domain in domains],
-        "envVariables": [
-            {
-                "name": env_variable.name,
-                "value": decrypt(env_variable.value),
+    async with AsyncSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
+        assert project is not None
+        api_key = await get_api_key_by_id(dbsession, api_key_id)
+        assert api_key is not None
+        log.info("Exporting project %s by %s", project.log(), api_key.log())
+        env_variables = await get_env_variables_for_project(dbsession, project)
+        deployment = await get_live_deployment(dbsession, project)
+        volume_names = []
+        if deployment is not None:
+            disco_file = get_disco_file_from_str(deployment.disco_file)
+            for service in disco_file.services.values():
+                for volume in service.volumes:
+                    volume_names.append(volume.name)
+        domains = await project.awaitable_attrs.domains
+        return {
+            "name": project.name,
+            "domains": [domain.name for domain in domains],
+            "envVariables": [
+                {
+                    "name": env_variable.name,
+                    "value": decrypt(env_variable.value),
+                }
+                for env_variable in env_variables
+            ],
+            "caddy": [
+                {
+                    "name": domain.name,
+                    "crt": await get_caddy_key_crt(domain.name),
+                    "key": await get_caddy_key_key(domain.name),
+                    "meta": await get_caddy_key_meta(domain.name),
+                }
+                for domain in domains
+            ],
+            "deployment": {
+                "number": deployment.number,
+                "commit": deployment.commit_hash,
             }
-            for env_variable in env_variables
-        ],
-        "caddy": [
-            {
-                "name": domain.name,
-                "crt": await get_caddy_key_crt(domain.name),
-                "key": await get_caddy_key_key(domain.name),
-                "meta": await get_caddy_key_meta(domain.name),
-            }
-            for domain in domains
-        ],
-        "deployment": {
-            "number": deployment.number,
-            "commit": deployment.commit_hash,
+            if deployment is not None
+            else None,
+            "volumes": volume_names,
         }
-        if deployment is not None
-        else None,
-        "volumes": volume_names,
-    }

@@ -1,13 +1,11 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 
 from disco.auth import get_api_key_wo_tx
-from disco.endpoints.dependencies import get_db
+from disco.models.db import AsyncSession
 from disco.utils import docker, keyvalues
 from disco.utils.randomname import generate_random_name
 
@@ -17,15 +15,16 @@ router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 
 
 @router.get("/api/disco/swarm/join-token")
-async def join_token_get(dbsession: Annotated[AsyncDBSession, Depends(get_db)]):
-    return {
-        "joinToken": await docker.get_swarm_join_token(),
-        "ip": await keyvalues.get_value(dbsession, "DISCO_ADVERTISE_ADDR"),
-        "dockerVersion": await docker.get_docker_version(),
-        "registry": await keyvalues.get_value(dbsession, "REGISTRY"),
-        # registryHost for backward compat, remove after 2027-02-01
-        "registryHost": await keyvalues.get_value(dbsession, "REGISTRY"),
-    }
+async def join_token_get():
+    async with AsyncSession.begin() as dbsession:
+        return {
+            "joinToken": await docker.get_swarm_join_token(),
+            "ip": await keyvalues.get_value(dbsession, "DISCO_ADVERTISE_ADDR"),
+            "dockerVersion": await docker.get_docker_version(),
+            "registry": await keyvalues.get_value(dbsession, "REGISTRY"),
+            # registryHost for backward compat, remove after 2027-02-01
+            "registryHost": await keyvalues.get_value(dbsession, "REGISTRY"),
+        }
 
 
 @router.get("/api/disco/swarm/nodes")
