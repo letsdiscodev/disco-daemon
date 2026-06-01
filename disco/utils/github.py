@@ -24,7 +24,7 @@ from disco.models import (
     PendingGithubApp,
     ProjectGithubRepo,
 )
-from disco.models.db import AsyncSession
+from disco.models.db import AsyncReadSession, AsyncSession
 from disco.utils import events
 from disco.utils.filesystem import project_path, projects_root, rmtree
 from disco.utils.subprocess import decode_text
@@ -236,14 +236,14 @@ async def clone(
 
 async def get_access_token_for_github_app_repo(full_name: str) -> str | None:
     log.info("Getting Github access token for repo %s", full_name)
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         repos = await get_repos_by_full_name(dbsession, full_name)
         if len(repos) == 0:
             log.info("No Github app for repo %s, using anonymous access", full_name)
             return None
         repo_ids = [repo.id for repo in repos]
     for repo_id in repo_ids:
-        async with AsyncSession.begin() as dbsession:
+        async with AsyncReadSession.begin() as dbsession:
             repo = await get_repo_by_id(dbsession, repo_id)
             if repo is None:  # in case it's been removed since fetching above
                 continue
@@ -410,7 +410,7 @@ async def process_github_app_webhook(
         log.warning("X-GitHub-Hook-Installation-Target-ID not provided, skipping")
         return
 
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         github_app = await get_github_app_by_id(
             dbsession, int(x_github_hook_installation_target_id)
         )
@@ -684,12 +684,12 @@ async def delete_github_app(dbsession: AsyncDBSession, app: GithubApp):
 
 async def prune() -> None:
     log.info("Pruning Github apps")
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         apps = await get_all_github_apps(dbsession)
         app_ids = [app.id for app in apps]
     for app_id in app_ids:
         if await app_still_exists(app_id):
-            async with AsyncSession.begin() as dbsession:
+            async with AsyncReadSession.begin() as dbsession:
                 app = await get_github_app_by_id(dbsession, app_id)
                 assert app is not None
                 installations = await app.awaitable_attrs.installations
@@ -770,7 +770,7 @@ async def prune() -> None:
 
 async def app_still_exists(app_id: int) -> bool:
     log.info("Verifying with Github if app %d still exists", app_id)
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         app = await get_github_app_by_id(dbsession, app_id)
         if app is None:
             return False
@@ -797,7 +797,7 @@ async def app_still_exists(app_id: int) -> bool:
 
 async def get_access_token_for_installation_id(installation_id: int) -> str:
     log.info("Getting Github access token for installation %d", installation_id)
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         installation = await get_github_app_installation_by_id(
             dbsession, installation_id
         )

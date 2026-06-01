@@ -8,7 +8,7 @@ from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from disco.auth import get_api_key_wo_tx
 from disco.endpoints.dependencies import get_project_name_from_url_wo_tx
-from disco.models.db import AsyncSession
+from disco.models.db import AsyncReadSession, AsyncSession
 from disco.utils.apikeys import get_api_key_by_id
 from disco.utils.encryption import decrypt
 from disco.utils.projectkeyvalues import (
@@ -28,7 +28,7 @@ router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 async def key_values_get(
     project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
         key_values = await get_all_key_values_for_project(dbsession, project)
@@ -43,7 +43,7 @@ async def get_key_from_url(
     project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
     key: Annotated[str, Path(max_length=255)],
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
         value = await get_value(
@@ -61,7 +61,7 @@ async def key_value_get(
     project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
     key: Annotated[str, Depends(get_key_from_url)],
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
         value = await get_value(

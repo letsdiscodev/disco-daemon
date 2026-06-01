@@ -10,7 +10,7 @@ from typing import AsyncGenerator, Awaitable, Callable, Sequence
 from croniter import croniter
 
 from disco.models import Deployment, DeploymentEnvironmentVariable
-from disco.models.db import AsyncSession
+from disco.models.db import AsyncReadSession, AsyncSession
 from disco.utils import docker, keyvalues
 from disco.utils.discofile import DiscoFile, ServiceType, get_disco_file_from_str
 from disco.utils.encryption import decrypt
@@ -520,7 +520,7 @@ class AsyncWorker:
         from disco.utils.projects import get_all_projects
 
         crons: list[ProjectCron] = []
-        async with AsyncSession.begin() as dbsession:
+        async with AsyncReadSession.begin() as dbsession:
             disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
             projects = await get_all_projects(dbsession)
             for project in projects:

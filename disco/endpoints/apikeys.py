@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path
 from pydantic import BaseModel, Field
 
 from disco.auth import get_api_key_wo_tx
-from disco.models.db import AsyncSession
+from disco.models.db import AsyncReadSession, AsyncSession
 from disco.utils.apikeys import (
     delete_api_key,
     get_all_api_keys,
@@ -22,7 +22,7 @@ router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 async def get_api_key_public_key_from_url(
     public_key: Annotated[str, Path()],
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         api_key = await get_api_key_by_public_key(dbsession, public_key)
         if api_key is None:
             raise HTTPException(status_code=404)
@@ -31,7 +31,7 @@ async def get_api_key_public_key_from_url(
 
 @router.get("/api/api-keys")
 async def api_keys_get():
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         api_keys = await get_all_api_keys(dbsession)
         return {
             "apiKeys": [

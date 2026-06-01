@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from disco.auth import get_api_key_wo_tx
-from disco.models.db import AsyncSession
+from disco.models.db import AsyncReadSession, AsyncSession
 from disco.utils.apikeys import get_api_key_by_id
 from disco.utils.corsorigins import allow_origin, get_all_cors_origins
 
@@ -22,7 +22,7 @@ class AddCorsOriginRequestBody(BaseModel):
     "/api/cors/origins", status_code=200, dependencies=[Depends(get_api_key_wo_tx)]
 )
 async def cors_origins_get():
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         cors_origins = await get_all_cors_origins(dbsession)
         return {
             "corsOrigins": [

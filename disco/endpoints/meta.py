@@ -12,7 +12,7 @@ from sse_starlette import EventSourceResponse, ServerSentEvent
 
 import disco
 from disco.auth import get_api_key_wo_tx
-from disco.models.db import AsyncSession
+from disco.models.db import AsyncReadSession, AsyncSession
 from disco.utils import docker, keyvalues
 from disco.utils.apikeys import get_valid_api_key_by_id
 from disco.utils.meta import set_disco_host, update_disco
@@ -29,7 +29,7 @@ router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 async def meta_get(
     api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         api_key = await get_valid_api_key_by_id(dbsession, api_key_id)
         assert api_key is not None
         return {

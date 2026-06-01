@@ -10,7 +10,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from disco.auth import get_api_key_wo_tx
-from disco.models.db import AsyncSession
+from disco.models.db import AsyncReadSession
 from disco.utils import docker
 from disco.utils.deployments import get_live_deployment
 from disco.utils.discofile import get_disco_file_from_str
@@ -36,7 +36,7 @@ class CreateTunnelReqBody(BaseModel):
 
 @router.post("/api/tunnels", status_code=201)
 async def tunnels_post(req_body: CreateTunnelReqBody):
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, req_body.project)
         if project is None:
             raise RequestValidationError(

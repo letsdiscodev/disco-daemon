@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
 
 from disco.auth import get_api_key_wo_tx
-from disco.models.db import AsyncSession
+from disco.models.db import AsyncReadSession
 from disco.utils import docker, keyvalues
 from disco.utils.cluster_locks import (
     pending_cluster_removes,
@@ -25,7 +25,7 @@ router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 
 @router.get("/api/disco/swarm/join-token")
 async def join_token_get():
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         return {
             "joinToken": await docker.get_swarm_join_token(),
             "ip": await keyvalues.get_value(dbsession, "DISCO_ADVERTISE_ADDR"),

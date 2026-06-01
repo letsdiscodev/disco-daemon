@@ -8,7 +8,7 @@ from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from disco.auth import get_api_key_wo_tx
 from disco.endpoints.dependencies import get_project_name_from_url_wo_tx
-from disco.models.db import AsyncSession
+from disco.models.db import AsyncReadSession
 from disco.utils import docker
 from disco.utils.apikeys import get_api_key_by_id
 from disco.utils.deployments import get_live_deployment
@@ -24,7 +24,7 @@ router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 async def scale_get(
     project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
         deployment = await get_live_deployment(dbsession, project)
@@ -55,7 +55,7 @@ async def scale_post(
     api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
     req_body: ScaleRequestBody,
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
         api_key = await get_api_key_by_id(dbsession, api_key_id)

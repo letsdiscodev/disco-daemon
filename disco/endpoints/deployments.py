@@ -11,7 +11,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from disco.auth import get_api_key_wo_tx
 from disco.endpoints.dependencies import get_project_name_from_url_wo_tx
-from disco.models.db import AsyncSession
+from disco.models.db import AsyncReadSession, AsyncSession
 from disco.utils import commandoutputs
 from disco.utils.apikeys import get_api_key_by_id, get_valid_api_key_by_id
 from disco.utils.deploymentflow import enqueue_deployment, process_deployment_if_any
@@ -37,7 +37,7 @@ router = APIRouter()
 async def deployments_get(
     project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
         deployments = await project.awaitable_attrs.deployments
@@ -178,7 +178,7 @@ async def deployment_output_get(
     deployment_number: int,
     last_event_id: Annotated[str | None, Header()] = None,
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         if project is None:
             raise HTTPException(status_code=404)

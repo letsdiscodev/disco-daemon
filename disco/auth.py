@@ -14,7 +14,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 
 from disco.models import ApiKey
-from disco.models.db import AsyncSession
+from disco.models.db import AsyncReadSession
 from disco.utils import keyvalues
 from disco.utils.apikeys import (
     get_api_key_by_public_key,
@@ -43,7 +43,7 @@ async def get_api_key_wo_tx(
     ],
 ):
     api_key_id = None
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         api_key_str = None
         if basic_credentials is not None:
             api_key_str = basic_credentials.username
@@ -80,57 +80,8 @@ async def get_api_key_wo_tx(
         if api_key is None:
             raise HTTPException(status_code=403)
         api_key_id = api_key.id
-        await record_api_key_usage(dbsession, api_key)
 
-    yield api_key_id
-
-
-async def get_api_key(
-    basic_credentials: Annotated[HTTPBasicCredentials | None, Depends(basic_header)],
-    bearer_credentials: Annotated[
-        HTTPAuthorizationCredentials | None, Depends(bearer_header)
-    ],
-):
-    api_key_id = None
-    async with AsyncSession.begin() as dbsession:
-        api_key_str = None
-        if basic_credentials is not None:
-            api_key_str = basic_credentials.username
-        elif bearer_credentials is not None:
-            bearer_jwt = bearer_credentials.credentials
-            try:
-                headers = jwt.get_unverified_header(bearer_jwt)
-            except jwt.PyJWTError:
-                headers = None
-            if headers is not None:
-                public_key = headers["kid"]
-                api_key_for_public_key = await get_api_key_by_public_key(
-                    dbsession, public_key
-                )
-                if api_key_for_public_key is not None:
-                    disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
-                    try:
-                        jwt.decode(
-                            bearer_jwt,
-                            api_key_for_public_key.id,
-                            algorithms=["HS256"],
-                            audience=disco_host,
-                            options=dict(
-                                verify_signature=True,
-                                verify_exp=True,
-                            ),
-                        )
-                        api_key_str = api_key_for_public_key.id
-                    except jwt.PyJWTError:
-                        pass
-        if api_key_str is None:
-            raise HTTPException(status_code=401)
-        api_key = await get_valid_api_key_by_id(dbsession, api_key_str)
-        if api_key is None:
-            raise HTTPException(status_code=403)
-        api_key_id = api_key.id
-        await record_api_key_usage(dbsession, api_key)
-
+    await record_api_key_usage(api_key_id)
     yield api_key_id
 
 
@@ -152,16 +103,17 @@ async def get_api_key_emergency_capable(
     requires reading the API key's secret from the DB. During an
     outage, operators should use Basic auth (the CLI's default).
     """
-    # Resolve credentials + commit the usage record under a SHORT timeout.
-    # We must NOT hold the timeout open across `yield`: FastAPI yield-
-    # dependencies wrap the entire endpoint, and many of our emergency-
-    # capable endpoints (recover-quorum, etc.) intentionally do multi-
-    # second Docker orchestration that would otherwise be cancelled.
+    # Resolve credentials under a SHORT timeout. We must NOT hold the timeout
+    # open across `yield`: FastAPI yield-dependencies wrap the entire endpoint,
+    # and many of our emergency-capable endpoints (recover-quorum, etc.)
+    # intentionally do multi-second Docker orchestration that would otherwise
+    # be cancelled. This is a read-only path; the usage record is written
+    # separately (deferred to the async worker) so it never holds a write lock.
     resolved_api_key_id: str | None = None
     db_unreachable = False
     try:
         async with asyncio.timeout(EMERGENCY_DB_TIMEOUT_S):
-            async with AsyncSession.begin() as dbsession:
+            async with AsyncReadSession.begin() as dbsession:
                 api_key_str = await _resolve_credentials_via_db(
                     basic_credentials, bearer_credentials, dbsession
                 )
@@ -170,7 +122,6 @@ async def get_api_key_emergency_capable(
                 api_key = await get_valid_api_key_by_id(dbsession, api_key_str)
                 if api_key is None:
                     raise HTTPException(status_code=403)
-                await record_api_key_usage(dbsession, api_key)
                 resolved_api_key_id = api_key.id
     except HTTPException:
         raise
@@ -181,6 +132,7 @@ async def get_api_key_emergency_capable(
         db_unreachable = True
 
     if resolved_api_key_id is not None:
+        await record_api_key_usage(resolved_api_key_id)
         yield resolved_api_key_id
         return
 
@@ -250,11 +202,11 @@ async def validate_token(token: str) -> ApiKey | None:
     Validate a token (either raw API key ID or JWT).
     Returns ApiKey if valid, None otherwise.
     """
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         # First, try as raw API key ID (like Basic auth does)
         api_key = await get_valid_api_key_by_id(dbsession, token)
         if api_key is not None:
-            await record_api_key_usage(dbsession, api_key)
+            await record_api_key_usage(api_key.id)
             return api_key
 
         # Then try as JWT
@@ -288,5 +240,5 @@ async def validate_token(token: str) -> ApiKey | None:
 
         api_key = await get_valid_api_key_by_id(dbsession, api_key_for_public_key.id)
         if api_key is not None:
-            await record_api_key_usage(dbsession, api_key)
+            await record_api_key_usage(api_key.id)
         return api_key
