@@ -84,5 +84,14 @@ def delete_api_key(api_key: ApiKey, by_api_key: ApiKey) -> None:
     events.api_key_removed(public_key=api_key.public_key, name=api_key.name)
 
 
-async def record_api_key_usage(dbsession: AsyncDBSession, api_key: ApiKey) -> None:
-    dbsession.add(ApiKeyUsage(created=datetime.now(timezone.utc), api_key=api_key))
+async def record_api_key_usage(api_key_id: str) -> None:
+    from disco.models.db import AsyncSession
+    from disco.utils.asyncworker import async_worker
+
+    created = datetime.now(timezone.utc)
+
+    async def write_usage() -> None:
+        async with AsyncSession.begin() as dbsession:
+            dbsession.add(ApiKeyUsage(api_key_id=api_key_id, created=created))
+
+    await async_worker.enqueue(write_usage)

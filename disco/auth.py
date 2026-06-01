@@ -10,7 +10,7 @@ from fastapi.security import (
 )
 
 from disco.models import ApiKey
-from disco.models.db import AsyncSession
+from disco.models.db import AsyncReadSession
 from disco.utils import keyvalues
 from disco.utils.apikeys import (
     get_api_key_by_public_key,
@@ -29,7 +29,7 @@ async def get_api_key_wo_tx(
     ],
 ):
     api_key_id = None
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         api_key_str = None
         if basic_credentials is not None:
             api_key_str = basic_credentials.username
@@ -66,8 +66,8 @@ async def get_api_key_wo_tx(
         if api_key is None:
             raise HTTPException(status_code=403)
         api_key_id = api_key.id
-        await record_api_key_usage(dbsession, api_key)
 
+    await record_api_key_usage(api_key_id)
     yield api_key_id
 
 
@@ -76,11 +76,11 @@ async def validate_token(token: str) -> ApiKey | None:
     Validate a token (either raw API key ID or JWT).
     Returns ApiKey if valid, None otherwise.
     """
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         # First, try as raw API key ID (like Basic auth does)
         api_key = await get_valid_api_key_by_id(dbsession, token)
         if api_key is not None:
-            await record_api_key_usage(dbsession, api_key)
+            await record_api_key_usage(api_key.id)
             return api_key
 
         # Then try as JWT
@@ -114,5 +114,5 @@ async def validate_token(token: str) -> ApiKey | None:
 
         api_key = await get_valid_api_key_by_id(dbsession, api_key_for_public_key.id)
         if api_key is not None:
-            await record_api_key_usage(dbsession, api_key)
+            await record_api_key_usage(api_key.id)
         return api_key
