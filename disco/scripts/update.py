@@ -16,7 +16,7 @@ from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker
 
 import disco
-from disco.models.db import Session
+from disco.models.db import ReadSession, Session
 from disco.scripts.init import start_disco_daemon
 from disco.utils import keyvalues
 from disco.utils.meta import save_done_updating
@@ -30,7 +30,7 @@ def main() -> None:
     image = os.environ.get("DISCO_IMAGE")
     if image is None:  # backward compat for version <= 0.4.1
         image = "letsdiscodev/daemon:latest"
-    with Session.begin() as dbsession:
+    with ReadSession.begin() as dbsession:
         installed_version = keyvalues.get_value_sync(
             dbsession=dbsession, key="DISCO_VERSION"
         )
@@ -69,7 +69,7 @@ def main() -> None:
         assert installed_version is not None
         task = get_update_function_for_version(installed_version)
         task(image)
-        with Session.begin() as dbsession:
+        with ReadSession.begin() as dbsession:
             installed_version = keyvalues.get_value_sync(
                 dbsession=dbsession, key="DISCO_VERSION"
             )
@@ -81,7 +81,7 @@ def main() -> None:
             break
 
     print("Starting new version of Disco")
-    with Session.begin() as dbsession:
+    with ReadSession.begin() as dbsession:
         host_home = keyvalues.get_value_sync(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
     start_disco_daemon(host_home, image)
@@ -161,7 +161,7 @@ def task_0_29_x(image: str) -> None:
 
 def task_0_28_x(image: str) -> None:
     print("Updating from 0.28.x to 0.29.0")
-    with Session.begin() as dbsession:
+    with ReadSession.begin() as dbsession:
         host_home = keyvalues.get_value_sync(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
     get_caddy_config_cmd = (
@@ -246,7 +246,7 @@ def task_0_25_x(image: str) -> None:
     from disco.utils import docker
 
     print("Updating from 0.25.x to 0.26.0")
-    with Session.begin() as dbsession:
+    with ReadSession.begin() as dbsession:
         host_home = keyvalues.get_value_str_sync(dbsession=dbsession, key="HOST_HOME")
         cloudflare_tunnel_token = keyvalues.get_value_sync(
             dbsession=dbsession, key="CLOUDFLARE_TUNNEL_TOKEN"
@@ -325,7 +325,7 @@ def task_0_22_x(image: str) -> None:
     from disco.utils import docker
 
     print("Updating from 0.22.x to 0.23.0")
-    with Session.begin() as dbsession:
+    with ReadSession.begin() as dbsession:
         host_home = keyvalues.get_value_str_sync(dbsession=dbsession, key="HOST_HOME")
         cloudflare_tunnel_token = keyvalues.get_value_sync(
             dbsession=dbsession, key="CLOUDFLARE_TUNNEL_TOKEN"
@@ -401,7 +401,7 @@ def task_0_17_x(image: str) -> None:
 
 def task_0_16_x(image: str) -> None:
     print("Updating from 0.16.x to 0.17.0")
-    with Session.begin() as dbsession:
+    with ReadSession.begin() as dbsession:
         host_home = keyvalues.get_value_sync(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
     get_caddy_config_cmd = (
@@ -498,7 +498,7 @@ def task_0_12_x(image: str) -> None:
     from disco.scripts.init import start_caddy
 
     print("Updating from 0.12.x to 0.13.0")
-    with Session.begin() as dbsession:
+    with ReadSession.begin() as dbsession:
         host_home = keyvalues.get_value_sync(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
     _run_cmd(
@@ -586,7 +586,7 @@ def task_0_10_x(image: str) -> None:
     directory = "/disco/data/commandoutputs"
     if not os.path.isdir(directory):
         os.makedirs(directory)
-    with Session.begin() as dbsession:
+    with ReadSession.begin() as dbsession:
         sql = """
             SELECT source
                 FROM command_outputs
@@ -595,7 +595,7 @@ def task_0_10_x(image: str) -> None:
         rows = dbsession.execute(text(sql)).all()
         sources = [row.source for row in rows]
     for source in sources:
-        with Session.begin() as dbsession:
+        with ReadSession.begin() as dbsession:
             db_url = f"sqlite:////disco/data/commandoutputs/{source.lower()}.sqlite3"
             engine = create_engine(db_url, connect_args={"check_same_thread": False})
             session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -649,7 +649,7 @@ def task_0_8_x(image: str) -> None:
     print("Updating from 0.8.x to 0.9.0")
     from disco.scripts.init import start_caddy
 
-    with Session.begin() as dbsession:
+    with ReadSession.begin() as dbsession:
         host_home = keyvalues.get_value_sync(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
     _run_cmd(

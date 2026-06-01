@@ -11,7 +11,7 @@ from disco.models import (
     DeploymentEnvironmentVariable,
     Project,
 )
-from disco.models.db import AsyncSession
+from disco.models.db import AsyncReadSession, AsyncSession
 from disco.utils import commandoutputs, events, keyvalues
 from disco.utils.discofile import DiscoFile
 
@@ -242,7 +242,7 @@ async def enqueue_deployments_on_disco_boot() -> None:
     from disco.utils.deploymentflow import process_deployment_if_any
     from disco.utils.projects import get_all_projects
 
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         projects = await get_all_projects(dbsession)
         project_ids = [project.id for project in projects]
     for project_id in project_ids:

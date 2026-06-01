@@ -11,7 +11,7 @@ from disco.auth import get_api_key_wo_tx
 from disco.endpoints.dependencies import get_project_name_from_url_wo_tx
 from disco.endpoints.envvariables import EnvVariable
 from disco.models import Project, ProjectGithubRepo
-from disco.models.db import AsyncSession
+from disco.models.db import AsyncReadSession, AsyncSession
 from disco.utils import keyvalues
 from disco.utils.apikeys import get_api_key_by_id
 from disco.utils.deploymentflow import enqueue_deployment
@@ -292,7 +292,7 @@ async def projects_post(
 
 @router.get("/api/projects")
 async def projects_get():
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         projects = await get_all_projects(dbsession)
         result = []
         for project in projects:
@@ -315,7 +315,7 @@ async def projects_get():
 async def project_get(
     project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
         github_repo = await project.awaitable_attrs.github_repo
@@ -398,7 +398,7 @@ async def export_get(
     project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
     api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
         api_key = await get_api_key_by_id(dbsession, api_key_id)

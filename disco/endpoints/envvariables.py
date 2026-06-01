@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from disco.auth import get_api_key_wo_tx
 from disco.endpoints.dependencies import get_project_name_from_url_wo_tx
-from disco.models.db import AsyncSession
+from disco.models.db import AsyncReadSession, AsyncSession
 from disco.utils.apikeys import get_api_key_by_id
 from disco.utils.deploymentflow import enqueue_deployment
 from disco.utils.deployments import maybe_create_deployment
@@ -29,7 +29,7 @@ router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 async def env_variables_get(
     project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
         env_variables = await get_env_variables_for_project(dbsession, project)
@@ -128,7 +128,7 @@ async def get_env_var_name_from_url(
     project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
     env_var_name: Annotated[str, Path()],
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
         env_variable = await get_env_variable_by_name(
@@ -146,7 +146,7 @@ async def env_variable_get(
     project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
     env_var_name: Annotated[str, Depends(get_env_var_name_from_url)],
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
         env_variable = await get_env_variable_by_name(

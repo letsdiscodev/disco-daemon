@@ -23,7 +23,7 @@ We do that for project networks we create for each deployment.
 import logging
 from datetime import datetime, timedelta, timezone
 
-from disco.models.db import AsyncSession
+from disco.models.db import AsyncReadSession, AsyncSession
 from disco.utils import docker, keyvalues
 from disco.utils.imagecleanup import get_active_projects
 
@@ -39,7 +39,7 @@ async def remove_unused_networks() -> None:
     #   INSERT INTO key_values (key, value, created, updated)
     #   VALUES ('FEATURE_NETWORK_CLEANUP', 'enabled',
     #           datetime('now'), datetime('now'));
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         flag = await keyvalues.get_value(dbsession, "FEATURE_NETWORK_CLEANUP")
     if flag != "enabled":
         log.info("FEATURE_NETWORK_CLEANUP not enabled, skipping network clean-up")
