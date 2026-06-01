@@ -15,7 +15,7 @@ from disco.models import (
     Project,
     ProjectDomain,
 )
-from disco.models.db import AsyncSession
+from disco.models.db import AsyncReadSession, AsyncSession
 from disco.utils import caddy, commandoutputs, docker, github, keyvalues
 from disco.utils.asyncworker import async_worker
 from disco.utils.deployments import (
@@ -122,7 +122,7 @@ async def process_deployment_if_any(project_id: str) -> None:
     from disco.utils.deployments import get_oldest_queued_deployment
     from disco.utils.projects import get_project_by_id
 
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         project = await get_project_by_id(dbsession, project_id)
         if project is None:
             log.warning(
@@ -159,7 +159,7 @@ async def process_deployment(deployment_id: str) -> None:
         # Defined as a function so that we can shield it from
         # cancellation and avoid strange states when deployments
         # are cancelled.
-        async with AsyncSession.begin() as dbsession:
+        async with AsyncReadSession.begin() as dbsession:
             deployment = await get_deployment_by_id(dbsession, deployment_id)
             assert deployment is not None
             project: Project = await deployment.awaitable_attrs.project
@@ -293,7 +293,7 @@ async def process_deployment(deployment_id: str) -> None:
         log.info("Finished processing build %s", deployment_id)
         await log_output_terminate()
 
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         deployment = await get_deployment_by_id(dbsession, deployment_id)
         assert deployment is not None
         project_id = deployment.project_id
@@ -492,7 +492,7 @@ async def replace_deployment(
             log_output=log_output,
         )
         if "web" in new_deployment_info.disco_file.services:
-            async with AsyncSession.begin() as dbsession:
+            async with AsyncReadSession.begin() as dbsession:
                 project = await get_project_by_id(
                     dbsession, new_deployment_info.project_id
                 )
@@ -518,7 +518,7 @@ async def get_deployment_info(
     prev_deployment_id: str | None,
     scale=Mapping[str, int],
 ) -> tuple[DeploymentInfo | None, DeploymentInfo | None]:
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
         host_home = await keyvalues.get_value(dbsession, "HOST_HOME")
         assert disco_host is not None
