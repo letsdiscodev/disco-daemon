@@ -238,6 +238,18 @@ async def run_ws(
         # ===== STEP 4: Bridge PTY <-> WebSocket =====
         await bridge_pty_websocket(websocket, master_fd, proc)
 
+        # The bridge can return because the PTY reached EOF slightly before the
+        # process was reaped (the process-watch task gets cancelled mid-wait),
+        # leaving proc.returncode unset. Wait briefly so we report the real exit
+        # code instead of defaulting to 1. If the client disconnected with the
+        # process still running, this times out quickly and the finally block
+        # below terminates it.
+        if proc.returncode is None:
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                pass
+
         # Send exit message with exit code (useful for command mode)
         exit_code = proc.returncode if proc.returncode is not None else 1
         try:
@@ -291,9 +303,13 @@ async def bridge_pty_websocket(
     exit_event = asyncio.Event()
 
     async def watch_process():
-        """Watch for process exit."""
+        """Watch for process exit.
+
+        Deliberately does NOT set exit_event: process exit is propagated to the
+        output pump as PTY EOF (so it can drain the final output and return on
+        its own). exit_event is only for tearing the session down.
+        """
         await proc.wait()
-        exit_event.set()
 
     async def pty_to_websocket():
         """Read from PTY, send to WebSocket using event-driven I/O."""
@@ -319,12 +335,14 @@ async def bridge_pty_websocket(
                     while True:
                         data = os.read(master_fd, 4096)
                         if not data:
-                            break
+                            return  # EOF: process exited and output is drained
                         await websocket.send_bytes(data)
                 except BlockingIOError:
-                    pass  # No more data available
+                    pass  # No more data available right now
                 except OSError:
-                    break
+                    # PTY master returns EIO once the slave side is fully closed
+                    # (process exited). Returning here signals "output drained".
+                    return
         finally:
             loop.remove_reader(master_fd)
 
@@ -373,25 +391,37 @@ async def bridge_pty_websocket(
 
     # Start process watcher
     watch_task = asyncio.create_task(watch_process())
+    output_task = asyncio.create_task(pty_to_websocket())
+    input_task = asyncio.create_task(websocket_to_pty())
+    heartbeat_task = asyncio.create_task(heartbeat())
+    all_tasks = [output_task, input_task, heartbeat_task, watch_task]
 
-    _, pending = await asyncio.wait(
-        [
-            asyncio.create_task(pty_to_websocket()),
-            asyncio.create_task(websocket_to_pty()),
-            asyncio.create_task(heartbeat()),
-            watch_task,
-        ],
-        return_when=asyncio.FIRST_COMPLETED,
-    )
+    await asyncio.wait(all_tasks, return_when=asyncio.FIRST_COMPLETED)
 
-    exit_event.set()  # Signal all tasks to stop
+    # If the process exited while the output pump is still going, give it a
+    # brief grace period to drain and send the remaining PTY output before we
+    # tear down. The output pump returns on EOF once the process is gone, so
+    # this flushes the final output (e.g. the command's last line) instead of
+    # cancelling it mid-stream and dropping the last chunk. If instead the
+    # client disconnected (process still running), skip the wait and tear down
+    # immediately; the caller's finally block terminates the process.
+    if watch_task.done() and not output_task.done():
+        try:
+            await asyncio.wait_for(output_task, timeout=5.0)
+        except asyncio.TimeoutError:
+            pass  # output too large/slow to fully drain; tear down anyway
 
-    for task in pending:
-        task.cancel()
+    exit_event.set()  # Signal any remaining tasks to stop
+
+    for task in all_tasks:
+        if not task.done():
+            task.cancel()
         try:
             await task
         except asyncio.CancelledError:
             pass
+        except Exception:
+            log.exception("Error tearing down run session task")
 
 
 def set_pty_size(fd: int, rows: int, cols: int):
