@@ -21,7 +21,7 @@ import time
 import uuid
 
 import disco
-from disco.models.db import AsyncSession
+from disco.models.db import AsyncReadSession
 from disco.utils import keyvalues
 from disco.utils.backup_tokens import backup_tokens
 from disco.utils.subprocess import call, check_call
@@ -54,7 +54,7 @@ async def push_backup_to_all_managers(
         ttl_seconds=timeout_seconds + 60,
     )
 
-    async with AsyncSession.begin() as dbsession:
+    async with AsyncReadSession.begin() as dbsession:
         host_home = await keyvalues.get_value_str(dbsession, "HOST_HOME")
 
     image = f"letsdiscodev/daemon:{disco.__version__}"

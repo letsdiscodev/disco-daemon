@@ -1,11 +1,3 @@
-# TODO(dqlite-merge): taken from main's sync->async conversion as the merge
-# base; the dqlite branch's change here (commit ed2141b "Handle dqlite
-# write-lock contention from the daemon") was NOT re-applied. Port its intent on
-# top of the async handlers in a follow-up: router-level auth should use a
-# `_wo_tx` variant so it commits the api_key_usage write before the endpoint
-# body runs, instead of holding the auth transaction across the endpoint and
-# racing the endpoint's own commit on dqlite's single-writer lock. Endpoints
-# whose body needs the ApiKey still declare their own get_api_key param.
 import logging
 from typing import Annotated
 

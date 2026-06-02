@@ -19,7 +19,7 @@ sse-starlette==3.4.2
 uvicorn==0.46.0
 websockets==16.0
 # dqlite client + SQLAlchemy dialect.
-dqlite-wire==0.2.2
-dqlite-client==0.2.2
-dqlite-dbapi==0.2.2
-sqlalchemy-dqlite==0.2.2
+dqlite-wire==0.3.0
+dqlite-client==0.3.0
+dqlite-dbapi==0.3.0
+sqlalchemy-dqlite==0.3.0

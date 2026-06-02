@@ -7,25 +7,50 @@ log = logging.getLogger(__name__)
 
 
 async def call(
-    args: Sequence[str], stdin: str | None = None
+    args: Sequence[str],
+    stdin: str | None = None,
+    timeout: float | None = None,
 ) -> tuple[list[str], list[str], subprocess.Process]:
+    """Run a subprocess and capture its output.
+
+    When ``timeout`` is set (seconds), the process is killed and a
+    ``TimeoutError`` is raised if it does not finish in time. This matters for
+    docker/dqlite commands that can hang indefinitely (e.g. ``docker exec`` into
+    a half-dead container during cluster recovery) and would otherwise block the
+    caller — and any lock it holds — forever. Defaults to ``None`` (no timeout)
+    to preserve existing behaviour for long-running commands like image pulls.
+    """
     process = await asyncio.create_subprocess_exec(
         *args,
         stdin=subprocess.PIPE if stdin is not None else None,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    stdout, stderr = await process.communicate(
-        input=stdin.encode("utf-8") if stdin is not None else None
-    )
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(
+                input=stdin.encode("utf-8") if stdin is not None else None
+            ),
+            timeout=timeout,
+        )
+    except (asyncio.TimeoutError, TimeoutError):
+        process.kill()
+        # Reap the killed process so we don't leak a zombie / orphaned pipes.
+        try:
+            await process.wait()
+        except Exception:
+            pass
+        raise TimeoutError(f"Command timed out after {timeout}s: {' '.join(args)}")
     await process.wait()
     return decode_output(stdout), decode_output(stderr), process
 
 
 async def check_call(
-    args: Sequence[str], stdin: str | None = None
+    args: Sequence[str],
+    stdin: str | None = None,
+    timeout: float | None = None,
 ) -> tuple[list[str], list[str], subprocess.Process]:
-    stdout, stderr, process = await call(args=args, stdin=stdin)
+    stdout, stderr, process = await call(args=args, stdin=stdin, timeout=timeout)
     if process.returncode != 0:
         for line in stdout:
             log.info("Stdout: %s", line)

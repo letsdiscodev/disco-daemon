@@ -10,7 +10,7 @@ from typing import AsyncGenerator, Awaitable, Callable, Sequence
 from croniter import croniter
 
 from disco.models import Deployment, DeploymentEnvironmentVariable
-from disco.models.db import AsyncReadSession, AsyncSession
+from disco.models.db import AsyncReadSession
 from disco.utils import docker, keyvalues
 from disco.utils.discofile import DiscoFile, ServiceType, get_disco_file_from_str
 from disco.utils.encryption import decrypt
@@ -324,7 +324,9 @@ class AsyncWorker:
         from disco.utils.projects import get_project_by_name
 
         log.info("Reloading project crons of %s", project_name)
-        async with AsyncSession.begin() as dbsession:
+        # Read-only: this only loads the deployment + rebuilds the in-memory
+        # cron list; it never writes, so use the read session (no writer lock).
+        async with AsyncReadSession.begin() as dbsession:
             disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
             project = await get_project_by_name(dbsession, project_name)
             assert project is not None

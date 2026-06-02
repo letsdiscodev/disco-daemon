@@ -1,16 +1,3 @@
-# TODO(dqlite-merge): this file was taken from main's sync->async conversion as
-# the merge base; the dqlite branch's changes here were NOT re-applied and must
-# be ported on top of the async handlers in a follow-up commit. Re-apply the
-# intent of these dqlite commits (all about avoiding parallel/long-lived
-# sessions that contend on dqlite's single-writer lock):
-#   4ac2775 Share dbsession in pending-app deps instead of opening a parallel one
-#   f9949c3 Close pending-app validation session before yielding the id
-#   f48945d Avoid parallel sessions on installation-access-token endpoint
-#   d853b22 Security: token use-count + TTL, hardened internal endpoint, audit log
-# Specifically: get_pending_app_from_url / get_pending_app_id_from_url_with_state
-# should not hold a session open across the endpoint, and
-# get_installation_access_token should open its own short-lived session AFTER
-# fetching the token rather than holding the request's session the whole time.
 import asyncio
 import json
 import logging
@@ -299,8 +286,8 @@ async def get_installation_access_token(
         raise HTTPException(
             status_code=502, detail="Failed to get access token from GitHub"
         ) from e
-    # Re-read the (now updated) expiry in a fresh short-lived session.
-    async with AsyncSession.begin() as dbsession:
+    # Re-read the (now updated) expiry in a fresh short-lived read session.
+    async with AsyncReadSession.begin() as dbsession:
         installation = await get_github_app_installation_by_id(
             dbsession, installation_id
         )
