@@ -59,22 +59,15 @@ class JsonLogServer(asyncio.DatagramProtocol):
         log_queue,
         project_name: str | None = None,
         service_name: str | None = None,
-        ready_event: asyncio.Event | None = None,
     ):
         self.log_queue = log_queue
         self.project_name = project_name
         self.service_name = service_name
-        # Set on the first datagram (before filtering): logspout has attached and
-        # is delivering, so the stream is genuinely live. Lets the endpoint tell
-        # the client when streaming actually started instead of guessing.
-        self.ready_event = ready_event
 
     def connection_made(self, transport):
         self.transport = transport
 
     def datagram_received(self, data, addr):
-        if self.ready_event is not None and not self.ready_event.is_set():
-            self.ready_event.set()
         try:
             json_str = data.decode("utf-8")
         except UnicodeDecodeError:
