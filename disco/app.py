@@ -29,6 +29,8 @@ from disco.endpoints import (
     volumes,
 )
 from disco.middleware import middleware
+from disco.models.db import AsyncReadSession
+from disco.utils import caddy, keyvalues
 from disco.utils.asyncworker import async_worker
 from disco.utils.backup_distribution import cleanup_orphaned_push_jobs
 from disco.utils.backup_listener import watch_for_apikey_events_forever
@@ -52,6 +54,14 @@ async def lifespan(app: FastAPI):
     worker_task = loop.create_task(async_worker.work())
     swarm_watcher_task = loop.create_task(watch_swarm_events_forever())
     backup_listener_task = loop.create_task(watch_for_apikey_events_forever())
+    # Seed the base Caddy config (disco_host route etc.) into the local Caddy if
+    # absent; the config-sync module then publishes it to dqlite for all
+    # instances. Idempotent and best-effort.
+    async with AsyncReadSession() as dbsession:
+        disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
+        tunnel_token = await keyvalues.get_value(dbsession, "CLOUDFLARE_TUNNEL_TOKEN")
+    if disco_host is not None:
+        await caddy.ensure_base_config(disco_host, tunnel=tunnel_token is not None)
     await cleanup_deployments_on_disco_boot()
     await enqueue_deployments_on_disco_boot()
     # Clean up any backup-push global-job services left over from a

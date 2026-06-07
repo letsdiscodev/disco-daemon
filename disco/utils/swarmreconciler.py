@@ -32,6 +32,7 @@ from disco.utils.dqlite import (
     start_dqlite_service,
 )
 from disco.utils.randomname import generate_random_name
+from disco.utils.subprocess import call
 
 log = logging.getLogger(__name__)
 
@@ -137,3 +138,52 @@ async def _reconcile_once() -> None:
         if await cluster_remove(address):
             pending_cluster_removes.discard(address)
             log.info("Deferred cluster .remove for %s succeeded", address)
+
+    # Keep the global Caddy service's dqlite seed list current.
+    await _sync_caddy_dqlite_nodes(desired_names)
+
+
+async def _sync_caddy_dqlite_nodes(desired_names: set[str]) -> None:
+    """Keep the global Caddy service's DISCO_DQLITE_NODES seed in sync.
+
+    Only one reachable node is needed (go-dqlite discovers the rest), but if the
+    seed node leaves, surviving Caddy tasks need a live entry to bootstrap on
+    restart. Updates only when the value actually changes — a global-service env
+    update rolls every Caddy task, so we avoid doing it on every pass.
+    """
+    desired = ",".join(sorted(dqlite_bind_address(n) for n in desired_names))
+    if not desired:
+        return
+    stdout, _, p = await call(
+        [
+            "docker",
+            "service",
+            "inspect",
+            "disco-caddy",
+            "--format",
+            "{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}",
+        ]
+    )
+    if p.returncode != 0:
+        return  # Caddy service not present yet (e.g. very early in install).
+    current = None
+    for line in stdout:
+        if line.startswith("DISCO_DQLITE_NODES="):
+            current = line[len("DISCO_DQLITE_NODES=") :].strip()
+            break
+    if current == desired:
+        return
+    log.info("Updating disco-caddy DISCO_DQLITE_NODES (%d node(s))", len(desired_names))
+    _, _, p = await call(
+        [
+            "docker",
+            "service",
+            "update",
+            "--env-add",
+            f"DISCO_DQLITE_NODES={desired}",
+            "--detach",
+            "disco-caddy",
+        ]
+    )
+    if p.returncode != 0:
+        log.warning("Failed to update disco-caddy DISCO_DQLITE_NODES")

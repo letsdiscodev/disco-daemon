@@ -31,7 +31,6 @@ import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from typing import Iterable
 
-from sqlalchemy import text
 from sqlalchemy.dialects import sqlite as sqlite_dialect_module
 from sqlalchemy.schema import CreateIndex, CreateTable
 
@@ -143,16 +142,17 @@ def _build_schema_in_mem(mem: sqlite3.Connection) -> None:
 async def _copy_data_into_mem(mem: sqlite3.Connection) -> None:
     """Snapshot-isolated copy of every table into the in-memory SQLite.
 
-    Forces BEGIN IMMEDIATE before the first SELECT to acquire a write
-    lock up-front. Under SQLite/dqlite semantics, a deferred read
-    transaction can lose its snapshot if it's promoted to write later or
-    if other connections commit between our SELECTs. IMMEDIATE pins the
-    snapshot for the lifetime of this transaction, so cross-table reads
-    are guaranteed consistent — important for FK validity on restore.
+    Acquires the dqlite write lock up-front so the snapshot is pinned for the
+    whole copy (a deferred read transaction can lose its snapshot if promoted to
+    write later or if other connections commit between our SELECTs; an IMMEDIATE
+    transaction pins it, keeping cross-table reads consistent — important for FK
+    validity on restore). The write engine runs with session_mode="immediate",
+    so `session.begin()` already opens the transaction as BEGIN IMMEDIATE; an
+    additional explicit BEGIN IMMEDIATE would nest and raise "cannot start a
+    transaction within a transaction".
     """
     async with AsyncSession() as session:
         async with session.begin():
-            await session.execute(text("BEGIN IMMEDIATE"))
             for table in base_metadata.sorted_tables:
                 result = await session.execute(table.select())
                 rows = result.all()

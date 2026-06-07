@@ -14,7 +14,6 @@ from disco import config
 from disco.models.meta import base_metadata
 from disco.utils import docker, keyvalues
 from disco.utils.apikeys import create_api_key_sync
-from disco.utils.caddy import write_caddy_init_config
 from disco.utils.dqlite import (
     dqlite_service_name,
     start_first_dqlite_service_sync,
@@ -80,8 +79,11 @@ def main() -> None:
         cloudflare_tunnel_token=cloudflare_tunnel_token,
     )
     print("Setting up Caddy web server")
-    write_caddy_init_config(disco_host, tunnel=cloudflare_tunnel_token is not None)
-    start_caddy(host_home, tunnel=cloudflare_tunnel_token is not None)
+    start_caddy(
+        host_home,
+        tunnel=cloudflare_tunnel_token is not None,
+        caddy_image=config.get_caddy_image(),
+    )
     print("Setting up Disco")
     start_disco_daemon(host_home, image)
     if cloudflare_tunnel_token is not None:
@@ -185,51 +187,63 @@ def create_caddy_socket_dir(host_home: str) -> None:
     os.makedirs(f"/host{host_home}/disco/caddy-socket")
 
 
-def start_caddy(host_home: str, tunnel: bool) -> None:
-    more_args = []
+def start_caddy(host_home: str, tunnel: bool, caddy_image: str) -> None:
+    """Run Caddy as a global Swarm service (one task per node) for HA ingress.
+
+    TLS certs and routing config live in dqlite (shared by all instances), so no
+    cert/config volumes. Each task starts from the baked-in minimal bootstrap and
+    the config-sync module pulls the real config from dqlite; the daemon seeds the
+    base config on startup. Ports 80/443 are published in host mode to preserve
+    the real client IP. The bind-mount source dirs are created by Swarm on each
+    node if absent.
+    """
+    from disco.utils.dqlite import get_local_dqlite_address
+
+    publish_args = []
     if not tunnel:
-        more_args += [
+        publish_args += [
             "--publish",
-            "published=80,target=80,protocol=tcp",
+            "published=80,target=80,protocol=tcp,mode=host",
             "--publish",
-            "published=443,target=443,protocol=tcp",
+            "published=443,target=443,protocol=tcp,mode=host",
             "--publish",
-            "published=443,target=443,protocol=udp",
+            "published=443,target=443,protocol=udp,mode=host",
         ]
     _run_cmd(
         [
             "docker",
-            "run",
+            "service",
+            "create",
             "--name",
             "disco-caddy",
-            "--detach",
-            "--restart",
-            "always",
-            "--mount",
-            "source=disco-caddy-data,target=/data",
-            "--mount",
-            "source=disco-caddy-config,target=/config",
+            "--mode",
+            "global",
             "--network",
             "disco-main",
+            "--network",
+            "disco-dqlite",
+            "--env",
+            # One reachable node is enough to bootstrap; go-dqlite discovers the
+            # rest. The reconciler keeps this in sync as nodes join/leave.
+            f"DISCO_DQLITE_NODES={get_local_dqlite_address()}",
             "--mount",
             f"type=bind,source={host_home}/disco/caddy-socket,target=/disco/caddy-socket",
             "--mount",
-            "source=disco-caddy-init-config,target=/initconfig",
-            "--mount",
             f"type=bind,source={host_home}/disco/srv,target=/disco/srv",
+            "--container-label",
+            "disco.log.core=true",
             "--log-driver",
             "json-file",
             "--log-opt",
             "max-size=20m",
             "--log-opt",
             "max-file=5",
-            *more_args,
-            f"caddy:{config.CADDY_VERSION}",
+            *publish_args,
+            caddy_image,
             "caddy",
             "run",
-            "--resume",
             "--config",
-            "/initconfig/config.json",
+            "/etc/caddy/bootstrap.json",
         ]
     )
 
@@ -321,10 +335,6 @@ def start_disco_daemon(host_home: str, image: str) -> None:
             f"type=bind,source={host_home}/disco/backups,target=/disco/backups",
             "--mount",
             "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
-            "--mount",
-            "source=disco-caddy-data,target=/disco/caddy/data",
-            "--mount",
-            "source=disco-caddy-config,target=/disco/caddy/config",
             "--secret",
             "disco_encryption_key",
             "--constraint",

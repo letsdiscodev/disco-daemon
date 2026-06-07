@@ -15,6 +15,11 @@ from disco.utils.projects import get_project_by_name
 
 log = logging.getLogger(__name__)
 
+# How long to wait for logspout to start delivering before streaming anyway.
+# Generous because a fresh node must pull the logspout image and Swarm must
+# schedule the service the first time logs are requested.
+READY_TIMEOUT_SECONDS = 60
+
 router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 
 
@@ -78,15 +83,33 @@ async def read_logs(
     logspout_cmd[-1] = logspout_cmd[-1].format(port=port)
     transport = None
     log_queue: asyncio.Queue[dict[str, str | dict[str, str]]] = asyncio.Queue()
+    ready_event = asyncio.Event()
     await asyncio.create_subprocess_exec(*logspout_cmd)
     loop = asyncio.get_running_loop()
     transport, _ = await loop.create_datagram_endpoint(
         lambda: JsonLogServer(
-            log_queue=log_queue, project_name=project_name, service_name=service_name
+            log_queue=log_queue,
+            project_name=project_name,
+            service_name=service_name,
+            ready_event=ready_event,
         ),
         local_addr=("0.0.0.0", port),
     )
     try:
+        # Wait until logspout actually starts delivering (it must be scheduled,
+        # pulled, started and attached first — seconds, and variable). Emitting a
+        # "ready" event then lets clients know the stream is live instead of
+        # racing a fixed delay. Fall back after a timeout so a wedged logspout
+        # can't hang the client forever.
+        try:
+            await asyncio.wait_for(ready_event.wait(), timeout=READY_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            log.warning(
+                "logspout %s did not deliver within %ss; streaming anyway",
+                syslog_service_name,
+                READY_TIMEOUT_SECONDS,
+            )
+        yield ServerSentEvent(event="ready", data="{}")
         while True:
             log_obj = await log_queue.get()
             yield ServerSentEvent(

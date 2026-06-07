@@ -1,17 +1,107 @@
 import asyncio
 import json
+import logging
 import socket
-from typing import Any
+import time
+from typing import Any, Callable
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.connection import HTTPConnection
 from urllib3.connectionpool import HTTPConnectionPool
 
+from disco.utils import caddyconfig
 from disco.utils.filesystem import static_site_deployment_path
+
+log = logging.getLogger(__name__)
 
 HEADERS = {"Accept": "application/json"}
 BASE_URL = "http://disco-caddy"
+
+# Edit-loop tuning. Disco edits the *local* Caddy over the unix socket; the
+# config-sync module then publishes the result to dqlite. Two guards keep this
+# correct: a gate that waits until the local Caddy holds the config published in
+# dqlite (so we never edit a stale/bootstrap config that the sync module would
+# discard), and Caddy's native If-Match optimistic concurrency (retry on 412).
+MAX_EDIT_ATTEMPTS = 12
+_GATE_TIMEOUT = 30.0
+_GATE_POLL = 0.5
+
+
+def _blocking_get_etag(session: requests.Session, path: str) -> str | None:
+    response = session.get(f"{BASE_URL}{path}", headers=HEADERS, timeout=10)
+    if response.status_code == 404:
+        return None
+    if response.status_code != 200:
+        raise Exception(f"Caddy returned {response.status_code}: {response.text}")
+    return response.headers.get("Etag")
+
+
+def _blocking_get_config_bytes(session: requests.Session) -> bytes | None:
+    response = session.get(f"{BASE_URL}/config/", headers=HEADERS, timeout=10)
+    if response.status_code != 200:
+        return None
+    return response.content
+
+
+def _configs_equal(a: bytes | None, b: bytes | None) -> bool:
+    if a is None or b is None:
+        return False
+    try:
+        return json.loads(a) == json.loads(b)
+    except ValueError:
+        return a == b
+
+
+async def _wait_until_current(
+    timeout: float = _GATE_TIMEOUT, poll: float = _GATE_POLL
+) -> None:
+    """Block until the local Caddy holds the config published in dqlite.
+
+    Prevents editing a stale/bootstrap config (e.g. right after a Caddy restart,
+    before the config-sync module has adopted the latest from dqlite) — such an
+    edit would 404 or be discarded when the sync module adopts. Best-effort: on
+    timeout we proceed and let the edit's own error handling surface problems.
+    """
+    loop = asyncio.get_event_loop()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        target = await caddyconfig.get_config_bytes()
+        if target is None:
+            return  # nothing published yet; the local Caddy is the seeder
+        session = _get_session()
+        local = await loop.run_in_executor(
+            None, lambda: _blocking_get_config_bytes(session)
+        )
+        if _configs_equal(local, target):
+            return
+        await asyncio.sleep(poll)
+
+
+async def _apply_edit(
+    make_request: Callable[[requests.Session, dict], requests.Response],
+    etag_path: str,
+) -> requests.Response:
+    """Apply a mutating admin request, gated on the local Caddy being current
+    and guarded by Caddy's If-Match optimistic concurrency (retry on 412)."""
+    loop = asyncio.get_event_loop()
+    for _ in range(MAX_EDIT_ATTEMPTS):
+        await _wait_until_current()
+        session = _get_session()
+        etag = await loop.run_in_executor(
+            None, lambda: _blocking_get_etag(session, etag_path)
+        )
+        headers = dict(HEADERS)
+        if etag is not None:
+            headers["If-Match"] = etag
+        response = await loop.run_in_executor(
+            None, lambda: make_request(session, headers)
+        )
+        if response.status_code == 412:
+            await asyncio.sleep(0.2)
+            continue
+        return response
+    raise Exception("Caddy config edit did not converge (too many conflicts)")
 
 
 class CaddyConnection(HTTPConnection):
@@ -86,12 +176,11 @@ async def _add_project_route(project_name: str, domains: list[str]) -> None:
         "match": [{"@id": f"disco-project-hosts-{project_name}", "host": domains}],
         "terminal": True,
     }
-    session = _get_session()
 
-    def query() -> requests.Response:
-        return session.put(url, json=req_body, headers=HEADERS, timeout=10)
+    def make(session: requests.Session, headers: dict) -> requests.Response:
+        return session.put(url, json=req_body, headers=headers, timeout=10)
 
-    response = await asyncio.get_event_loop().run_in_executor(None, query)
+    response = await _apply_edit(make, etag_path=url[len(BASE_URL):])
     if response.status_code != 200:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
@@ -109,12 +198,11 @@ async def set_domains_for_project(project_name: str, domains: list[str]) -> None
 
 async def _remove_project_route(project_name: str) -> None:
     url = f"{BASE_URL}/id/disco-project-{project_name}"
-    session = _get_session()
 
-    def query() -> requests.Response:
-        return session.delete(url, headers=HEADERS, timeout=10)
+    def make(session: requests.Session, headers: dict) -> requests.Response:
+        return session.delete(url, headers=headers, timeout=10)
 
-    response = await asyncio.get_event_loop().run_in_executor(None, query)
+    response = await _apply_edit(make, etag_path=url[len(BASE_URL):])
     if response.status_code != 200:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
@@ -138,12 +226,11 @@ async def _project_route_exists(project_name) -> bool:
 async def _update_project_domains(project_name: str, domains: list[str]) -> None:
     url = f"{BASE_URL}/id/disco-project-hosts-{project_name}"
     req_body = {"@id": f"disco-project-hosts-{project_name}", "host": domains}
-    session = _get_session()
 
-    def query() -> requests.Response:
-        return session.patch(url, json=req_body, headers=HEADERS, timeout=10)
+    def make(session: requests.Session, headers: dict) -> requests.Response:
+        return session.patch(url, json=req_body, headers=headers, timeout=10)
 
-    response = await asyncio.get_event_loop().run_in_executor(None, query)
+    response = await _apply_edit(make, etag_path=url[len(BASE_URL):])
     if response.status_code != 200:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
@@ -169,12 +256,11 @@ async def serve_service(project_name: str, container_name: str, port: int) -> No
         "handler": "reverse_proxy",
         "upstreams": [{"dial": f"{container_name}:{port}"}],
     }
-    session = _get_session()
 
-    def query() -> requests.Response:
-        return session.patch(url, json=req_body, headers=HEADERS, timeout=10)
+    def make(session: requests.Session, headers: dict) -> requests.Response:
+        return session.patch(url, json=req_body, headers=headers, timeout=10)
 
-    response = await asyncio.get_event_loop().run_in_executor(None, query)
+    response = await _apply_edit(make, etag_path=url[len(BASE_URL):])
     # TODO also accept 404? (when deploying project that has a web service and no domains set)
     if response.status_code != 200:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
@@ -209,24 +295,22 @@ async def add_apex_www_redirects(
         "match": [{"host": [from_domain]}],
         "terminal": True,
     }
-    session = _get_session()
 
-    def query() -> requests.Response:
-        return session.put(url, json=req_body, headers=HEADERS, timeout=10)
+    def make(session: requests.Session, headers: dict) -> requests.Response:
+        return session.put(url, json=req_body, headers=headers, timeout=10)
 
-    response = await asyncio.get_event_loop().run_in_executor(None, query)
+    response = await _apply_edit(make, etag_path=url[len(BASE_URL):])
     if response.status_code != 200:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
 
 async def remove_apex_www_redirects(domain_id: str) -> None:
     url = f"{BASE_URL}/id/apex-www-redirect-{domain_id}"
-    session = _get_session()
 
-    def query() -> requests.Response:
-        return session.delete(url, headers=HEADERS, timeout=10)
+    def make(session: requests.Session, headers: dict) -> requests.Response:
+        return session.delete(url, headers=headers, timeout=10)
 
-    response = await asyncio.get_event_loop().run_in_executor(None, query)
+    response = await _apply_edit(make, etag_path=url[len(BASE_URL):])
     if response.status_code != 200:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
@@ -267,12 +351,11 @@ async def serve_static_site(project_name: str, deployment_number: int) -> None:
         "handler": "file_server",
         "root": static_site_deployment_path(project_name, deployment_number),
     }
-    session = _get_session()
 
-    def query() -> requests.Response:
-        return session.patch(url, json=req_body, headers=HEADERS, timeout=10)
+    def make(session: requests.Session, headers: dict) -> requests.Response:
+        return session.patch(url, json=req_body, headers=headers, timeout=10)
 
-    response = await asyncio.get_event_loop().run_in_executor(None, query)
+    response = await _apply_edit(make, etag_path=url[len(BASE_URL):])
     if response.status_code != 200:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
@@ -280,29 +363,44 @@ async def serve_static_site(project_name: str, deployment_number: int) -> None:
 async def update_disco_host(disco_host: str) -> None:
     url = f"{BASE_URL}/id/disco-domain-handle/match/0/host/0"
     req_body = disco_host
-    session = _get_session()
 
-    def query() -> requests.Response:
-        return session.patch(url, json=req_body, headers=HEADERS, timeout=10)
+    def make(session: requests.Session, headers: dict) -> requests.Response:
+        return session.patch(url, json=req_body, headers=headers, timeout=10)
 
-    response = await asyncio.get_event_loop().run_in_executor(None, query)
+    response = await _apply_edit(make, etag_path=url[len(BASE_URL):])
     if response.status_code != 200:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
 
-def write_caddy_init_config(disco_host: str, tunnel: bool) -> None:
-    # We write the initial config directly to the config file so that Caddy listens
-    # to the unix socket instead of a regular port.
-    # We use a unix socket because that's the only way at the moment to let only Disco
-    # update the config using the endpoints. Otherwise, projects could read/write #
-    # the config.
-    init_config = {
+def build_caddy_base_config(disco_host: str, tunnel: bool) -> dict[str, Any]:
+    """Build the full base Caddy config.
+
+    Includes the admin unix socket (only Disco, sharing the socket dir, can edit
+    config — projects on disco-main cannot), dqlite storage, the config-sync app,
+    and the disco_host route. The daemon seeds this into the local Caddy over the
+    admin socket on startup (``ensure_base_config``); the config-sync module then
+    publishes it to dqlite so every Caddy instance adopts it.
+    """
+    return {
         "admin": {
             "enforce_origin": False,
             "listen": "unix//disco/caddy-socket/caddy.sock",
             "origins": ["disco-caddy"],
+            # The dqlite caddy_config row is the source of truth, not Caddy's
+            # filesystem autosave.
+            "config": {"persist": False},
         },
+        # TLS certs/keys live in dqlite (shared across all Caddy instances), not
+        # on a local filesystem volume.
+        "storage": {"module": "dqlite"},
         "apps": {
+            # Keeps every Caddy instance's config in sync via dqlite: the
+            # instance Disco edits publishes the running config; the others poll
+            # and adopt it. dqlite node addresses come from DISCO_DQLITE_NODES.
+            "dqlite_config_sync": {
+                "admin_endpoint": "unix//disco/caddy-socket/caddy.sock",
+                "admin_origin": "disco-caddy",
+            },
             "http": {
                 "servers": {
                     "disco": {
@@ -362,5 +460,51 @@ def write_caddy_init_config(disco_host: str, tunnel: bool) -> None:
             }
         },
     }
-    with open("/initconfig/config.json", "w", encoding="utf-8") as f:
-        json.dump(init_config, f)
+
+
+async def ensure_base_config(disco_host: str, tunnel: bool) -> bool:
+    """Seed the base Caddy config if the local Caddy doesn't have it yet.
+
+    Idempotent and best-effort: returns True if the base config is present
+    (already configured or just seeded), False if it couldn't be applied (logged;
+    the daemon still starts and can retry on the next restart). POSTs over the
+    admin socket; the config-sync module then publishes the result to dqlite.
+    """
+    loop = asyncio.get_event_loop()
+    session = _get_session()
+    for _ in range(30):
+        try:
+            resp = await loop.run_in_executor(
+                None,
+                lambda: session.get(
+                    f"{BASE_URL}/id/disco-domain-handle", headers=HEADERS, timeout=10
+                ),
+            )
+        except Exception:
+            await asyncio.sleep(1)
+            continue
+        if resp.status_code == 200:
+            return True  # already configured
+        if resp.status_code == 404:
+            break  # needs seeding
+        await asyncio.sleep(1)
+    config = build_caddy_base_config(disco_host, tunnel)
+    try:
+        resp = await loop.run_in_executor(
+            None,
+            lambda: session.post(
+                f"{BASE_URL}/config/", json=config, headers=HEADERS, timeout=10
+            ),
+        )
+    except Exception as exc:
+        log.error("Could not reach Caddy to seed base config: %s", exc)
+        return False
+    if resp.status_code != 200:
+        log.error(
+            "Caddy returned %s seeding base config: %s",
+            resp.status_code,
+            resp.text,
+        )
+        return False
+    log.info("Seeded Caddy base config")
+    return True

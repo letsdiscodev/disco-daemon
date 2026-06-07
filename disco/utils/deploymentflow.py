@@ -16,7 +16,7 @@ from disco.models import (
     ProjectDomain,
 )
 from disco.models.db import AsyncReadSession, AsyncSession
-from disco.utils import caddy, commandoutputs, docker, github, keyvalues
+from disco.utils import caddy, caddyconfig, commandoutputs, docker, github, keyvalues
 from disco.utils.asyncworker import async_worker
 from disco.utils.deployments import (
     DEPLOYMENT_STATUS,
@@ -866,6 +866,12 @@ async def serve_new_deployment(
     log_output: Callable[[str], Awaitable[None]],
 ) -> None:
     assert new_deployment_info.disco_file is not None
+    # Version of the shared Caddy config before our edit. After editing the
+    # local Caddy, the config-sync module publishes a new version to dqlite; we
+    # wait for every live Caddy instance to apply it before the caller tears
+    # down the previous deployment (stop_prev_services).
+    version_before = await caddyconfig.get_config_version()
+    edited = False
     if (
         "web" in new_deployment_info.disco_file.services
         and new_deployment_info.disco_file.services["web"].type == ServiceType.container
@@ -899,6 +905,7 @@ async def serve_new_deployment(
                     internal_service_name,
                     port=port,
                 )
+                edited = True
         except Exception:
             await log_output(
                 f"Failed to update reverse proxy to serve "
@@ -914,6 +921,7 @@ async def serve_new_deployment(
             await caddy.serve_static_site(
                 new_deployment_info.project_name, new_deployment_info.number
             )
+            edited = True
         except Exception:
             await log_output(
                 f"Failed to update server to serve "
@@ -925,6 +933,19 @@ async def serve_new_deployment(
         raise NotImplementedError(
             f"Deployment type not handled {new_deployment_info.disco_file.services['web'].type}"
         )
+
+    # Wait for the Caddy edit to propagate to every live instance before the
+    # caller removes the previous deployment, so no ingress node briefly routes
+    # to a torn-down container. Best-effort: never let this block a deploy.
+    if edited:
+        try:
+            await caddyconfig.wait_for_convergence(
+                version_before, log_output=log_output
+            )
+        except Exception:
+            await log_output(
+                "Could not confirm Caddy config convergence; proceeding\n"
+            )
 
 
 async def stop_prev_services(

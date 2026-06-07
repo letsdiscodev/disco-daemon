@@ -118,50 +118,70 @@ async def copy_static_site_src_to_deployment_folder(
     await loop.run_in_executor(None, copytree_sync)
 
 
-def _certificate_directory(domain: str) -> str:
-    return f"/disco/caddy/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/{domain}"
+# Caddy TLS certs now live in dqlite (the caddy_data table managed by the Caddy
+# dqlite storage module), not on a local filesystem volume. Keys mirror Caddy's
+# certmagic layout relative to its storage root.
+_CERT_STORAGE_PREFIX = "certificates/acme-v02.api.letsencrypt.org-directory"
+
+
+def _cert_storage_key(domain: str, ext: str) -> str:
+    return f"{_CERT_STORAGE_PREFIX}/{domain}/{domain}.{ext}"
+
+
+async def _get_caddy_data(key: str) -> str:
+    from sqlalchemy import text
+
+    from disco.models.db import AsyncReadSession
+
+    async with AsyncReadSession() as dbsession:
+        result = await dbsession.execute(
+            text("SELECT value FROM caddy_data WHERE key = :k"), {"k": key}
+        )
+        row = result.first()
+    if row is None:
+        raise FileNotFoundError(f"Caddy data not found in dqlite: {key}")
+    value = row[0]
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value).decode("utf-8")
+    return str(value)
+
+
+def _set_caddy_data(key: str, value: str) -> None:
+    import time
+
+    from sqlalchemy import text
+
+    from disco.models.db import get_engine
+
+    with get_engine().begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO caddy_data(key, value, modified) VALUES (:k, :v, :m) "
+                "ON CONFLICT(key) DO UPDATE SET value = :v, modified = :m"
+            ),
+            {"k": key, "v": value.encode("utf-8"), "m": time.time_ns()},
+        )
 
 
 async def get_caddy_key_crt(domain: str) -> str:
-    path = f"{_certificate_directory(domain)}/{domain}.crt"
-    async with aiofiles.open(path, "r", encoding="utf-8") as f:
-        return await f.read()
+    return await _get_caddy_data(_cert_storage_key(domain, "crt"))
 
 
 def set_caddy_key_crt(domain: str, value: str) -> None:
-    directory = _certificate_directory(domain)
-    if not os.path.isdir(directory):
-        os.makedirs(directory)
-    path = f"{directory}/{domain}.crt"
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(value)
+    _set_caddy_data(_cert_storage_key(domain, "crt"), value)
 
 
 async def get_caddy_key_key(domain: str) -> str:
-    path = f"{_certificate_directory(domain)}/{domain}.key"
-    async with aiofiles.open(path, "r", encoding="utf-8") as f:
-        return await f.read()
+    return await _get_caddy_data(_cert_storage_key(domain, "key"))
 
 
 def set_caddy_key_key(domain: str, value: str) -> None:
-    directory = _certificate_directory(domain)
-    if not os.path.isdir(directory):
-        os.makedirs(directory)
-    path = f"{directory}/{domain}.key"
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(value)
+    _set_caddy_data(_cert_storage_key(domain, "key"), value)
 
 
 async def get_caddy_key_meta(domain: str) -> str:
-    path = f"{_certificate_directory(domain)}/{domain}.json"
-    async with aiofiles.open(path, "r", encoding="utf-8") as f:
-        return await f.read()
+    return await _get_caddy_data(_cert_storage_key(domain, "json"))
 
 
 def set_caddy_key_meta(domain: str, value: str) -> None:
-    directory = _certificate_directory(domain)
-    if not os.path.isdir(directory):
-        os.makedirs(directory)
-    path = f"{directory}/{domain}.json"
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(value)
+    _set_caddy_data(_cert_storage_key(domain, "json"), value)
