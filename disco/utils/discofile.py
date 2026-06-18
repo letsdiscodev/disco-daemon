@@ -59,6 +59,10 @@ class Service(BaseModel):
         None,
         alias="extraSwarmParams",
     )
+    extra_run_params: str | None = Field(
+        None,
+        alias="extraRunParams",
+    )
 
 
 class DiscoFile(BaseModel):

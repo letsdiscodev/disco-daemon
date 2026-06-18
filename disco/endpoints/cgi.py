@@ -226,6 +226,7 @@ async def request_cgi(
         project_name,
         service_name,
     )
+    extra_run_params = disco_file.services[service_name].extra_run_params
     await docker.run(
         image=image,
         project_name=project_name,
@@ -237,6 +238,13 @@ async def request_cgi(
         stdin=content,
         stdout=stdout,
         stderr=stderr,
+        extra_params=[
+            param.strip()
+            for param in extra_run_params.split(" ")
+            if len(param.strip()) > 0
+        ]
+        if extra_run_params is not None
+        else None,
     )
     if len(cgi_err) > 0:
         log.info("Received stderr from CGI: %s", cgi_err)

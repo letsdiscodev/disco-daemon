@@ -396,6 +396,13 @@ async def run_hook_deploy_start_before(
             timeout=service.timeout,
             stdout=log_output,
             stderr=log_output,
+            extra_params=[
+                param.strip()
+                for param in service.extra_run_params.split(" ")
+                if len(param.strip()) > 0
+            ]
+            if service.extra_run_params is not None
+            else None,
         )
 
 
@@ -456,6 +463,13 @@ async def run_hook_deploy_start_after(
             timeout=service.timeout,
             stdout=log_output,
             stderr=log_output,
+            extra_params=[
+                param.strip()
+                for param in service.extra_run_params.split(" ")
+                if len(param.strip()) > 0
+            ]
+            if service.extra_run_params is not None
+            else None,
         )
 
 
