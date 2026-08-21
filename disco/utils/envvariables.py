@@ -68,6 +68,9 @@ async def delete_env_variable(
     project: Project = await env_variable.awaitable_attrs.project
     events.env_variable_removed(project_name=project.name, env_var=env_variable.name)
     await dbsession.delete(env_variable)
+    # flush and expire, otherwise new deployment wouldn't see the effect
+    await dbsession.flush()
+    dbsession.expire(project, ["env_variables"])
 
 
 async def delete_env_variables_by_name(
