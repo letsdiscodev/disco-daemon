@@ -300,6 +300,8 @@ def start_disco_daemon(host_home: str, image: str) -> None:
             "source=disco-caddy-data,target=/disco/caddy/data",
             "--mount",
             "source=disco-caddy-config,target=/disco/caddy/config",
+            "--env",
+            f"DISCO_IMAGE={image}",
             "--secret",
             "disco_encryption_key",
             "--constraint",

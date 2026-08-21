@@ -878,14 +878,14 @@ async def leave_swarm(node_id: str) -> str:
         f"node.id=={node_id}",
         "--mount",
         "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
-        f"letsdiscodev/daemon:{disco.__version__}",
+        disco.daemon_image(),
         "docker",
         "run",
         "--rm",
         "--detach",
         "--mount",
         "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
-        f"letsdiscodev/daemon:{disco.__version__}",
+        disco.daemon_image(),
         "disco_leave_swarm",
     ]
     await check_call(args)
@@ -1231,7 +1231,6 @@ def get_image_name_for_service(
 async def login(
     disco_host_home: str, address: str, username: str, password: str
 ) -> None:
-    import disco
 
     log.info("Docker login to %s", address)
     args = [
@@ -1243,7 +1242,7 @@ async def login(
         "--mount",
         f"type=bind,source={disco_host_home},target=/root",
         "--interactive",
-        f"letsdiscodev/daemon:{disco.__version__}",
+        disco.daemon_image(),
         "docker",
         "login",
         "--username",
@@ -1255,7 +1254,6 @@ async def login(
 
 
 async def logout(disco_host_home: str, address: str) -> None:
-    import disco
 
     log.info("Docker logout from %s", address)
     args = [
@@ -1266,7 +1264,7 @@ async def logout(disco_host_home: str, address: str) -> None:
         "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
         "--mount",
         f"type=bind,source={disco_host_home},target=/root",
-        f"letsdiscodev/daemon:{disco.__version__}",
+        disco.daemon_image(),
         "docker",
         "logout",
         address,
@@ -1284,7 +1282,7 @@ async def get_authenticated_registries(disco_host_home: str) -> list[str]:
         "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
         "--mount",
         f"type=bind,source={disco_host_home},target=/root",
-        f"letsdiscodev/daemon:{disco.__version__}",
+        disco.daemon_image(),
         "cat",
         f"{disco_host_home}/.docker/config.json",
     ]
@@ -1375,7 +1373,7 @@ async def ls_images_swarm() -> list[tuple[str, str]]:
             "global-job",
             "--mount",
             "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
-            f"letsdiscodev/daemon:{disco.__version__}",
+            disco.daemon_image(),
             "docker",
             "image",
             "ls",
@@ -1408,7 +1406,7 @@ async def rm_image_swarm(image: str) -> None:
             "global-job",
             "--mount",
             "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
-            f"letsdiscodev/daemon:{disco.__version__}",
+            disco.daemon_image(),
             "sh",
             "-c",
             f"docker image rm {image} 2>/dev/null || true",
