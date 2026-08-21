@@ -16,8 +16,7 @@ disco_set_core_logging = "disco.scripts.setcorelogging:main"
 disco_leave_swarm = "disco.scripts.leave_swarm:main"
 
 [tool.ruff.lint]
-# Enable the isort rules.
-extend-select = ["I"]
+select = ["E4", "E7", "E9", "F", "I"]
 
 [tool.mypy]
 ignore_missing_imports = true
