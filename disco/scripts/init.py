@@ -335,6 +335,8 @@ def start_disco_daemon(host_home: str, image: str) -> None:
             f"type=bind,source={host_home}/disco/backups,target=/disco/backups",
             "--mount",
             "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+            "--env",
+            f"DISCO_IMAGE={image}",
             "--secret",
             "disco_encryption_key",
             "--constraint",

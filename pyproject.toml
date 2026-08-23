@@ -20,8 +20,7 @@ disco_restore = "disco.scripts.restore:main"
 disco_migrate_caddy_storage = "disco.scripts.migrate_caddy_storage:main"
 
 [tool.ruff.lint]
-# Enable the isort rules.
-extend-select = ["I"]
+select = ["E4", "E7", "E9", "F", "I"]
 
 [tool.mypy]
 ignore_missing_imports = true

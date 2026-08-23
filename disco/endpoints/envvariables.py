@@ -187,7 +187,7 @@ async def env_variable_delete(
         )
         deployment = await maybe_create_deployment(
             dbsession=dbsession,
-            project=env_variable.project,
+            project=project,
             commit_hash=None,
             disco_file=None,
             by_api_key=api_key,
