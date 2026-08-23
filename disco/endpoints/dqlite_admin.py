@@ -245,7 +245,7 @@ async def recover_quorum(
     node_ids = await docker.get_node_list()
     nodes = await docker.get_node_details(node_ids)
     swarm_node_names = {
-        n.labels.get("disco-name") for n in nodes if n.labels.get("disco-name")
+        name for n in nodes if (name := n.labels.get("disco-name"))
     }
 
     for rn in body.remove_nodes:
@@ -260,9 +260,9 @@ async def recover_quorum(
     # Force the operator to be explicit: either include it in removeNodes
     # or get its state back to ready before retrying.
     ready_names = {
-        n.labels.get("disco-name")
+        name
         for n in nodes
-        if n.labels.get("disco-name") and n.state == "ready"
+        if (name := n.labels.get("disco-name")) and n.state == "ready"
     }
     rejoin_nodes = sorted(
         ready_names - {body.keep_node} - set(body.remove_nodes)
@@ -294,7 +294,7 @@ async def recover_quorum(
         # Re-probe inside the lock — the cluster may have recovered between
         # the request-time probe and now (e.g. another concurrent recovery
         # just finished).
-        is_locked_now, _ = await _probe_dqlite_locked()
+        is_locked_now, _probe_err = await _probe_dqlite_locked()
         if not is_locked_now:
             raise HTTPException(409, {
                 "error": "cluster_healthy",

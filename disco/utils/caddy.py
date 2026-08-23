@@ -151,7 +151,7 @@ def set_config(config: dict[str, Any]) -> None:
 
 async def _add_project_route(project_name: str, domains: list[str]) -> None:
     url = f"{BASE_URL}/config/apps/http/servers/disco/routes/0"
-    req_body = {
+    req_body: dict[str, Any] = {
         "@id": f"disco-project-{project_name}",
         "handle": [
             {
@@ -251,7 +251,7 @@ def serve_service_sync(project_name: str, container_name: str, port: int) -> Non
 
 async def serve_service(project_name: str, container_name: str, port: int) -> None:
     url = f"{BASE_URL}/id/disco-project-handler-{project_name}"
-    req_body = {
+    req_body: dict[str, Any] = {
         "@id": f"disco-project-handler-{project_name}",
         "handler": "reverse_proxy",
         "upstreams": [{"dial": f"{container_name}:{port}"}],
@@ -270,7 +270,7 @@ async def add_apex_www_redirects(
     domain_id: str, from_domain: str, to_domain: str
 ) -> None:
     url = f"{BASE_URL}/config/apps/http/servers/disco/routes/0"
-    req_body = {
+    req_body: dict[str, Any] = {
         "@id": f"apex-www-redirect-{domain_id}",
         "handle": [
             {

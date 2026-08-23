@@ -272,6 +272,7 @@ def task_0_26_x(image: str) -> None:
 
 
 def task_0_25_x(image: str) -> None:
+    from disco import config
     from disco.scripts.init import start_caddy
     from disco.utils import docker
 
@@ -297,7 +298,11 @@ def task_0_25_x(image: str) -> None:
             "disco-caddy",
         ]
     )
-    start_caddy(host_home=host_home, tunnel=cloudflare_tunnel_token is not None)
+    start_caddy(
+        host_home=host_home,
+        tunnel=cloudflare_tunnel_token is not None,
+        caddy_image=config.get_caddy_image(),
+    )
     if cloudflare_tunnel_token is not None:
         docker.add_network_to_container_sync(
             "disco-caddy", "disco-cloudflare-tunnel", alias="disco-server"
@@ -377,7 +382,11 @@ def task_0_22_x(image: str) -> None:
             "disco-caddy",
         ]
     )
-    start_caddy(host_home=host_home, tunnel=cloudflare_tunnel_token is not None)
+    start_caddy(
+        host_home=host_home,
+        tunnel=cloudflare_tunnel_token is not None,
+        caddy_image=config.get_caddy_image(),
+    )
     if cloudflare_tunnel_token is not None:
         docker.add_network_to_container_sync(
             "disco-caddy", "disco-cloudflare-tunnel", alias="disco-server"
@@ -525,6 +534,7 @@ def task_0_13_x(image: str) -> None:
 
 
 def task_0_12_x(image: str) -> None:
+    from disco import config
     from disco.scripts.init import start_caddy
 
     print("Updating from 0.12.x to 0.13.0")
@@ -545,7 +555,9 @@ def task_0_12_x(image: str) -> None:
             "disco-caddy",
         ]
     )
-    start_caddy(host_home=host_home, tunnel=False)
+    start_caddy(
+        host_home=host_home, tunnel=False, caddy_image=config.get_caddy_image()
+    )
     with Session.begin() as dbsession:
         keyvalues.set_value_sync(
             dbsession=dbsession, key="DISCO_VERSION", value="0.13.0"
@@ -677,6 +689,7 @@ def task_0_9_x(image: str) -> None:
 
 def task_0_8_x(image: str) -> None:
     print("Updating from 0.8.x to 0.9.0")
+    from disco import config
     from disco.scripts.init import start_caddy
 
     with ReadSession.begin() as dbsession:
@@ -724,7 +737,9 @@ def task_0_8_x(image: str) -> None:
             "/disco/caddy/config/caddy/autosave.json",
         ]
     )
-    start_caddy(host_home=host_home, tunnel=False)
+    start_caddy(
+        host_home=host_home, tunnel=False, caddy_image=config.get_caddy_image()
+    )
     with Session.begin() as dbsession:
         keyvalues.set_value_sync(
             dbsession=dbsession, key="DISCO_VERSION", value="0.9.0"

@@ -57,7 +57,7 @@ async def push_backup_to_all_managers(
     async with AsyncReadSession.begin() as dbsession:
         host_home = await keyvalues.get_value_str(dbsession, "HOST_HOME")
 
-    image = f"letsdiscodev/daemon:{disco.__version__}"
+    image = disco.daemon_image()
     args = [
         "docker", "service", "create",
         "--name", job_name,
