@@ -40,7 +40,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import os
 import socket
 import sqlite3
 import subprocess
@@ -64,7 +63,7 @@ OLD_CADDY_DATA_MOUNT = Path("/old-caddy-data")
 def main() -> None:
     # Everything DB-related in this process must resolve to dqlite: the
     # sqlite side is only ever read through private sqlite3 connections.
-    os.environ["DISCO_MODE"] = "dqlite"
+    config.pin_mode("dqlite")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     parser = argparse.ArgumentParser(
@@ -206,12 +205,7 @@ def _migrate(state: dict) -> None:
         _run(["docker", "service", "rm", "disco"], check=False)
         # Wait for the daemon task container to actually exit so nothing
         # writes to the sqlite file while we copy it into dqlite.
-        for _ in range(60):
-            if not _run(
-                ["docker", "ps", "-q", "--filter", "name=disco.1"], check=False
-            ).strip():
-                break
-            time.sleep(1)
+        _wait_for_daemon_stopped()
 
         _bootstrap_dqlite(state)
 
@@ -235,7 +229,9 @@ def _migrate(state: dict) -> None:
 
         if tunnel:
             _reattach_cloudflare_tunnel()
-    except Exception:
+    except BaseException:
+        # BaseException so an operator's Ctrl+C mid-migration still rolls
+        # back — by this point the daemon (and possibly Caddy) is gone.
         log.exception("Migration failed; rolling back to sqlite mode")
         _rollback(host_home=host_home, tunnel=tunnel, caddy_swapped=caddy_swapped,
                   marker_flipped=marker_flipped)
@@ -316,12 +312,12 @@ def _rollback(
     *, host_home: str, tunnel: bool, caddy_swapped: bool, marker_flipped: bool
 ) -> None:
     from disco.scripts.init import start_caddy_container, start_disco_daemon
+    from disco.utils import docker
 
     if marker_flipped:
         config.write_disco_mode("sqlite")
     # Everything below must resolve to sqlite mode.
-    os.environ["DISCO_MODE"] = "sqlite"
-    config.get_disco_mode.cache_clear()
+    config.pin_mode("sqlite")
 
     if caddy_swapped:
         print("Rollback: restoring the stock Caddy container")
@@ -330,11 +326,19 @@ def _rollback(
             # --resume restores the exact pre-migration config from the
             # untouched disco-caddy-config autosave volume.
             start_caddy_container(host_home, tunnel=tunnel)
+            if tunnel:
+                # With tunnel=True the container publishes no ports, so
+                # ingress depends on cloudflared reaching it again.
+                docker.add_network_to_container_sync(
+                    "disco-caddy", "disco-cloudflare-tunnel", alias="disco-server"
+                )
         except Exception:
             log.exception(
-                "Rollback: could not restart the Caddy container; restart it "
-                "manually (docker service rm disco-caddy, then re-run the old "
-                "disco-caddy container)"
+                "Rollback: could not fully restore the Caddy container; "
+                "restore it manually (docker service rm disco-caddy, re-run "
+                "the old disco-caddy container, and if using a Cloudflare "
+                "tunnel: docker network connect --alias disco-server "
+                "disco-cloudflare-tunnel disco-caddy)"
             )
     print("Rollback: restarting the disco daemon in sqlite mode")
     try:
@@ -442,6 +446,25 @@ def _wait_for_caddy_socket() -> None:
         except Exception:
             time.sleep(1)
     raise Exception("new Caddy did not become reachable over the admin socket")
+
+
+def _wait_for_daemon_stopped() -> None:
+    """Block until no disco task container is left running.
+
+    Exact-prefix match on container names ("disco.<slot>.<taskid>") rather
+    than a docker name filter, whose regex/substring semantics could match
+    unrelated containers. Raises after 120s: proceeding while the old
+    daemon can still write would silently lose data from the migration.
+    """
+    for _ in range(120):
+        names = _run(["docker", "ps", "--format", "{{.Names}}"]).splitlines()
+        if not any(name.startswith("disco.") for name in names):
+            return
+        time.sleep(1)
+    raise Exception(
+        "old disco daemon container did not stop; not copying the database "
+        "while it can still be written to"
+    )
 
 
 def _wait_for_daemon_running() -> None:

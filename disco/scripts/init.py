@@ -67,8 +67,7 @@ def main() -> None:
         config.write_disco_mode("sqlite")
     else:
         write_disco_mode_to_volume(image, "dqlite")
-        os.environ["DISCO_MODE"] = "dqlite"
-        config.get_disco_mode.cache_clear()
+        config.pin_mode("dqlite")
 
     if disco_mode == "dqlite":
         _init_dqlite_mode(
@@ -622,7 +621,7 @@ def _seed_initial_state(
 def init_database_script():
     # dqlite-mode one-shot (disco_init_db): runs on the disco-dqlite network
     # without the disco-data mount, so pin the mode explicitly.
-    os.environ["DISCO_MODE"] = "dqlite"
+    config.pin_mode("dqlite")
     disco_host = os.environ.get("DISCO_HOST")
     disco_advertise_addr = os.environ.get("DISCO_ADVERTISE_ADDR")
     host_home = os.environ.get("HOST_HOME")

@@ -47,6 +47,18 @@ def is_dqlite_mode() -> bool:
     return get_disco_mode() == "dqlite"
 
 
+def pin_mode(mode: DiscoMode) -> None:
+    """Force this process's mode, regardless of marker file or import order.
+
+    For one-shot containers that don't mount disco-data (dqlite tooling)
+    and for rollback paths that must flip mode mid-process. Clears the
+    get_disco_mode cache so the pin also wins if the mode was already
+    resolved earlier in the process.
+    """
+    os.environ["DISCO_MODE"] = mode
+    get_disco_mode.cache_clear()
+
+
 def write_disco_mode(mode: DiscoMode) -> None:
     with open(DISCO_MODE_FILE, "w", encoding="utf-8") as f:
         f.write(mode)

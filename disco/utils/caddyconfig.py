@@ -18,6 +18,7 @@ from typing import Awaitable, Callable
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
+from disco import config
 from disco.models.db import AsyncReadSession
 
 log = logging.getLogger(__name__)
@@ -33,6 +34,8 @@ async def get_config_version() -> int | None:
     Returns None when the config-sync tables don't exist yet (Caddy hasn't
     started) so callers can treat it as "nothing to wait for".
     """
+    if not config.is_dqlite_mode():
+        return None
     try:
         async with AsyncReadSession() as dbsession:
             result = await dbsession.execute(
@@ -50,6 +53,8 @@ async def get_config_bytes() -> bytes | None:
     Used by the edit gate to tell whether the local Caddy is current before
     Disco edits it.
     """
+    if not config.is_dqlite_mode():
+        return None
     try:
         async with AsyncReadSession() as dbsession:
             result = await dbsession.execute(
@@ -101,7 +106,12 @@ async def wait_for_convergence(
     Returns True on convergence; False on timeout (the caller should proceed and
     log: a wedged/dead instance must not freeze deploys). Also returns False if
     no new version ever appears (e.g. the edit was a no-op), which is harmless.
+
+    In sqlite mode there is a single Caddy and no config-sync tables — return
+    immediately so a caller missing its own mode guard can't burn the timeout.
     """
+    if not config.is_dqlite_mode():
+        return True
     deadline = time.monotonic() + timeout
 
     target: int | None = None

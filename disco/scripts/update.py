@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import pathlib
 import re
 import subprocess
 import uuid
@@ -62,7 +63,9 @@ def main() -> None:
     # new daemon's hourly cron once it's healthy. This file is for
     # manual operator inspection if something goes wrong.
     try:
-        pre = BACKUP_DIR / special_filename("pre-update-", datetime.now(timezone.utc))
+        pre = _persistent_backup_dir() / special_filename(
+            "pre-update-", datetime.now(timezone.utc)
+        )
         print(f"Taking pre-update backup at {pre}")
         make_local_backup_sync(pre)
     except Exception:
@@ -102,13 +105,30 @@ def main() -> None:
     # Post-update backup, local-only. Captures the state immediately after
     # all version-tasks have completed.
     try:
-        post = BACKUP_DIR / special_filename("post-update-", datetime.now(timezone.utc))
+        post = _persistent_backup_dir() / special_filename(
+            "post-update-", datetime.now(timezone.utc)
+        )
         print(f"Taking post-update backup at {post}")
         make_local_backup_sync(post)
     except Exception:
         log.exception("Post-update backup failed; update is otherwise complete")
     with Session.begin() as dbsession:
         save_done_updating(dbsession)
+
+
+def _persistent_backup_dir() -> pathlib.Path:
+    """Where pre/post-update backups survive this --rm container.
+
+    BACKUP_DIR when the host backups directory is actually mounted;
+    otherwise fall back to the disco-data volume — a pre-0.33 daemon
+    launches the update container without the backups mount, and a backup
+    written to the container's own filesystem would vanish with it.
+    """
+    if os.path.ismount(str(BACKUP_DIR)):
+        return BACKUP_DIR
+    fallback = pathlib.Path("/disco/data/backups")
+    log.info("Backups dir not mounted; writing update backups to %s", fallback)
+    return fallback
 
 
 def _run_cmd(args: list[str], timeout=600) -> str:

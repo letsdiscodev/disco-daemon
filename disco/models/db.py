@@ -49,7 +49,10 @@ _READ_ASYNC_CONNECT_ARGS = {"session_mode": "read_only"}
 #     sessions pin the write lock up front exactly like dqlite's
 #     session_mode="immediate". backup.py's consistent-snapshot copy
 #     relies on this invariant in both modes.
-_SQLITE_CONNECT_ARGS = {"check_same_thread": False}
+# The timeout matters with BEGIN IMMEDIATE: the hourly backup holds the
+# write lock for the whole copy, so concurrent writers must wait it out
+# instead of failing at pysqlite's 5s default.
+_SQLITE_CONNECT_ARGS = {"check_same_thread": False, "timeout": 30}
 
 
 def _enforce_query_only(dbapi_connection, connection_record):

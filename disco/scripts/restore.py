@@ -26,7 +26,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import os
 import sqlite3
 import subprocess
 import sys
@@ -34,6 +33,7 @@ import time
 from pathlib import Path
 
 import disco
+from disco import config
 from disco.utils.backup import BACKUP_DIR, replay_sqlite_file
 from disco.utils.dqlite import (
     dqlite_service_name,
@@ -54,7 +54,7 @@ CONFIRM_TOKEN = "RESTORE"
 def main() -> None:
     # This tool only exists in dqlite mode; it runs in a one-shot container
     # that doesn't mount disco-data, so pin the mode explicitly.
-    os.environ["DISCO_MODE"] = "dqlite"
+    config.pin_mode("dqlite")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     parser = argparse.ArgumentParser(

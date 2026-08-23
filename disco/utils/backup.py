@@ -313,44 +313,19 @@ async def replay_sqlite_file(path: pathlib.Path) -> None:
     Replays schema DDL, all rows, and the alembic_version row in a single
     transaction through the module-global engine. Used by disco_restore
     (backup file -> fresh dqlite) and disco_migrate_to_dqlite (live sqlite
-    file -> fresh dqlite).
+    file -> fresh dqlite). Statements stream straight from iterdump —
+    only its outer BEGIN/COMMIT markers are skipped (we control commit) —
+    so the whole dump is never buffered in memory; sources can be large
+    (api_key_usages grows with every authenticated request).
     """
     from sqlalchemy import text as sql_text
 
     src = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     try:
-        statements = list(src.iterdump())
+        async with AsyncSession.begin() as session:
+            for stmt in src.iterdump():
+                if _TRANSACTION_BOUNDARY_RE.match(stmt.strip()):
+                    continue
+                await session.execute(sql_text(stmt))
     finally:
         src.close()
-
-    # Strip iterdump's outer transaction markers — we control commit.
-    cleaned = [
-        s for s in statements if not _TRANSACTION_BOUNDARY_RE.match(s.strip())
-    ]
-
-    # Defensive reassembly check: if our naive split produced anything
-    # weird, fail loudly. iterdump output for disco's schema is one
-    # statement per line followed by ";\n" so this should always pass;
-    # if it doesn't, we'd want to upgrade to sqlparse before proceeding.
-    _verify_statements_reassemble(statements, cleaned)
-
-    async with AsyncSession.begin() as session:
-        for stmt in cleaned:
-            await session.execute(sql_text(stmt))
-
-
-def _verify_statements_reassemble(original: list[str], cleaned: list[str]) -> None:
-    """Confirm we only dropped transaction-boundary statements during cleanup.
-
-    If our naive splitter dropped any line that isn't a BEGIN/COMMIT,
-    refuse rather than silently lose data.
-    """
-    dropped = set(original) - set(cleaned)
-    for d in dropped:
-        if not _TRANSACTION_BOUNDARY_RE.match(d.strip()):
-            raise RuntimeError(
-                "iterdump produced a statement that doesn't look like a "
-                "transaction boundary but was filtered out. Source may "
-                "contain DDL not supported by the naive splitter "
-                "(triggers? multi-statement DDL?). Refusing to replay."
-            )
