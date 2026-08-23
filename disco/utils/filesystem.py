@@ -4,7 +4,10 @@ import os
 import shutil
 from pathlib import Path
 
+import aiofiles
 import aiofiles.os
+
+from disco import config
 
 log = logging.getLogger(__name__)
 
@@ -118,10 +121,15 @@ async def copy_static_site_src_to_deployment_folder(
     await loop.run_in_executor(None, copytree_sync)
 
 
-# Caddy TLS certs now live in dqlite (the caddy_data table managed by the Caddy
-# dqlite storage module), not on a local filesystem volume. Keys mirror Caddy's
-# certmagic layout relative to its storage root.
+# Caddy TLS certs: in dqlite mode they live in the caddy_data table (managed by
+# the Caddy dqlite storage module); in sqlite mode they live on the
+# disco-caddy-data volume, mounted in the daemon at /disco/caddy/data. Keys
+# mirror Caddy's certmagic layout relative to its storage root in both cases.
 _CERT_STORAGE_PREFIX = "certificates/acme-v02.api.letsencrypt.org-directory"
+
+# The official Caddy image sets XDG_DATA_HOME=/data, so certmagic's storage
+# root inside the disco-caddy-data volume is <volume>/caddy.
+_SQLITE_MODE_CADDY_STORAGE_ROOT = "/disco/caddy/data/caddy"
 
 
 def _cert_storage_key(domain: str, ext: str) -> str:
@@ -129,6 +137,11 @@ def _cert_storage_key(domain: str, ext: str) -> str:
 
 
 async def _get_caddy_data(key: str) -> str:
+    if not config.is_dqlite_mode():
+        path = f"{_SQLITE_MODE_CADDY_STORAGE_ROOT}/{key}"
+        async with aiofiles.open(path, "r", encoding="utf-8") as f:
+            return await f.read()
+
     from sqlalchemy import text
 
     from disco.models.db import AsyncReadSession
@@ -147,6 +160,13 @@ async def _get_caddy_data(key: str) -> str:
 
 
 def _set_caddy_data(key: str, value: str) -> None:
+    if not config.is_dqlite_mode():
+        path = f"{_SQLITE_MODE_CADDY_STORAGE_ROOT}/{key}"
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(value)
+        return
+
     import time
 
     from sqlalchemy import text

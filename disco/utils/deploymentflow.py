@@ -9,6 +9,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Mapping, Sequence
 
+from disco import config
 from disco.models import (
     Deployment,
     DeploymentEnvironmentVariable,
@@ -866,11 +867,15 @@ async def serve_new_deployment(
     log_output: Callable[[str], Awaitable[None]],
 ) -> None:
     assert new_deployment_info.disco_file is not None
-    # Version of the shared Caddy config before our edit. After editing the
-    # local Caddy, the config-sync module publishes a new version to dqlite; we
-    # wait for every live Caddy instance to apply it before the caller tears
-    # down the previous deployment (stop_prev_services).
-    version_before = await caddyconfig.get_config_version()
+    # dqlite mode only: version of the shared Caddy config before our edit.
+    # After editing the local Caddy, the config-sync module publishes a new
+    # version to dqlite; we wait for every live Caddy instance to apply it
+    # before the caller tears down the previous deployment
+    # (stop_prev_services). In sqlite mode there is a single Caddy and no
+    # caddy_config table — waiting would just burn the full timeout.
+    version_before = (
+        await caddyconfig.get_config_version() if config.is_dqlite_mode() else None
+    )
     edited = False
     if (
         "web" in new_deployment_info.disco_file.services
@@ -937,7 +942,7 @@ async def serve_new_deployment(
     # Wait for the Caddy edit to propagate to every live instance before the
     # caller removes the previous deployment, so no ingress node briefly routes
     # to a torn-down container. Best-effort: never let this block a deploy.
-    if edited:
+    if edited and config.is_dqlite_mode():
         try:
             await caddyconfig.wait_for_convergence(
                 version_before, log_output=log_output

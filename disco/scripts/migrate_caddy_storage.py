@@ -73,6 +73,9 @@ def migrate(src: str) -> int:
 
 
 def main() -> None:
+    # This tool only exists in dqlite mode; it runs in a one-shot container
+    # that doesn't mount disco-data, so pin the mode explicitly.
+    os.environ["DISCO_MODE"] = "dqlite"
     logging.basicConfig(level=logging.INFO)
     src = os.environ.get("CADDY_DATA_SRC", DEFAULT_SRC)
     print(f"Migrating Caddy filesystem storage from {src} into dqlite...")

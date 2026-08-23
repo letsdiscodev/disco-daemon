@@ -3,7 +3,7 @@ import logging
 from alembic import context
 from alembic.ddl.impl import DefaultImpl
 
-from disco.config import get_dqlite_url
+from disco.config import get_database_url
 from disco.models.meta import Base, DateTimeTzAware
 
 
@@ -25,7 +25,7 @@ def render_item(type_, obj, autogen_context):
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=get_dqlite_url(),
+        url=get_database_url(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},

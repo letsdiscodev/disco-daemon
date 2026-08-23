@@ -26,7 +26,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import re
+import os
 import sqlite3
 import subprocess
 import sys
@@ -34,8 +34,7 @@ import time
 from pathlib import Path
 
 import disco
-from disco.models.db import AsyncSession
-from disco.utils.backup import BACKUP_DIR
+from disco.utils.backup import BACKUP_DIR, replay_sqlite_file
 from disco.utils.dqlite import (
     dqlite_service_name,
     list_dqlite_services,
@@ -51,12 +50,11 @@ log = logging.getLogger(__name__)
 
 CONFIRM_TOKEN = "RESTORE"
 
-# iterdump emits these around the actual statements; the daemon's
-# outer transaction handles commit semantics so we strip them.
-_TRANSACTION_BOUNDARY_RE = re.compile(r"^(BEGIN(?:\s+TRANSACTION)?|COMMIT)\s*;?\s*$", re.I)
-
 
 def main() -> None:
+    # This tool only exists in dqlite mode; it runs in a one-shot container
+    # that doesn't mount disco-data, so pin the mode explicitly.
+    os.environ["DISCO_MODE"] = "dqlite"
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     parser = argparse.ArgumentParser(
@@ -231,7 +229,7 @@ async def _do_restore(
 
     # Phase 4: replay backup's SQL into the fresh dqlite.
     log.info("Replaying backup SQL into fresh cluster")
-    await _replay_backup(backup_path)
+    await replay_sqlite_file(backup_path)
 
     # Phase 5: strip BOOTSTRAP_ALLOWED so a future task restart doesn't
     # accidentally create a second single-node cluster. We only roll the
@@ -283,54 +281,6 @@ async def _do_restore(
 
     elapsed = int((time.monotonic() - started) * 1000)
     log.info("Restore finished in %dms", elapsed)
-
-
-async def _replay_backup(backup_path: Path) -> None:
-    """Open the backup's binary SQLite file and stream its iterdump
-    output through the live (now fresh) dqlite cluster."""
-    from sqlalchemy import text as sql_text
-
-    src = sqlite3.connect(f"file:{backup_path}?mode=ro", uri=True)
-    try:
-        statements = list(src.iterdump())
-    finally:
-        src.close()
-
-    # Strip iterdump's outer transaction markers — we control commit.
-    cleaned = [
-        s for s in statements
-        if not _TRANSACTION_BOUNDARY_RE.match(s.strip())
-    ]
-
-    # Defensive reassembly check: if our naive split produced anything
-    # weird, fail loudly. iterdump output for disco's schema is one
-    # statement per line followed by ";\n" so this should always pass;
-    # if it doesn't, we'd want to upgrade to sqlparse before proceeding.
-    _verify_statements_reassemble(statements, cleaned)
-
-    async with AsyncSession.begin() as session:
-        for stmt in cleaned:
-            await session.execute(sql_text(stmt))
-
-
-def _verify_statements_reassemble(original: list[str], cleaned: list[str]) -> None:
-    """Confirm we only dropped transaction-boundary statements during cleanup.
-
-    The previous version also had an "expected == rebuilt" round-trip check
-    that was logically always false (iterdump statements end with `;` not
-    `\\n`), so it always raised and restore never worked. The remaining
-    check is the load-bearing one: if our naive splitter dropped any line
-    that isn't a BEGIN/COMMIT, refuse rather than silently lose data.
-    """
-    dropped = set(original) - set(cleaned)
-    for d in dropped:
-        if not _TRANSACTION_BOUNDARY_RE.match(d.strip()):
-            raise RuntimeError(
-                "iterdump produced a statement that doesn't look like a "
-                "transaction boundary but was filtered out. Backup may "
-                "contain DDL not supported by the naive splitter "
-                "(triggers? multi-statement DDL?). Refusing to replay."
-            )
 
 
 if __name__ == "__main__":

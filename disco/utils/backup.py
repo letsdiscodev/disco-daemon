@@ -257,12 +257,15 @@ _periodic_backup_lock = asyncio.Lock()
 
 
 async def make_and_push_periodic_backup() -> None:
-    """Create a periodic backup on local disk and distribute to all managers.
+    """Create a periodic backup on local disk and distribute it (dqlite mode).
 
     On every call: writes /disco/backups/<UTC-ISO>Z.db, refreshes
-    latest.db, dispatches the global-job to fan the file out to every
-    manager. The receiving job also runs thinning on each node.
+    latest.db. In dqlite mode, additionally dispatches the global-job to
+    fan the file out to every manager; the receiving job also runs
+    thinning on each node. In sqlite mode (single daemon node), thinning
+    runs locally instead.
     """
+    from disco import config
     from disco.utils.backup_distribution import push_backup_to_all_managers
 
     async with _periodic_backup_lock:
@@ -271,7 +274,10 @@ async def make_and_push_periodic_backup() -> None:
         target = BACKUP_DIR / filename
         await make_local_backup(target)
         replace_latest(BACKUP_DIR / LATEST_FILENAME, target)
-        await push_backup_to_all_managers(filename, is_periodic=True)
+        if config.is_dqlite_mode():
+            await push_backup_to_all_managers(filename, is_periodic=True)
+        else:
+            thin(BACKUP_DIR, now)
 
 
 def make_local_backup_sync(target: pathlib.Path) -> None:
@@ -292,3 +298,59 @@ def make_local_backup_sync(target: pathlib.Path) -> None:
             await get_async_engine().dispose()
 
     asyncio.run(run())
+
+
+# iterdump emits these around the actual statements; the caller's outer
+# transaction handles commit semantics so we strip them.
+_TRANSACTION_BOUNDARY_RE = re.compile(
+    r"^(BEGIN(?:\s+TRANSACTION)?|COMMIT)\s*;?\s*$", re.I
+)
+
+
+async def replay_sqlite_file(path: pathlib.Path) -> None:
+    """Stream a SQLite file's iterdump output into the live database.
+
+    Replays schema DDL, all rows, and the alembic_version row in a single
+    transaction through the module-global engine. Used by disco_restore
+    (backup file -> fresh dqlite) and disco_migrate_to_dqlite (live sqlite
+    file -> fresh dqlite).
+    """
+    from sqlalchemy import text as sql_text
+
+    src = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        statements = list(src.iterdump())
+    finally:
+        src.close()
+
+    # Strip iterdump's outer transaction markers — we control commit.
+    cleaned = [
+        s for s in statements if not _TRANSACTION_BOUNDARY_RE.match(s.strip())
+    ]
+
+    # Defensive reassembly check: if our naive split produced anything
+    # weird, fail loudly. iterdump output for disco's schema is one
+    # statement per line followed by ";\n" so this should always pass;
+    # if it doesn't, we'd want to upgrade to sqlparse before proceeding.
+    _verify_statements_reassemble(statements, cleaned)
+
+    async with AsyncSession.begin() as session:
+        for stmt in cleaned:
+            await session.execute(sql_text(stmt))
+
+
+def _verify_statements_reassemble(original: list[str], cleaned: list[str]) -> None:
+    """Confirm we only dropped transaction-boundary statements during cleanup.
+
+    If our naive splitter dropped any line that isn't a BEGIN/COMMIT,
+    refuse rather than silently lose data.
+    """
+    dropped = set(original) - set(cleaned)
+    for d in dropped:
+        if not _TRANSACTION_BOUNDARY_RE.match(d.strip()):
+            raise RuntimeError(
+                "iterdump produced a statement that doesn't look like a "
+                "transaction boundary but was filtered out. Source may "
+                "contain DDL not supported by the naive splitter "
+                "(triggers? multi-statement DDL?). Refusing to replay."
+            )

@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import subprocess
+import time
 from datetime import datetime, timedelta, timezone
 
 from alembic import command
@@ -34,10 +35,12 @@ def main() -> None:
     host_home = os.environ.get("HOST_HOME")
     image = os.environ.get("DISCO_IMAGE")
     cloudflare_tunnel_token = os.environ.get("CLOUDFLARE_TUNNEL_TOKEN")
+    disco_mode = os.environ.get("DISCO_MODE", "sqlite")
     assert disco_host is not None
     assert disco_advertise_addr is not None
     assert host_home is not None
     assert image is not None
+    assert disco_mode in ("sqlite", "dqlite")
 
     create_caddy_socket_dir(host_home)
     create_projects_dir(host_home)
@@ -47,18 +50,85 @@ def main() -> None:
     create_docker_config(host_home)
     docker_swarm_init(disco_advertise_addr)
 
-    disco_name = generate_random_name_sync()
-    print(f"Generated disco-name for this node: {disco_name}")
-
     node_id = get_this_swarm_node_id()
-    label_swarm_node(node_id, f"disco-name={disco_name}")
     label_swarm_node(node_id, "disco-role=main")
 
     asyncio.run(docker.create_network("disco-main"))
     asyncio.run(docker.create_network("disco-logging"))
-    asyncio.run(docker.create_network("disco-dqlite"))
 
     docker_swarm_create_disco_encryption_key()
+
+    # Persist the mode to the disco-data volume before any DB access so
+    # every later component (this process included) resolves the same mode.
+    # The sqlite flow has the volume mounted (it writes the sqlite file
+    # in-process); the dqlite flow may not, so it goes through a one-shot
+    # container instead.
+    if disco_mode == "sqlite":
+        config.write_disco_mode("sqlite")
+    else:
+        write_disco_mode_to_volume(image, "dqlite")
+        os.environ["DISCO_MODE"] = "dqlite"
+        config.get_disco_mode.cache_clear()
+
+    if disco_mode == "dqlite":
+        _init_dqlite_mode(
+            node_id=node_id,
+            image=image,
+            disco_host=disco_host,
+            disco_advertise_addr=disco_advertise_addr,
+            host_home=host_home,
+            cloudflare_tunnel_token=cloudflare_tunnel_token,
+        )
+    else:
+        _init_sqlite_mode(
+            disco_host=disco_host,
+            disco_advertise_addr=disco_advertise_addr,
+            host_home=host_home,
+            image=image,
+            cloudflare_tunnel_token=cloudflare_tunnel_token,
+        )
+    if cloudflare_tunnel_token is not None:
+        print("Setting up Cloudflare tunnel")
+        setup_cloudflare_tunnel(cloudflare_tunnel_token)
+
+
+def _init_sqlite_mode(
+    disco_host: str,
+    disco_advertise_addr: str,
+    host_home: str,
+    image: str,
+    cloudflare_tunnel_token: str | None,
+) -> None:
+    from disco.utils.caddy import write_caddy_init_config
+
+    create_database()
+    print("Setting initial state in internal database")
+    _seed_initial_state(
+        disco_host=disco_host,
+        disco_advertise_addr=disco_advertise_addr,
+        host_home=host_home,
+        cloudflare_tunnel_token=cloudflare_tunnel_token,
+    )
+    print("Setting up Caddy web server")
+    write_caddy_init_config(disco_host, tunnel=cloudflare_tunnel_token is not None)
+    start_caddy_container(host_home, tunnel=cloudflare_tunnel_token is not None)
+    print("Setting up Disco")
+    start_disco_daemon(host_home, image)
+
+
+def _init_dqlite_mode(
+    node_id: str,
+    image: str,
+    disco_host: str,
+    disco_advertise_addr: str,
+    host_home: str,
+    cloudflare_tunnel_token: str | None,
+) -> None:
+    disco_name = generate_random_name_sync()
+    print(f"Generated disco-name for this node: {disco_name}")
+    label_swarm_node(node_id, f"disco-name={disco_name}")
+
+    asyncio.run(docker.create_network("disco-dqlite"))
 
     print("Starting dqlite cluster (bootstrap node)")
     start_first_dqlite_service_sync(disco_name)
@@ -79,16 +149,13 @@ def main() -> None:
         cloudflare_tunnel_token=cloudflare_tunnel_token,
     )
     print("Setting up Caddy web server")
-    start_caddy(
+    start_caddy_service(
         host_home,
         tunnel=cloudflare_tunnel_token is not None,
         caddy_image=config.get_caddy_image(),
     )
     print("Setting up Disco")
     start_disco_daemon(host_home, image)
-    if cloudflare_tunnel_token is not None:
-        print("Setting up Cloudflare tunnel")
-        setup_cloudflare_tunnel(cloudflare_tunnel_token)
 
 
 def _run_cmd(args: list[str], timeout=600) -> str:
@@ -187,8 +254,81 @@ def create_caddy_socket_dir(host_home: str) -> None:
     os.makedirs(f"/host{host_home}/disco/caddy-socket")
 
 
-def start_caddy(host_home: str, tunnel: bool, caddy_image: str) -> None:
-    """Run Caddy as a global Swarm service (one task per node) for HA ingress.
+def write_disco_mode_to_volume(image: str, mode: str) -> None:
+    # One-shot container write so this works no matter which mounts the
+    # installer gave the init container.
+    _run_cmd(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--mount",
+            "source=disco-data,target=/disco/data",
+            image,
+            "sh",
+            "-c",
+            f"echo {mode} > {config.DISCO_MODE_FILE}",
+        ]
+    )
+
+
+def start_caddy_container(host_home: str, tunnel: bool) -> None:
+    """sqlite mode: run stock Caddy as a plain container on this node.
+
+    TLS certs live on the disco-caddy-data volume and config persists via
+    Caddy's autosave on the disco-caddy-config volume; --resume makes the
+    autosave win over the initconfig once it exists.
+    """
+    more_args = []
+    if not tunnel:
+        more_args += [
+            "--publish",
+            "published=80,target=80,protocol=tcp",
+            "--publish",
+            "published=443,target=443,protocol=tcp",
+            "--publish",
+            "published=443,target=443,protocol=udp",
+        ]
+    _run_cmd(
+        [
+            "docker",
+            "run",
+            "--name",
+            "disco-caddy",
+            "--detach",
+            "--restart",
+            "always",
+            "--mount",
+            "source=disco-caddy-data,target=/data",
+            "--mount",
+            "source=disco-caddy-config,target=/config",
+            "--network",
+            "disco-main",
+            "--mount",
+            f"type=bind,source={host_home}/disco/caddy-socket,target=/disco/caddy-socket",
+            "--mount",
+            "source=disco-caddy-init-config,target=/initconfig",
+            "--mount",
+            f"type=bind,source={host_home}/disco/srv,target=/disco/srv",
+            "--log-driver",
+            "json-file",
+            "--log-opt",
+            "max-size=20m",
+            "--log-opt",
+            "max-file=5",
+            *more_args,
+            f"caddy:{config.CADDY_VERSION}",
+            "caddy",
+            "run",
+            "--resume",
+            "--config",
+            "/initconfig/config.json",
+        ]
+    )
+
+
+def start_caddy_service(host_home: str, tunnel: bool, caddy_image: str) -> None:
+    """dqlite mode: run Caddy as a global Swarm service (one task per node) for HA ingress.
 
     TLS certs and routing config live in dqlite (shared by all instances), so no
     cert/config volumes. Each task starts from the baked-in minimal bootstrap and
@@ -271,10 +411,39 @@ def create_docker_config(host_home: str) -> None:
         os.makedirs(f"/host{host_home}/.docker")
 
 
+def _resolve_caddy_container() -> str:
+    """Name/id of the local Caddy container to attach networks to.
+
+    sqlite mode: the plain container is named disco-caddy. dqlite mode: Caddy
+    is a global Swarm service, so the local task container has a generated
+    name — resolve it via docker ps. Note that an out-of-band network attach
+    to a service task does not survive the task being rescheduled; multi-node
+    tunnel semantics are still an open question for dqlite mode.
+    """
+    if not config.is_dqlite_mode():
+        return "disco-caddy"
+    for _ in range(30):
+        output = _run_cmd(
+            [
+                "docker",
+                "ps",
+                "-q",
+                "--filter",
+                "name=disco-caddy",
+                "--filter",
+                "status=running",
+            ]
+        ).strip()
+        if output:
+            return output.splitlines()[0]
+        time.sleep(1)
+    raise Exception("No running disco-caddy task container found")
+
+
 def setup_cloudflare_tunnel(cloudflare_tunnel_token: str) -> None:
     asyncio.run(docker.create_network("disco-cloudflare-tunnel"))
     docker.add_network_to_container_sync(
-        "disco-caddy", "disco-cloudflare-tunnel", alias="disco-server"
+        _resolve_caddy_container(), "disco-cloudflare-tunnel", alias="disco-server"
     )
     _run_cmd(
         [
@@ -304,6 +473,20 @@ def setup_cloudflare_tunnel(cloudflare_tunnel_token: str) -> None:
 
 
 def start_disco_daemon(host_home: str, image: str) -> None:
+    if config.is_dqlite_mode():
+        mode_args = [
+            "--network",
+            "disco-dqlite",
+        ]
+    else:
+        # Cert storage and Caddy's autosaved config live on volumes the
+        # daemon needs to read (project export) and update tasks rewrite.
+        mode_args = [
+            "--mount",
+            "source=disco-caddy-data,target=/disco/caddy/data",
+            "--mount",
+            "source=disco-caddy-config,target=/disco/caddy/config",
+        ]
     _run_cmd(
         [
             "docker",
@@ -315,8 +498,7 @@ def start_disco_daemon(host_home: str, image: str) -> None:
             "disco-main",
             "--network",
             "disco-logging",
-            "--network",
-            "disco-dqlite",
+            *mode_args,
             "--container-label",
             "disco.log.core=true",
             "--mount",
@@ -337,6 +519,9 @@ def start_disco_daemon(host_home: str, image: str) -> None:
             "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
             "--env",
             f"DISCO_IMAGE={image}",
+            "--env",
+            # Belt and braces on top of the disco-mode marker file.
+            f"DISCO_MODE={config.get_disco_mode()}",
             "--secret",
             "disco_encryption_key",
             "--constraint",
@@ -366,10 +551,6 @@ def init_database(
     cloudflare_tunnel_token: str | None,
 ) -> None:
     more_args = []
-    disco_host
-    disco_advertise_addr
-    host_home
-    cloudflare_tunnel_token
     if cloudflare_tunnel_token:
         more_args += [
             "--env",
@@ -381,11 +562,14 @@ def init_database(
             "run",
             "--rm",
             "--env",
+            "DISCO_MODE=dqlite",
+            "--env",
             f"DISCO_HOST={disco_host}",
             "--env",
             f"DISCO_ADVERTISE_ADDR={disco_advertise_addr}",
             "--env",
             f"HOST_HOME={host_home}",
+            *more_args,
             "--network",
             "disco-dqlite",
             "--mount",
@@ -403,22 +587,14 @@ def init_database(
     print(output)
 
 
-def init_database_script():
-    disco_host = os.environ.get("DISCO_HOST")
-    disco_advertise_addr = os.environ.get("DISCO_ADVERTISE_ADDR")
-    host_home = os.environ.get("HOST_HOME")
-    cloudflare_tunnel_token = os.environ.get("CLOUDFLARE_TUNNEL_TOKEN")
-    assert disco_host is not None
-    assert disco_advertise_addr is not None
-    assert host_home is not None
-
-    # Now that dqlite is ready, create the database
-    create_database()
-
-    # Import Session here after dqlite is ready
+def _seed_initial_state(
+    disco_host: str,
+    disco_advertise_addr: str,
+    host_home: str,
+    cloudflare_tunnel_token: str | None,
+) -> None:
     from disco.models.db import Session
 
-    print("Setting initial state in internal database")
     with Session.begin() as dbsession:
         keyvalues.set_value_sync(
             dbsession=dbsession, key="DISCO_VERSION", value=disco.__version__
@@ -441,3 +617,27 @@ def init_database_script():
             )
         api_key = create_api_key_sync(dbsession=dbsession, name="First API key")
         print("Created API key:", api_key.id)
+
+
+def init_database_script():
+    # dqlite-mode one-shot (disco_init_db): runs on the disco-dqlite network
+    # without the disco-data mount, so pin the mode explicitly.
+    os.environ["DISCO_MODE"] = "dqlite"
+    disco_host = os.environ.get("DISCO_HOST")
+    disco_advertise_addr = os.environ.get("DISCO_ADVERTISE_ADDR")
+    host_home = os.environ.get("HOST_HOME")
+    cloudflare_tunnel_token = os.environ.get("CLOUDFLARE_TUNNEL_TOKEN")
+    assert disco_host is not None
+    assert disco_advertise_addr is not None
+    assert host_home is not None
+
+    # Now that dqlite is ready, create the database
+    create_database()
+
+    print("Setting initial state in internal database")
+    _seed_initial_state(
+        disco_host=disco_host,
+        disco_advertise_addr=disco_advertise_addr,
+        host_home=host_home,
+        cloudflare_tunnel_token=cloudflare_tunnel_token,
+    )

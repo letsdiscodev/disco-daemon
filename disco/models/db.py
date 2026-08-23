@@ -1,11 +1,11 @@
 import logging
 from typing import TYPE_CHECKING
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-from disco.config import get_dqlite_async_url, get_dqlite_url
+from disco import config
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine
@@ -42,6 +42,36 @@ _READ_SYNC_CONNECT_ARGS = {
 _WRITE_ASYNC_CONNECT_ARGS = {"session_mode": "immediate"}
 _READ_ASYNC_CONNECT_ARGS = {"session_mode": "read_only"}
 
+# In sqlite mode (stdlib sqlite3 / aiosqlite) there is no session_mode
+# connect arg; the equivalent behaviors are wired up as engine events:
+#   - read engines: PRAGMA query_only=1 on connect (same as main always did)
+#   - write engines: BEGIN IMMEDIATE at transaction start, so writer
+#     sessions pin the write lock up front exactly like dqlite's
+#     session_mode="immediate". backup.py's consistent-snapshot copy
+#     relies on this invariant in both modes.
+_SQLITE_CONNECT_ARGS = {"check_same_thread": False}
+
+
+def _enforce_query_only(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA query_only=1")
+    cursor.close()
+
+
+def _sqlite_connect_autocommit(dbapi_connection, connection_record):
+    # Disable pysqlite's implicit transaction handling so the "begin"
+    # event below fully controls when and how transactions start.
+    dbapi_connection.isolation_level = None
+
+
+def _sqlite_begin_immediate(conn):
+    conn.exec_driver_sql("BEGIN IMMEDIATE")
+
+
+def _listen_sqlite_write(sync_engine) -> None:
+    event.listen(sync_engine, "connect", _sqlite_connect_autocommit)
+    event.listen(sync_engine, "begin", _sqlite_begin_immediate)
+
 _engine: "Engine | None" = None
 _async_engine: "AsyncEngine | None" = None
 _read_engine: "Engine | None" = None
@@ -55,36 +85,64 @@ _AsyncReadSession: async_sessionmaker | None = None
 def get_engine() -> "Engine":
     global _engine
     if _engine is None:
-        _engine = create_engine(
-            get_dqlite_url(), connect_args=_WRITE_SYNC_CONNECT_ARGS
-        )
+        if config.is_dqlite_mode():
+            _engine = create_engine(
+                config.get_database_url(), connect_args=_WRITE_SYNC_CONNECT_ARGS
+            )
+        else:
+            _engine = create_engine(
+                config.get_database_url(), connect_args=_SQLITE_CONNECT_ARGS
+            )
+            _listen_sqlite_write(_engine)
     return _engine
 
 
 def get_async_engine() -> "AsyncEngine":
     global _async_engine
     if _async_engine is None:
-        _async_engine = create_async_engine(
-            get_dqlite_async_url(), connect_args=_WRITE_ASYNC_CONNECT_ARGS
-        )
+        if config.is_dqlite_mode():
+            _async_engine = create_async_engine(
+                config.get_database_async_url(),
+                connect_args=_WRITE_ASYNC_CONNECT_ARGS,
+            )
+        else:
+            _async_engine = create_async_engine(
+                config.get_database_async_url(), connect_args=_SQLITE_CONNECT_ARGS
+            )
+            _listen_sqlite_write(_async_engine.sync_engine)
     return _async_engine
 
 
 def get_read_engine() -> "Engine":
     global _read_engine
     if _read_engine is None:
-        _read_engine = create_engine(
-            get_dqlite_url(), connect_args=_READ_SYNC_CONNECT_ARGS
-        )
+        if config.is_dqlite_mode():
+            _read_engine = create_engine(
+                config.get_database_url(), connect_args=_READ_SYNC_CONNECT_ARGS
+            )
+        else:
+            _read_engine = create_engine(
+                config.get_database_url(), connect_args=_SQLITE_CONNECT_ARGS
+            )
+            event.listen(_read_engine, "connect", _enforce_query_only)
     return _read_engine
 
 
 def get_async_read_engine() -> "AsyncEngine":
     global _async_read_engine
     if _async_read_engine is None:
-        _async_read_engine = create_async_engine(
-            get_dqlite_async_url(), connect_args=_READ_ASYNC_CONNECT_ARGS
-        )
+        if config.is_dqlite_mode():
+            _async_read_engine = create_async_engine(
+                config.get_database_async_url(),
+                connect_args=_READ_ASYNC_CONNECT_ARGS,
+            )
+        else:
+            _async_read_engine = create_async_engine(
+                config.get_database_async_url(), connect_args=_SQLITE_CONNECT_ARGS
+            )
+            event.listen(
+                _async_read_engine.sync_engine, "connect", _enforce_query_only
+            )
     return _async_read_engine
 
 

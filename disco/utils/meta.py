@@ -1,9 +1,11 @@
 import asyncio
 import logging
+import os
 
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
+from disco import config
 from disco.models import ApiKey
 from disco.utils import caddy, docker, keyvalues
 from disco.utils.subprocess import decode_text
@@ -22,13 +24,22 @@ async def update_disco(
     if pull:
         await docker.pull(image)
     # The update script (disco_update) takes pre/post-upgrade backups, so
-    # the container needs to (a) reach dqlite over the disco-dqlite overlay
-    # and (b) write to the host-side backups directory the daemon also
-    # mounts. Without these, the backups silently fail (the script catches
-    # exceptions) and the update goes through with no restorable rollback
-    # point.
+    # the container needs to write to the host-side backups directory the
+    # daemon also mounts — and in dqlite mode, to reach dqlite over the
+    # disco-dqlite overlay. Without these, the backups silently fail (the
+    # script catches exceptions) and the update goes through with no
+    # restorable rollback point. The disco-data mount is also how the
+    # update container reads the disco-mode marker file.
     host_home = await keyvalues.get_value_str(dbsession, "HOST_HOME")
     assert host_home is not None
+    more_args = []
+    if config.is_dqlite_mode():
+        more_args += ["--network", "disco-dqlite"]
+    caddy_image_override = os.environ.get("CADDY_IMAGE")
+    if caddy_image_override is not None:
+        # Propagate the tester/private-registry Caddy image override into the
+        # update container, whose version-tasks may (re)start Caddy.
+        more_args += ["--env", f"CADDY_IMAGE={caddy_image_override}"]
     await _run_cmd(
         [
             "docker",
@@ -37,10 +48,13 @@ async def update_disco(
             "--detach",
             "--label",
             "disco.log.core=true",
-            "--network",
-            "disco-dqlite",
+            *more_args,
             "--env",
             f"DISCO_IMAGE={image}",
+            "--env",
+            # Belt and braces on top of the disco-mode marker file (which the
+            # update container can also read via the disco-data mount).
+            f"DISCO_MODE={config.get_disco_mode()}",
             "--mount",
             "source=disco-data,target=/disco/data",
             "--mount",

@@ -40,14 +40,17 @@ class DiscoCron(Cron):
 
 
 async def cron_minute() -> None:
-    from disco.utils.swarmreconciler import reconcile_dqlite_services
+    from disco import config
     from disco.utils.tunnels import stop_expired_tunnels
 
     log.info("Disco minute cron")
     await stop_expired_tunnels()
-    # Periodic safety net: catch any state drift the event watcher missed
-    # (stream disconnects, daemon restart races, etc.). Idempotent.
-    await reconcile_dqlite_services()
+    if config.is_dqlite_mode():
+        from disco.utils.swarmreconciler import reconcile_dqlite_services
+
+        # Periodic safety net: catch any state drift the event watcher missed
+        # (stream disconnects, daemon restart races, etc.). Idempotent.
+        await reconcile_dqlite_services()
 
 
 async def cron_hour() -> None:

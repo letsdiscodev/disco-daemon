@@ -72,6 +72,45 @@ disco init root@disco.example.com
 
 From there, the CLI will guide you through connecting your GitHub account and deploying your first project.
 
+## Storage modes: sqlite (default) and dqlite
+
+The daemon runs in one of two modes, recorded in the `disco-mode` marker
+file on the `disco-data` volume (overridable with the `DISCO_MODE` env var):
+
+*   **sqlite** (default): the classic single-node stack — internal state in a
+    local SQLite file, stock Caddy running as a container with certificates
+    and config on local volumes.
+*   **dqlite**: a highly-available stack — internal state in a
+    [dqlite](https://dqlite.io) cluster (one node service per Swarm node),
+    Caddy running as a global Swarm service on every node with certificates
+    and config stored in dqlite, plus automatic backups distributed to every
+    manager and quorum-recovery tooling.
+
+Fresh installs are sqlite unless `DISCO_MODE=dqlite` is passed to
+`disco_init`. An existing sqlite install can be migrated in place with the
+one-shot container documented in
+[`disco/scripts/migrate_to_dqlite.py`](disco/scripts/migrate_to_dqlite.py)
+(run over SSH on the server):
+
+```bash
+sudo docker run --rm -it \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    --mount source=disco-data,target=/disco/data \
+    --mount source=disco-caddy-data,target=/old-caddy-data,readonly \
+    --mount type=bind,source=$HOST_HOME/disco/backups,target=/disco/backups \
+    --mount type=bind,source=$HOST_HOME/disco/caddy-socket,target=/disco/caddy-socket \
+    letsdiscodev/daemon:<version> \
+    disco_migrate_to_dqlite
+```
+
+The migration copies the database into dqlite, migrates Caddy's TLS
+certificates and live config, swaps Caddy (a few seconds of ingress
+interruption), and restarts the daemon in dqlite mode. The sqlite file and
+the old Caddy volumes are never modified — they remain as a manual rollback
+path, and a safety copy of the database is written to
+`$HOST_HOME/disco/backups/` first. There is no automated dqlite→sqlite
+migration.
+
 ## Development and Contribution
 
 Interested in contributing to the Disco Daemon? That's great!

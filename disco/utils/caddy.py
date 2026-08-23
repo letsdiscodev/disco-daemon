@@ -372,8 +372,31 @@ async def update_disco_host(disco_host: str) -> None:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
 
+def add_dqlite_config_fragments(config: dict[str, Any]) -> dict[str, Any]:
+    """Graft the dqlite-mode keys onto a Caddy config (in place; returned).
+
+    Used to turn any config that runs on stock Caddy into one for the
+    dqlite-backed Caddy: the migration from sqlite mode applies this to the
+    captured live config so project routes survive verbatim.
+    """
+    # The dqlite caddy_config row is the source of truth, not Caddy's
+    # filesystem autosave.
+    config.setdefault("admin", {})["config"] = {"persist": False}
+    # TLS certs/keys live in dqlite (shared across all Caddy instances), not
+    # on a local filesystem volume.
+    config["storage"] = {"module": "dqlite"}
+    # Keeps every Caddy instance's config in sync via dqlite: the instance
+    # Disco edits publishes the running config; the others poll and adopt it.
+    # dqlite node addresses come from DISCO_DQLITE_NODES.
+    config.setdefault("apps", {})["dqlite_config_sync"] = {
+        "admin_endpoint": "unix//disco/caddy-socket/caddy.sock",
+        "admin_origin": "disco-caddy",
+    }
+    return config
+
+
 def build_caddy_base_config(disco_host: str, tunnel: bool) -> dict[str, Any]:
-    """Build the full base Caddy config.
+    """Build the full base Caddy config for dqlite mode.
 
     Includes the admin unix socket (only Disco, sharing the socket dir, can edit
     config — projects on disco-main cannot), dqlite storage, the config-sync app,
@@ -381,26 +404,30 @@ def build_caddy_base_config(disco_host: str, tunnel: bool) -> dict[str, Any]:
     admin socket on startup (``ensure_base_config``); the config-sync module then
     publishes it to dqlite so every Caddy instance adopts it.
     """
+    return add_dqlite_config_fragments(_build_base_config(disco_host, tunnel))
+
+
+def write_caddy_init_config(disco_host: str, tunnel: bool) -> None:
+    """sqlite mode: write the initial config for the stock Caddy container.
+
+    We write the initial config directly to the config file (initconfig volume)
+    so that Caddy listens to the unix socket instead of a regular port. We use a
+    unix socket because that's the only way at the moment to let only Disco
+    update the config using the endpoints. Otherwise, projects could read/write
+    the config.
+    """
+    with open("/initconfig/config.json", "w", encoding="utf-8") as f:
+        json.dump(_build_base_config(disco_host, tunnel), f)
+
+
+def _build_base_config(disco_host: str, tunnel: bool) -> dict[str, Any]:
     return {
         "admin": {
             "enforce_origin": False,
             "listen": "unix//disco/caddy-socket/caddy.sock",
             "origins": ["disco-caddy"],
-            # The dqlite caddy_config row is the source of truth, not Caddy's
-            # filesystem autosave.
-            "config": {"persist": False},
         },
-        # TLS certs/keys live in dqlite (shared across all Caddy instances), not
-        # on a local filesystem volume.
-        "storage": {"module": "dqlite"},
         "apps": {
-            # Keeps every Caddy instance's config in sync via dqlite: the
-            # instance Disco edits publishes the running config; the others poll
-            # and adopt it. dqlite node addresses come from DISCO_DQLITE_NODES.
-            "dqlite_config_sync": {
-                "admin_endpoint": "unix//disco/caddy-socket/caddy.sock",
-                "admin_origin": "disco-caddy",
-            },
             "http": {
                 "servers": {
                     "disco": {

@@ -11,6 +11,7 @@ from pydantic_core import InitErrorDetails, PydanticCustomError
 from sse_starlette import EventSourceResponse, ServerSentEvent
 
 import disco
+from disco import config
 from disco.auth import get_api_key_wo_tx
 from disco.models.db import AsyncReadSession, AsyncSession
 from disco.utils import docker, keyvalues
@@ -34,6 +35,7 @@ async def meta_get(
         assert api_key is not None
         return {
             "version": disco.__version__,
+            "mode": config.get_disco_mode(),
             "discoHost": await keyvalues.get_value(dbsession, "DISCO_HOST"),
             "registry": await keyvalues.get_value(dbsession, "REGISTRY"),
             # registryHost for backward compat, remove after 2027-02-01

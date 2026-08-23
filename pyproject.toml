@@ -17,6 +17,7 @@ disco_set_core_logging = "disco.scripts.setcorelogging:main"
 disco_leave_swarm = "disco.scripts.leave_swarm:main"
 disco_pull_backup = "disco.scripts.pull_backup:main"
 disco_restore = "disco.scripts.restore:main"
+disco_migrate_to_dqlite = "disco.scripts.migrate_to_dqlite:main"
 disco_migrate_caddy_storage = "disco.scripts.migrate_caddy_storage:main"
 
 [tool.ruff.lint]

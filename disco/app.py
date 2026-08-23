@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from disco import config
 from disco.endpoints import (
     apikeyinvites,
     apikeys,
@@ -52,28 +53,35 @@ async def lifespan(app: FastAPI):
     loop = asyncio.get_running_loop()
     async_worker.set_loop(loop)
     worker_task = loop.create_task(async_worker.work())
-    swarm_watcher_task = loop.create_task(watch_swarm_events_forever())
-    backup_listener_task = loop.create_task(watch_for_apikey_events_forever())
-    # Seed the base Caddy config (disco_host route etc.) into the local Caddy if
-    # absent; the config-sync module then publishes it to dqlite for all
-    # instances. Idempotent and best-effort.
-    async with AsyncReadSession() as dbsession:
-        disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
-        tunnel_token = await keyvalues.get_value(dbsession, "CLOUDFLARE_TUNNEL_TOKEN")
-    if disco_host is not None:
-        await caddy.ensure_base_config(disco_host, tunnel=tunnel_token is not None)
+    dqlite_tasks: list[asyncio.Task] = []
+    if config.is_dqlite_mode():
+        dqlite_tasks.append(loop.create_task(watch_swarm_events_forever()))
+        dqlite_tasks.append(loop.create_task(watch_for_apikey_events_forever()))
+        # Seed the base Caddy config (disco_host route etc.) into the local
+        # Caddy if absent; the config-sync module then publishes it to dqlite
+        # for all instances. Idempotent and best-effort. (In sqlite mode the
+        # stock Caddy container gets its config from the initconfig volume +
+        # autosave instead.)
+        async with AsyncReadSession() as dbsession:
+            disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
+            tunnel_token = await keyvalues.get_value(
+                dbsession, "CLOUDFLARE_TUNNEL_TOKEN"
+            )
+        if disco_host is not None:
+            await caddy.ensure_base_config(disco_host, tunnel=tunnel_token is not None)
     await cleanup_deployments_on_disco_boot()
     await enqueue_deployments_on_disco_boot()
-    # Clean up any backup-push global-job services left over from a
-    # previous daemon process (crashed mid-push, etc.). Must run before
-    # any push trigger fires.
-    await cleanup_orphaned_push_jobs()
+    if config.is_dqlite_mode():
+        # Clean up any backup-push global-job services left over from a
+        # previous daemon process (crashed mid-push, etc.). Must run before
+        # any push trigger fires.
+        await cleanup_orphaned_push_jobs()
     yield
     async_worker.stop()
-    swarm_watcher_task.cancel()
-    backup_listener_task.cancel()
+    for task in dqlite_tasks:
+        task.cancel()
     await worker_task
-    for task in (swarm_watcher_task, backup_listener_task):
+    for task in dqlite_tasks:
         try:
             await task
         except asyncio.CancelledError:
@@ -87,11 +95,12 @@ app.include_router(apikeys.router)
 app.include_router(cgi.router)
 app.include_router(corsorigins.router)
 app.include_router(deployments.router)
-app.include_router(dqlite_admin.router)
 app.include_router(envvariables.router)
 app.include_router(events.router)
 app.include_router(githubapps.router)
-app.include_router(internal_backups.router)
+if config.is_dqlite_mode():
+    app.include_router(dqlite_admin.router)
+    app.include_router(internal_backups.router)
 app.include_router(logs.router)
 app.include_router(meta.router)
 app.include_router(nodes.router)

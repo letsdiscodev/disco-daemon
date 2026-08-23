@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from disco import config
 from disco.auth import get_api_key_wo_tx
 from disco.models.db import AsyncReadSession
 from disco.utils import docker, keyvalues
@@ -16,6 +17,7 @@ from disco.utils.dqlite import (
     dqlite_bind_address,
     remove_dqlite_service,
 )
+from disco.utils.randomname import generate_random_name
 from disco.utils.swarmreconciler import reconcile_dqlite_services
 
 log = logging.getLogger(__name__)
@@ -44,12 +46,21 @@ async def get_node_list():
     are unreachable — we read everything from the manager's local Swarm
     raft state via `docker node inspect`, not from the nodes themselves.
 
-    The new disco-name assignment (for nodes that don't yet have a label)
-    and per-node dqlite service creation are owned by the reconciler now,
-    not this endpoint. We just describe what's there.
+    In dqlite mode, new disco-name assignment (for nodes that don't yet
+    have a label) and per-node dqlite service creation are owned by the
+    reconciler, not this endpoint — we just describe what's there. In
+    sqlite mode there is no reconciler, so this endpoint assigns names
+    to unlabeled nodes inline (as it always did).
     """
     node_ids = await docker.get_node_list()
     nodes = await docker.get_node_details(node_ids)
+    if not config.is_dqlite_mode():
+        for node in nodes:
+            if "disco-name" not in node.labels:
+                node.labels["disco-name"] = await generate_random_name()
+                await docker.set_node_label(
+                    node_id=node.id, key="disco-name", value=node.labels["disco-name"]
+                )
     return {
         "nodes": [
             {
@@ -99,15 +110,18 @@ async def node_delete(node_name: str):
         raise HTTPException(422, "Can't remove main node")
 
     node_is_down = target.state in ("down", "disconnected", "unknown")
-    # Hold the reconciler lock through the mutating section so a periodic
-    # reconcile can't race with us (e.g. recreating the dqlite service
-    # we're in the middle of tearing down).
-    async with reconciler_lock:
-        await _do_node_delete(target, node_name, node_is_down)
+    if config.is_dqlite_mode():
+        # Hold the reconciler lock through the mutating section so a periodic
+        # reconcile can't race with us (e.g. recreating the dqlite service
+        # we're in the middle of tearing down).
+        async with reconciler_lock:
+            await _do_node_delete(target, node_name, node_is_down)
 
-    # Final reconciler pass: removes the per-node dqlite service if it's
-    # still around and ensures cluster .remove was called (idempotent).
-    await reconcile_dqlite_services()
+        # Final reconciler pass: removes the per-node dqlite service if it's
+        # still around and ensures cluster .remove was called (idempotent).
+        await reconcile_dqlite_services()
+    else:
+        await _do_node_delete(target, node_name, node_is_down)
     return {}
 
 
@@ -116,20 +130,21 @@ async def _do_node_delete(target, node_name: str, node_is_down: bool) -> None:
         log.info(
             "Node %s is %s; using forced removal path", node_name, target.state
         )
-        # Try to evict the dqlite address proactively before tearing the
-        # service down — cluster_remove uses a local container so it
-        # doesn't need the dead node to be reachable. If our local
-        # container is itself momentarily down (e.g. mid-restart),
-        # queue the address for the reconciler to retry; without that,
-        # the phantom voter would persist indefinitely because once the
-        # service is removed the reconciler can no longer detect it.
-        address = dqlite_bind_address(node_name)
-        if not await cluster_remove(address):
-            pending_cluster_removes.add(address)
-            log.warning(
-                "cluster_remove(%s) deferred; reconciler will retry", address
-            )
-        await remove_dqlite_service(node_name)
+        if config.is_dqlite_mode():
+            # Try to evict the dqlite address proactively before tearing the
+            # service down — cluster_remove uses a local container so it
+            # doesn't need the dead node to be reachable. If our local
+            # container is itself momentarily down (e.g. mid-restart),
+            # queue the address for the reconciler to retry; without that,
+            # the phantom voter would persist indefinitely because once the
+            # service is removed the reconciler can no longer detect it.
+            address = dqlite_bind_address(node_name)
+            if not await cluster_remove(address):
+                pending_cluster_removes.add(address)
+                log.warning(
+                    "cluster_remove(%s) deferred; reconciler will retry", address
+                )
+            await remove_dqlite_service(node_name)
         try:
             await docker.remove_node(node_id=target.id, force=True)
         except Exception:
