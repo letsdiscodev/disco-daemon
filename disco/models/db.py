@@ -179,18 +179,3 @@ Session = _LazySessionMaker(get_session_factory)
 AsyncSession = _LazySessionMaker(get_async_session_factory)
 ReadSession = _LazySessionMaker(get_read_session_factory)
 AsyncReadSession = _LazySessionMaker(get_async_read_session_factory)
-
-
-class _LazyEngine:
-    def __init__(self, engine_getter):
-        self._engine_getter = engine_getter
-        self._engine = None
-
-    def __getattr__(self, name):
-        if self._engine is None:
-            self._engine = self._engine_getter()
-        return getattr(self._engine, name)
-
-
-engine = _LazyEngine(get_engine)
-read_engine = _LazyEngine(get_read_engine)

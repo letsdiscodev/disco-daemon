@@ -7,7 +7,6 @@ import re
 import shutil
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
-from typing import Iterable
 
 from sqlalchemy.dialects import sqlite as sqlite_dialect_module
 from sqlalchemy.schema import CreateIndex, CreateTable
@@ -184,14 +183,6 @@ def thin(backup_dir: pathlib.Path, now: datetime) -> list[pathlib.Path]:
     return deleted
 
 
-def list_backups(backup_dir: pathlib.Path) -> Iterable[pathlib.Path]:
-    if not backup_dir.exists():
-        return
-    for f in sorted(backup_dir.iterdir()):
-        if f.is_file() and f.suffix == ".db":
-            yield f
-
-
 # The hourly cron and the API-key listener would otherwise race on latest.db.
 _periodic_backup_lock = asyncio.Lock()
 
@@ -224,6 +215,17 @@ def make_local_backup_sync(target: pathlib.Path) -> None:
             await get_async_engine().dispose()
 
     asyncio.run(run())
+
+
+def read_keyvalue_from_sqlite_file(path: pathlib.Path, key: str) -> str | None:
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        row = conn.execute(
+            "SELECT value FROM key_values WHERE key=?", (key,)
+        ).fetchone()
+    finally:
+        conn.close()
+    return row[0] if row else None
 
 
 # iterdump's own BEGIN/COMMIT; the session transaction handles commit.

@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from disco.utils.backup import BACKUP_DIR
-from disco.utils.backup_tokens import backup_tokens
+from disco.utils.backup_distribution import backup_tokens
 
 log = logging.getLogger(__name__)
 

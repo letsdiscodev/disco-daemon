@@ -32,14 +32,30 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, NamedTuple
 
 import disco
 from disco import config
-from disco.utils.backup import BACKUP_DIR, replay_sqlite_file
+from disco.utils.backup import (
+    BACKUP_DIR,
+    read_keyvalue_from_sqlite_file,
+    replay_sqlite_file,
+)
+from disco.utils.dqlite import list_dqlite_services
 
 log = logging.getLogger(__name__)
 
 CONFIRM_TOKEN = "MIGRATE"
+
+
+class Preflight(NamedTuple):
+    disco_version: str
+    disco_host: str
+    host_home: str
+    tunnel_token: str | None
+    node_id: str
+    disco_name: str
+    caddy_config: dict[str, Any]
 
 SQLITE_DB_PATH = Path("/disco/data/disco.sqlite3")
 OLD_CADDY_DATA_MOUNT = Path("/old-caddy-data")
@@ -64,9 +80,9 @@ def main() -> None:
 
     print()
     print("Migration plan")
-    print(f"  Disco version:  {state['disco_version']}")
-    print(f"  Disco host:     {state['disco_host']}")
-    print(f"  Node:           {state['disco_name'] or '(will be named)'}")
+    print(f"  Disco version:  {state.disco_version}")
+    print(f"  Disco host:     {state.disco_host}")
+    print(f"  Node:           {state.disco_name or '(will be named)'}")
     print("  sqlite file, disco-caddy-data and disco-caddy-config volumes")
     print("  are left untouched.")
     print()
@@ -88,7 +104,7 @@ def main() -> None:
     print("Migration complete; disco is running in dqlite mode.")
 
 
-def _preflight() -> dict:
+def _preflight() -> Preflight:
     from disco.utils import caddy
 
     # Read the marker file directly; pin_mode() hides the real mode.
@@ -110,23 +126,27 @@ def _preflight() -> dict:
     if not BACKUP_DIR.is_dir():
         _fail(f"{BACKUP_DIR} not mounted; mount $HOST_HOME/disco/backups there")
 
-    values = _read_sqlite_keyvalues(
-        ["DISCO_VERSION", "DISCO_HOST", "HOST_HOME", "CLOUDFLARE_TUNNEL_TOKEN"]
-    )
-    if values["DISCO_VERSION"] != disco.__version__:
+    disco_version = _read_keyvalue("DISCO_VERSION")
+    disco_host = _read_keyvalue("DISCO_HOST")
+    host_home = _read_keyvalue("HOST_HOME")
+    tunnel_token = _read_keyvalue("CLOUDFLARE_TUNNEL_TOKEN")
+    if disco_version != disco.__version__:
         _fail(
-            f"installed disco version is {values['DISCO_VERSION']!r} but this "
-            f"image is {disco.__version__!r}; run 'disco update' first, then "
-            "migrate with the matching image"
+            f"installed disco version is {disco_version!r} but this image is "
+            f"{disco.__version__!r}; run 'disco update' first, then migrate "
+            "with the matching image"
         )
-    if values["DISCO_HOST"] is None or values["HOST_HOME"] is None:
+    if disco_host is None or host_home is None:
         _fail("DISCO_HOST/HOST_HOME missing from the database")
+    assert disco_version is not None
+    assert disco_host is not None
+    assert host_home is not None
 
     node_id, disco_name, is_main = _inspect_self_node()
     if not is_main:
         _fail("this node is not the disco main node (disco-role=main)")
 
-    existing = asyncio.run(_list_dqlite_services())
+    existing = asyncio.run(list_dqlite_services())
     if existing:
         _fail(
             f"dqlite services already exist ({', '.join(existing)}); remove "
@@ -149,23 +169,23 @@ def _preflight() -> dict:
         _fail(f"could not read the live Caddy config over the admin socket: {exc}")
     assert caddy_config is not None
 
-    return {
-        "disco_version": values["DISCO_VERSION"],
-        "disco_host": values["DISCO_HOST"],
-        "host_home": values["HOST_HOME"],
-        "tunnel_token": values["CLOUDFLARE_TUNNEL_TOKEN"],
-        "node_id": node_id,
-        "disco_name": disco_name,
-        "caddy_config": caddy_config,
-    }
+    return Preflight(
+        disco_version=disco_version,
+        disco_host=disco_host,
+        host_home=host_home,
+        tunnel_token=tunnel_token,
+        node_id=node_id,
+        disco_name=disco_name,
+        caddy_config=caddy_config,
+    )
 
 
-def _migrate(state: dict) -> None:
+def _migrate(state: Preflight) -> None:
     from disco.scripts.init import start_disco_daemon
     from disco.scripts.migrate_caddy_storage import migrate as migrate_caddy_data
 
-    host_home = state["host_home"]
-    tunnel = state["tunnel_token"] is not None
+    host_home = state.host_home
+    tunnel = state.tunnel_token is not None
     caddy_swapped = False
     marker_flipped = False
     try:
@@ -213,16 +233,11 @@ def _migrate(state: dict) -> None:
         sys.exit(1)
 
 
-def _bootstrap_dqlite(state: dict) -> None:
-    from disco.utils.dqlite import (
-        dqlite_service_name,
-        start_first_dqlite_service_sync,
-        strip_bootstrap_allowed_sync,
-        wait_for_dqlite_service_healthy_sync,
-    )
+def _bootstrap_dqlite(state: Preflight) -> None:
+    from disco.utils.dqlite import bootstrap_first_node_sync
     from disco.utils.randomname import generate_random_name_sync
 
-    disco_name = state["disco_name"]
+    disco_name = state.disco_name
     if not disco_name:
         disco_name = generate_random_name_sync()
         print(f"Assigning disco-name to this node: {disco_name}")
@@ -233,10 +248,9 @@ def _bootstrap_dqlite(state: dict) -> None:
                 "update",
                 "--label-add",
                 f"disco-name={disco_name}",
-                state["node_id"],
+                state.node_id,
             ]
         )
-        state["disco_name"] = disco_name
 
     _run(
         [
@@ -256,29 +270,24 @@ def _bootstrap_dqlite(state: dict) -> None:
     # id is the hostname.
     _run(["docker", "network", "connect", "disco-dqlite", socket.gethostname()])
 
-    print("Starting dqlite (bootstrap node)")
-    start_first_dqlite_service_sync(disco_name)
-    print("Waiting for dqlite to be ready")
-    wait_for_dqlite_service_healthy_sync(dqlite_service_name(disco_name))
-    print("Disabling bootstrap mode")
-    strip_bootstrap_allowed_sync(disco_name)
-    wait_for_dqlite_service_healthy_sync(dqlite_service_name(disco_name))
+    print("Starting dqlite")
+    bootstrap_first_node_sync(disco_name)
 
 
-def _swap_caddy(state: dict) -> None:
+def _swap_caddy(state: Preflight) -> None:
     from disco.scripts.init import start_caddy_service
     from disco.utils import caddy
 
-    tunnel = state["tunnel_token"] is not None
+    tunnel = state.tunnel_token is not None
     print("Swapping Caddy")
     _run(["docker", "container", "stop", "disco-caddy"], check=False)
     _run(["docker", "container", "rm", "disco-caddy"], check=False)
     start_caddy_service(
-        state["host_home"], tunnel=tunnel, caddy_image=config.get_caddy_image()
+        state.host_home, tunnel=tunnel, caddy_image=config.get_caddy_image()
     )
     _wait_for_caddy_socket()
     print("Seeding the captured Caddy config")
-    caddy.set_config(caddy.add_dqlite_config_fragments(state["caddy_config"]))
+    caddy.set_config(caddy.add_dqlite_config_fragments(state.caddy_config))
 
 
 def _rollback(
@@ -324,13 +333,14 @@ def _rollback(
 
 def _reattach_cloudflare_tunnel() -> None:
     # Does not survive the Caddy task being rescheduled.
-    from disco.scripts.init import _resolve_caddy_container
     from disco.utils import docker
 
     print("Reattaching the Cloudflare tunnel to the new Caddy")
     try:
         docker.add_network_to_container_sync(
-            _resolve_caddy_container(), "disco-cloudflare-tunnel", alias="disco-server"
+            docker.local_caddy_container_sync(),
+            "disco-cloudflare-tunnel",
+            alias="disco-server",
         )
     except Exception:
         log.exception(
@@ -340,18 +350,8 @@ def _reattach_cloudflare_tunnel() -> None:
         )
 
 
-def _read_sqlite_keyvalues(keys: list[str]) -> dict[str, str | None]:
-    conn = sqlite3.connect(f"file:{SQLITE_DB_PATH}?mode=ro", uri=True)
-    try:
-        result: dict[str, str | None] = {}
-        for key in keys:
-            row = conn.execute(
-                "SELECT value FROM key_values WHERE key=?", (key,)
-            ).fetchone()
-            result[key] = row[0] if row else None
-        return result
-    finally:
-        conn.close()
+def _read_keyvalue(key: str) -> str | None:
+    return read_keyvalue_from_sqlite_file(SQLITE_DB_PATH, key)
 
 
 def _copy_sqlite_file(source: Path, target: Path) -> None:
@@ -394,11 +394,6 @@ def _inspect_self_node() -> tuple[str, str, bool]:
     ).strip()
     return node_id, disco_name, disco_role == "main"
 
-
-async def _list_dqlite_services() -> list[str]:
-    from disco.utils.dqlite import list_dqlite_services
-
-    return await list_dqlite_services()
 
 
 def _wait_for_caddy_socket() -> None:

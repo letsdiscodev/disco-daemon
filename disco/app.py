@@ -33,13 +33,15 @@ from disco.middleware import middleware
 from disco.models.db import AsyncReadSession
 from disco.utils import caddy, keyvalues
 from disco.utils.asyncworker import async_worker
-from disco.utils.backup_distribution import cleanup_orphaned_push_jobs
-from disco.utils.backup_listener import watch_for_apikey_events_forever
+from disco.utils.backup_distribution import (
+    cleanup_orphaned_push_jobs,
+    watch_for_apikey_events_forever,
+)
 from disco.utils.deployments import (
     cleanup_deployments_on_disco_boot,
     enqueue_deployments_on_disco_boot,
 )
-from disco.utils.swarmwatcher import watch_swarm_events_forever
+from disco.utils.swarmreconciler import watch_swarm_events_forever
 
 logging.basicConfig(level=logging.INFO)
 

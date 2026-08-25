@@ -6,6 +6,7 @@ import re
 import shlex
 import signal
 import subprocess
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -13,7 +14,7 @@ from multiprocessing import cpu_count
 from typing import AsyncGenerator, Awaitable, Callable, Literal
 
 import disco
-from disco.config import BUSYBOX_VERSION
+from disco.config import BUSYBOX_VERSION, is_dqlite_mode
 from disco.errors import ProcessStatusError
 from disco.utils.discofile import DiscoFile
 from disco.utils.discofile import Service as DiscoService
@@ -1437,6 +1438,32 @@ async def builder_prune() -> None:
         "--force",  # do not prompt for confirmation
     ]
     await check_call(args)
+
+
+def local_caddy_container_sync() -> str:
+    # sqlite mode runs Caddy as a plain container; dqlite mode as a global
+    # service whose local task container has a generated name.
+    if not is_dqlite_mode():
+        return "disco-caddy"
+    for _ in range(30):
+        result = subprocess.run(
+            [
+                "docker",
+                "ps",
+                "-q",
+                "--filter",
+                "name=disco-caddy",
+                "--filter",
+                "status=running",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        if result.stdout.strip():
+            return result.stdout.split()[0]
+        time.sleep(1)
+    raise Exception("No running disco-caddy task container found")
 
 
 async def caddy_nc(service_name: str, port: int) -> bool:

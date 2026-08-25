@@ -4,7 +4,6 @@ import asyncio
 import logging
 import os
 import subprocess
-import time
 from datetime import datetime, timedelta, timezone
 
 from alembic import command
@@ -15,12 +14,7 @@ from disco import config
 from disco.models.meta import base_metadata
 from disco.utils import docker, keyvalues
 from disco.utils.apikeys import create_api_key_sync
-from disco.utils.dqlite import (
-    dqlite_service_name,
-    start_first_dqlite_service_sync,
-    strip_bootstrap_allowed_sync,
-    wait_for_dqlite_service_healthy_sync,
-)
+from disco.utils.dqlite import bootstrap_first_node_sync
 from disco.utils.encryption import generate_key
 from disco.utils.randomname import generate_random_name_sync
 from disco.utils.subprocess import decode_text
@@ -125,14 +119,8 @@ def _init_dqlite_mode(
 
     asyncio.run(docker.create_network("disco-dqlite"))
 
-    print("Starting dqlite cluster (bootstrap node)")
-    start_first_dqlite_service_sync(disco_name)
-    print("Waiting for dqlite to be ready")
-    wait_for_dqlite_service_healthy_sync(dqlite_service_name(disco_name))
-    # Strip BOOTSTRAP_ALLOWED so a volume loss can't bootstrap a second cluster.
-    print("Disabling bootstrap mode")
-    strip_bootstrap_allowed_sync(disco_name)
-    wait_for_dqlite_service_healthy_sync(dqlite_service_name(disco_name))
+    print("Starting dqlite")
+    bootstrap_first_node_sync(disco_name)
 
     init_database(
         image=image,
@@ -382,31 +370,12 @@ def create_docker_config(host_home: str) -> None:
         os.makedirs(f"/host{host_home}/.docker")
 
 
-def _resolve_caddy_container() -> str:
-    if not config.is_dqlite_mode():
-        return "disco-caddy"
-    for _ in range(30):
-        output = _run_cmd(
-            [
-                "docker",
-                "ps",
-                "-q",
-                "--filter",
-                "name=disco-caddy",
-                "--filter",
-                "status=running",
-            ]
-        ).strip()
-        if output:
-            return output.splitlines()[0]
-        time.sleep(1)
-    raise Exception("No running disco-caddy task container found")
-
-
 def setup_cloudflare_tunnel(cloudflare_tunnel_token: str) -> None:
     asyncio.run(docker.create_network("disco-cloudflare-tunnel"))
     docker.add_network_to_container_sync(
-        _resolve_caddy_container(), "disco-cloudflare-tunnel", alias="disco-server"
+        docker.local_caddy_container_sync(),
+        "disco-cloudflare-tunnel",
+        alias="disco-server",
     )
     _run_cmd(
         [

@@ -76,22 +76,6 @@ async def list_dqlite_services() -> list[str]:
     return [s for s in stdout if disco_name_from_dqlite_service(s) is not None]
 
 
-async def dqlite_service_running_task_id(service_name: str) -> str | None:
-    stdout, _, _ = await check_call(
-        [
-            "docker",
-            "service",
-            "ps",
-            service_name,
-            "--filter",
-            "desired-state=running",
-            "--format",
-            "{{ .ID }}",
-        ]
-    )
-    if not stdout:
-        return None
-    return stdout[0]
 
 
 async def any_running_dqlite_container_on_this_node() -> str | None:
@@ -284,11 +268,6 @@ async def wait_for_service_tasks_stopped(
     )
 
 
-def wait_for_dqlite_service_healthy_sync(
-    service_name: str, timeout_seconds: int = 180
-) -> None:
-    asyncio.run(wait_for_dqlite_service_healthy(service_name, timeout_seconds))
-
 
 async def query_cluster_members() -> list[dict] | None:
     container = await any_running_dqlite_container_on_this_node()
@@ -441,11 +420,12 @@ async def scale_dqlite_service(disco_name: str, replicas: int) -> None:
     ])
 
 
-def start_first_dqlite_service_sync(disco_name: str) -> None:
+def bootstrap_first_node_sync(disco_name: str) -> None:
+    service = dqlite_service_name(disco_name)
     asyncio.run(
         start_dqlite_service(disco_name=disco_name, peers=None, bootstrap_allowed=True)
     )
-
-
-def strip_bootstrap_allowed_sync(disco_name: str) -> None:
+    asyncio.run(wait_for_dqlite_service_healthy(service))
+    # Strip BOOTSTRAP_ALLOWED so a volume loss can't bootstrap a second cluster.
     asyncio.run(strip_bootstrap_allowed(disco_name))
+    asyncio.run(wait_for_dqlite_service_healthy(service))

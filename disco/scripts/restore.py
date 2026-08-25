@@ -21,7 +21,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import sqlite3
 import subprocess
 import sys
 import time
@@ -29,7 +28,11 @@ from pathlib import Path
 
 import disco
 from disco import config
-from disco.utils.backup import BACKUP_DIR, replay_sqlite_file
+from disco.utils.backup import (
+    BACKUP_DIR,
+    read_keyvalue_from_sqlite_file,
+    replay_sqlite_file,
+)
 from disco.utils.dqlite import (
     dqlite_service_name,
     list_dqlite_services,
@@ -71,7 +74,7 @@ def main() -> None:
         print(f"ERROR: backup file not found: {backup_path}", file=sys.stderr)
         sys.exit(2)
 
-    backup_version = _read_disco_version_from_backup(backup_path)
+    backup_version = read_keyvalue_from_sqlite_file(backup_path, "DISCO_VERSION")
     if backup_version != disco.__version__:
         print(
             f"ERROR: backup was created with disco {backup_version!r}; this "
@@ -141,17 +144,6 @@ def main() -> None:
         swarm_names_by_id=swarm_names_by_id,
     ))
     print("Restore complete.")
-
-
-def _read_disco_version_from_backup(path: Path) -> str | None:
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-    try:
-        row = conn.execute(
-            "SELECT value FROM key_values WHERE key='DISCO_VERSION'"
-        ).fetchone()
-    finally:
-        conn.close()
-    return row[0] if row else None
 
 
 def _list_swarm_nodes() -> dict[str, str]:

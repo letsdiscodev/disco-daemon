@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 import time
 import uuid
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 import disco
 from disco.models.db import AsyncReadSession
-from disco.utils import keyvalues
-from disco.utils.backup_tokens import backup_tokens
+from disco.utils import events, keyvalues
 from disco.utils.subprocess import call, check_call
 
 log = logging.getLogger(__name__)
+
+_INTERESTING_EVENT_TYPES = {"apiKey:created", "apiKey:removed"}
 
 
 async def push_backup_to_all_managers(
@@ -126,3 +130,91 @@ async def _wait_for_global_job(job_name: str, timeout_seconds: int) -> None:
     raise Exception(
         f"backup-push job {job_name} did not complete within {timeout_seconds}s"
     )
+
+
+@dataclass
+class _TokenState:
+    expires: datetime
+    remaining_uses: int
+
+
+class BackupTokenRegistry:
+    def __init__(self) -> None:
+        self._tokens: dict[str, _TokenState] = {}
+        self._lock = asyncio.Lock()
+
+    async def issue(self, *, uses: int, ttl_seconds: int = 120) -> str:
+        # A token is good for `uses` validate() calls or ttl_seconds, whichever
+        # runs out first.
+        if uses < 1:
+            raise ValueError("uses must be >= 1")
+        token = secrets.token_urlsafe(32)
+        expires = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
+        async with self._lock:
+            self._tokens[token] = _TokenState(expires=expires, remaining_uses=uses)
+            self._gc()
+        return token
+
+    async def validate(self, token: str) -> bool:
+        async with self._lock:
+            self._gc()
+            state = self._tokens.get(token)
+            if state is None:
+                return False
+            state.remaining_uses -= 1
+            if state.remaining_uses <= 0:
+                del self._tokens[token]
+            return True
+
+    async def revoke(self, token: str) -> None:
+        async with self._lock:
+            self._tokens.pop(token, None)
+            self._gc()
+
+    def _gc(self) -> None:
+        now = datetime.now(timezone.utc)
+        expired = [t for t, s in self._tokens.items() if s.expires <= now]
+        for t in expired:
+            del self._tokens[t]
+
+
+backup_tokens = BackupTokenRegistry()
+
+
+async def watch_for_apikey_events_forever() -> None:
+    while True:
+        try:
+            await _watch_once()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("API-key backup listener crashed; restarting in 5s")
+        await asyncio.sleep(5)
+
+
+async def _watch_once() -> None:
+    from disco.utils import backup
+
+    queue = events.subscribe()
+    try:
+        log.info("API-key backup listener subscribed")
+        while True:
+            event = await queue.get()
+            if event.type not in _INTERESTING_EVENT_TYPES:
+                continue
+            # Drain the burst so it produces a single push.
+            while not queue.empty():
+                try:
+                    next_event = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if next_event.type not in _INTERESTING_EVENT_TYPES:
+                    # Dropped; asyncio.Queue has no put-front.
+                    pass
+            try:
+                log.info("API key change observed; triggering backup-and-push")
+                await backup.make_and_push_periodic_backup()
+            except Exception:
+                log.exception("Backup-and-push after API-key event failed")
+    finally:
+        events.unsubscribe(queue)
