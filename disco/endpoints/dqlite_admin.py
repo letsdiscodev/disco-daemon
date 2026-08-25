@@ -1,10 +1,3 @@
-"""Admin endpoints for the dqlite cluster: status + recovery.
-
-These are emergency-capable: they authenticate via the local backup
-file when dqlite itself is locked, so an operator with a valid API key
-can still diagnose and repair the cluster during quorum loss.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -42,13 +35,7 @@ LOCK_PROBE_TIMEOUT_S = 3.0
 
 
 async def _probe_dqlite_locked() -> tuple[bool, str | None]:
-    """Returns (is_locked, last_error_message).
-
-    Probes twice with a short gap between, both must fail for us to call
-    the cluster locked. Single transient errors (network blip, brief
-    leader-election) shouldn't trigger destructive recovery suggestions
-    or unlock the destructive endpoints.
-    """
+    # Both probes must fail; a single transient error must not unlock recovery.
     is_locked_1, err_1 = await _single_probe()
     if not is_locked_1:
         return False, None
@@ -77,13 +64,6 @@ async def _single_probe() -> tuple[bool, str | None]:
 async def dqlite_status(
     _: Annotated[str, Depends(get_api_key_emergency_capable)],
 ):
-    """Diagnostic snapshot of the dqlite cluster's health.
-
-    All data sources work even when dqlite itself is locked: Swarm
-    state comes from the manager's local raft (`docker node ls`),
-    cluster lock is a short-timeout probe, dqlite membership comes
-    from the local container's view via `.cluster`.
-    """
     self_name = await get_current_node_disco_name()
     node_ids = await docker.get_node_list()
     nodes = await docker.get_node_details(node_ids)
@@ -117,9 +97,6 @@ async def dqlite_status(
         for m in members:
             if m["role"] == "voter":
                 voters_total += 1
-                # Reachable iff the node's swarm state is "ready". Not
-                # perfect (a ready Swarm node might still have a dead
-                # dqlite container) but the most useful proxy from here.
                 disco_name_for_member = _disco_name_for_address(m["address"])
                 if disco_name_for_member:
                     sn = next(
@@ -130,7 +107,6 @@ async def dqlite_status(
                         voters_alive += 1
     voters_needed = (voters_total // 2) + 1 if voters_total else 0
 
-    # Decorate each member with reachable + isLocalDaemonNode.
     decorated_members = []
     if members is not None:
         for m in members:
@@ -148,13 +124,9 @@ async def dqlite_status(
                 "isLocalDaemonNode": disco_name_for_member == self_name,
             })
 
-    # Recovery guidance.
     needed = is_locked
     recommendation = None
     if needed:
-        # All Swarm nodes that aren't this daemon's node and are not
-        # currently in "ready" state. The operator can edit; we just
-        # suggest the most likely-correct set.
         recommended_remove = sorted(
             n["discoName"]
             for n in swarm_nodes
@@ -186,23 +158,16 @@ async def dqlite_status(
 
 
 def _disco_name_for_address(address: str) -> str | None:
-    """Reverse-lookup: tasks.dqlite-<disco-name>:9001 -> <disco-name>."""
     if address.startswith("tasks.dqlite-"):
         rest = address[len("tasks."):]
         if ":" in rest:
             rest = rest.split(":", 1)[0]
         name = disco_name_from_dqlite_service(rest)
-        # Empty-string is not a real disco-name; bail rather than
-        # silently match other label-less nodes.
         return name if name else None
     return None
 
 
 class RecoverQuorumRequest(BaseModel):
-    # snake_case fields + camelCase aliases to match the rest of disco's
-    # public API. `extra="forbid"` means a misspelled "removenodes"
-    # raises 422 instead of silently being treated as the default
-    # (empty list), which would trigger the wipe-survivors path.
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     keep_node: str = Field(..., alias="keepNode")
@@ -214,18 +179,6 @@ async def recover_quorum(
     body: RecoverQuorumRequest,
     _: Annotated[str, Depends(get_api_key_emergency_capable)],
 ):
-    """Reconfigure the dqlite cluster after a quorum loss.
-
-    Preconditions (all enforced; 409 on violation):
-      - keepNode must equal the daemon's local Swarm node.
-      - removeNodes must be a subset of the current Swarm membership,
-        not containing keepNode.
-      - The cluster must be currently locked (refuse on healthy cluster).
-
-    Implicit rejoin: any alive Swarm node that's neither keepNode nor in
-    removeNodes is treated as a survivor whose dqlite data is wiped and
-    re-joined to the new cluster as a fresh member.
-    """
     started = time.monotonic()
     self_name = await get_current_node_disco_name()
 
@@ -254,11 +207,8 @@ async def recover_quorum(
     if body.keep_node not in swarm_node_names:
         raise HTTPException(409, f"keepNode '{body.keep_node}' is not in the Swarm")
 
-    # Categorize survivors. Anything not in removeNodes and not the keepNode
-    # is implicitly a rejoin candidate — but a non-ready node can't be wiped
-    # via Swarm task (the job is constrained to that node and will hang).
-    # Force the operator to be explicit: either include it in removeNodes
-    # or get its state back to ready before retrying.
+    # A non-ready node cannot be wiped (the wipe job is constrained to it and
+    # would hang), so the operator must put it in removeNodes.
     ready_names = {
         name
         for n in nodes
@@ -274,67 +224,52 @@ async def recover_quorum(
         raise HTTPException(400, {
             "error": "undecided_nodes",
             "message": (
-                f"Nodes {undecided} are not ready. Either add them to "
-                f"removeNodes (to force-remove from Swarm), or fix their "
-                f"state before retrying."
+                f"Nodes {undecided} are not ready. Add them to removeNodes "
+                f"or fix their state before retrying."
             ),
             "undecidedNodes": undecided,
         })
 
-    # Acquire the recovery lock with a tiny timeout — refuses immediately
-    # rather than queueing if another recovery is in flight. (Plain
-    # `if recovery_lock.locked(): raise` would race between check and
-    # acquire below; using wait_for makes the check-and-acquire atomic.)
+    # wait_for makes the check-and-acquire atomic; a locked() check would race.
     try:
         await asyncio.wait_for(recovery_lock.acquire(), timeout=0.01)
     except asyncio.TimeoutError:
         raise HTTPException(409, "another recovery is already in progress")
 
     try:
-        # Re-probe inside the lock — the cluster may have recovered between
-        # the request-time probe and now (e.g. another concurrent recovery
-        # just finished).
+        # Re-probe under the lock; the cluster may have recovered since the
+        # first probe.
         is_locked_now, _probe_err = await _probe_dqlite_locked()
         if not is_locked_now:
             raise HTTPException(409, {
                 "error": "cluster_healthy",
                 "message": (
-                    "dqlite cluster is currently serving requests. Recovery "
-                    "would deliberately break it. Use DELETE /api/disco/swarm/"
-                    "nodes/<name> to gracefully remove specific nodes instead."
+                    "dqlite cluster is serving requests; recovery refused. "
+                    "Use DELETE /api/disco/swarm/nodes/<name> to remove nodes."
                 ),
             })
 
         async with reconciler_lock:
-            # Phase 1: stop every existing dqlite service so volumes are free.
             existing_services = await list_dqlite_services()
             for svc in existing_services:
                 log.info("Scaling %s to 0", svc)
                 await docker.scale({svc: 0})
-            # Wait for tasks to actually exit and release their volumes —
-            # docker.scale is --detach. A blind sleep would race with the
-            # reconfigure_node_as_single_member container mounting the
-            # same volume the dqlite-demo task hasn't released yet.
+            # docker.scale is --detach; the reconfigure container must not mount
+            # a volume a task still holds.
             for svc in existing_services:
                 try:
                     await wait_for_service_tasks_stopped(svc, timeout_seconds=30)
                 except Exception:
                     log.exception(
-                        "Service %s did not stop cleanly within 30s; "
-                        "continuing — reconfigure may fail if the volume "
-                        "is still held.",
+                        "Service %s did not stop within 30s; continuing",
                         svc,
                     )
 
-            # Phase 2: rewrite keepNode's raft state as a single-node cluster.
             await reconfigure_node_as_single_member(body.keep_node)
 
-            # Phase 3: bring keepNode's service back online.
             await scale_dqlite_service(body.keep_node, 1)
             await wait_for_dqlite_service_healthy(dqlite_service_name(body.keep_node))
 
-            # Phase 4: rejoin each ready survivor by wiping its data and
-            # restarting; it'll JOIN the new cluster via PEERS.
             rejoin_outcomes = []
             for rn in rejoin_nodes:
                 try:
@@ -348,8 +283,6 @@ async def recover_quorum(
                         {"name": rn, "status": "failed", "error": str(exc)}
                     )
 
-            # Phase 5: force-remove the gone nodes from Swarm. Reconciler
-            # will then notice their service-orphans and tear them down.
             node_by_name = {n.labels.get("disco-name"): n for n in nodes}
             remove_outcomes = []
             for rn in body.remove_nodes:
@@ -368,7 +301,7 @@ async def recover_quorum(
     finally:
         recovery_lock.release()
 
-    # Phase 6 (outside the locks so reconciler can run): final sweep.
+    # Outside the locks so the reconciler can run.
     from disco.utils.swarmreconciler import reconcile_dqlite_services
     await reconcile_dqlite_services()
 

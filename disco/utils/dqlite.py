@@ -1,14 +1,3 @@
-"""dqlite cluster management utilities.
-
-Per-node Swarm service model: each Swarm node hosts a single-replica
-service named `dqlite-<disco-name>`, pinned to that node via a node-label
-constraint. Each service is on the `disco-dqlite` overlay network with
-`--endpoint-mode dnsrr`. Tasks advertise `tasks.dqlite-<disco-name>:9001`
-as their bind address — a stable Swarm DNS name that resolves to whatever
-the current task's overlay IP is. The dqlite image's LD_PRELOAD shim
-enables hostname-style bind addresses in dqlite-demo.
-"""
-
 import asyncio
 import functools
 import logging
@@ -25,21 +14,16 @@ DQLITE_OVERLAY_NETWORK = "disco-dqlite"
 
 
 def dqlite_service_name(disco_name: str) -> str:
-    """Per-node Swarm service name for a given disco-name."""
     return f"dqlite-{disco_name}"
 
 
 def dqlite_bind_address(disco_name: str) -> str:
-    """Stable DNS bind address used by dqlite for this node.
-
-    Resolves to the per-node service's single task IP via Swarm DNS.
-    Used both for the node's own --db flag and as a PEERS entry on others.
-    """
+    # Swarm DNS name of the node's single task; the dqlite image's LD_PRELOAD
+    # shim lets dqlite-demo bind to a hostname.
     return f"tasks.{dqlite_service_name(disco_name)}:{DQLITE_PORT}"
 
 
 def disco_name_from_dqlite_service(service_name: str) -> str | None:
-    """Inverse of dqlite_service_name. Returns None for non-matching names."""
     prefix = "dqlite-"
     if not service_name.startswith(prefix):
         return None
@@ -48,7 +32,6 @@ def disco_name_from_dqlite_service(service_name: str) -> str | None:
 
 @functools.cache
 def get_current_node_disco_name_sync() -> str:
-    """Synchronous variant for use during init (before async loop is up)."""
     import subprocess
 
     result = subprocess.run(
@@ -71,22 +54,14 @@ def get_current_node_disco_name_sync() -> str:
 
 
 async def get_current_node_disco_name() -> str:
-    """Async variant; the disco-name is stable across the daemon's lifetime."""
     return await asyncio.to_thread(get_current_node_disco_name_sync)
 
 
 def get_local_dqlite_address() -> str:
-    """The DNS address of the dqlite running on this node.
-
-    Used by SQLAlchemy to connect to dqlite. Always points at the local
-    per-node service (tasks.dqlite-<self>) which Swarm DNS resolves to
-    the single task running on this same node.
-    """
     return dqlite_bind_address(get_current_node_disco_name_sync())
 
 
 async def list_dqlite_services() -> list[str]:
-    """Names of all dqlite-* services in the swarm."""
     stdout, _, _ = await check_call(
         [
             "docker",
@@ -102,12 +77,6 @@ async def list_dqlite_services() -> list[str]:
 
 
 async def dqlite_service_running_task_id(service_name: str) -> str | None:
-    """Container ID of the running task for a service, if any.
-
-    docker service ps shows tasks across all nodes; we filter to running.
-    The container ID can then be used with `docker exec` against the
-    manager's Docker socket (Swarm forwards exec to the right node).
-    """
     stdout, _, _ = await check_call(
         [
             "docker",
@@ -126,11 +95,6 @@ async def dqlite_service_running_task_id(service_name: str) -> str | None:
 
 
 async def any_running_dqlite_container_on_this_node() -> str | None:
-    """Container ID of a dqlite container on the current node, if any.
-
-    Used as a foothold for executing the dqlite admin CLI: we can exec
-    .remove / .cluster / .leader via this container without crossing nodes.
-    """
     stdout, _, _ = await check_call(
         [
             "docker",
@@ -153,12 +117,6 @@ async def start_dqlite_service(
     peers: list[str] | None,
     bootstrap_allowed: bool,
 ) -> None:
-    """Create the per-node dqlite Swarm service.
-
-    `peers` is a list of bind addresses (`tasks.dqlite-X:9001`) the new
-    node should try to join via. Pass an empty list (or None) only on the
-    very first node, with bootstrap_allowed=True.
-    """
     service_name = dqlite_service_name(disco_name)
     bind = dqlite_bind_address(disco_name)
     env_args: list[str] = ["--env", f"BIND_ADDRESS={bind}"]
@@ -211,13 +169,6 @@ async def start_dqlite_service(
 
 
 async def strip_bootstrap_allowed(disco_name: str) -> None:
-    """Remove BOOTSTRAP_ALLOWED from the service spec.
-
-    Triggers a rolling update — the task is replaced with a new container
-    at a fresh overlay IP, but the persisted bind address is a DNS name
-    that's still valid. This is called once, immediately after the very
-    first task is healthy on install.
-    """
     service_name = dqlite_service_name(disco_name)
     log.info("Stripping BOOTSTRAP_ALLOWED from %s", service_name)
     await check_call(
@@ -234,38 +185,22 @@ async def strip_bootstrap_allowed(disco_name: str) -> None:
 
 
 async def remove_dqlite_service(disco_name: str) -> None:
-    """Remove the per-node Swarm service AND its named volume.
-
-    Best-effort: tolerates missing service / volume. Volume removal only
-    succeeds if no container still references it, which is normally the
-    case after `service rm`.
-    """
     service_name = dqlite_service_name(disco_name)
     volume_name = f"dqlite-{disco_name}"
     log.info("Removing dqlite service %s", service_name)
     _, _, p = await call(["docker", "service", "rm", service_name])
     if p.returncode != 0:
-        log.info("service rm %s returned %d (probably already gone)", service_name, p.returncode)
-    # Volume lives on the node — removing it from the manager only works
-    # if the node is still in the swarm AND the volume is unreferenced.
-    # Either failure mode is non-fatal here.
+        log.info("service rm %s returned %d", service_name, p.returncode)
     _, _, p = await call(["docker", "volume", "rm", volume_name])
     if p.returncode != 0:
-        log.info("volume rm %s returned %d (left behind on host)", volume_name, p.returncode)
+        log.info("volume rm %s returned %d", volume_name, p.returncode)
 
 
 async def wait_for_dqlite_service_healthy(
     service_name: str, timeout_seconds: int = 180
 ) -> None:
-    """Block until the service has a Running task whose container is healthy.
-
-    Just "Running" is not enough: `--health-start-period 60s` lets the
-    container be Running but failing healthchecks (because dqlite-demo
-    hasn't opened the API port yet). Callers immediately open SQLAlchemy
-    connections, which fail. We require either a healthcheck reporting
-    `healthy` or — failing that — a successful TCP probe of the API port
-    via `docker exec`.
-    """
+    # A Running task is not enough: within the health start period dqlite-demo
+    # may not have opened its API port yet.
     log.info("Waiting for %s to become healthy", service_name)
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
@@ -293,10 +228,6 @@ async def wait_for_dqlite_service_healthy(
         if running_task_id is None:
             await asyncio.sleep(2)
             continue
-        # Found a Running task — probe its container's health. `docker
-        # inspect` on the task ID returns its container ID; from there we
-        # can read Health.Status (if a healthcheck is configured) or fall
-        # back to a TCP probe.
         if await _task_is_healthy(running_task_id):
             log.info("%s has a healthy task", service_name)
             return
@@ -305,12 +236,6 @@ async def wait_for_dqlite_service_healthy(
 
 
 async def _task_is_healthy(task_id: str) -> bool:
-    """Return True iff the Swarm task's container reports healthy.
-
-    Uses docker inspect to read the container's Health.Status. The Swarm
-    task ID -> container ID indirection is handled via inspect on the
-    task, which has a .Status.ContainerStatus.ContainerID field.
-    """
     stdout, _, _ = await check_call(
         ["docker", "inspect", "--format",
          "{{ .Status.ContainerStatus.ContainerID }}", task_id]
@@ -326,9 +251,8 @@ async def _task_is_healthy(task_id: str) -> bool:
     if p.returncode != 0:
         return False
     status = (health_stdout[0] if health_stdout else "").strip()
-    # If there's no healthcheck configured (status==""), fall back to a
-    # TCP probe inside the container. We use the API port (10001) which
-    # binds 0.0.0.0 only once dqlite-demo has finished initializing.
+    # No healthcheck configured: probe the API port, which only binds once
+    # dqlite-demo has finished initializing.
     if status == "":
         _, _, p = await call(
             ["docker", "exec", container_id, "nc", "-z", "-w", "2",
@@ -341,12 +265,8 @@ async def _task_is_healthy(task_id: str) -> bool:
 async def wait_for_service_tasks_stopped(
     service_name: str, timeout_seconds: int = 60
 ) -> None:
-    """After scaling a service to 0, block until its tasks have actually
-    exited and released their volumes. `docker service scale --detach`
-    returns once Swarm accepts the request, not once tasks are stopped;
-    callers that immediately mount the same volume from another container
-    race with the still-running task.
-    """
+    # `docker service scale --detach` returns before the tasks have stopped and
+    # released their volumes.
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         stdout, _, _ = await check_call(
@@ -367,17 +287,10 @@ async def wait_for_service_tasks_stopped(
 def wait_for_dqlite_service_healthy_sync(
     service_name: str, timeout_seconds: int = 180
 ) -> None:
-    """Sync wrapper for init script use."""
     asyncio.run(wait_for_dqlite_service_healthy(service_name, timeout_seconds))
 
 
 async def query_cluster_members() -> list[dict] | None:
-    """Run `.cluster` against a local dqlite container and parse the output.
-
-    Each row of `.cluster` output is `<id>|<address>|<role>` where role
-    is one of voter/standby/spare. Returns None if no local container is
-    available to query (e.g. local dqlite is itself down).
-    """
     container = await any_running_dqlite_container_on_this_node()
     if container is None:
         return None
@@ -399,7 +312,6 @@ async def query_cluster_members() -> list[dict] | None:
         return None
     members: list[dict] = []
     for line in stdout:
-        # Strip the "dqlite> " prompt prefix that the CLI sometimes adds.
         if line.startswith("dqlite> "):
             line = line[len("dqlite> "):]
         line = line.strip()
@@ -414,17 +326,10 @@ async def query_cluster_members() -> list[dict] | None:
 
 
 async def cluster_remove(address: str) -> bool:
-    """Evict a node from the dqlite cluster by its advertised address.
-
-    Called when a Swarm node is decommissioned, so role-management
-    doesn't keep the dead node as a phantom voter. Returns False if
-    no local dqlite container is reachable to issue the command —
-    caller should retry later (the reconciler will).
-    """
     container = await any_running_dqlite_container_on_this_node()
     if container is None:
         log.warning(
-            "No local dqlite container to issue .remove via; will retry later"
+            "No local dqlite container to issue .remove via"
         )
         return False
     log.info("Evicting %s from dqlite cluster via container %s", address, container)
@@ -449,33 +354,13 @@ async def cluster_remove(address: str) -> bool:
 
 
 async def reconfigure_node_as_single_member(disco_name: str) -> None:
-    """Rewrite a node's local raft state so the cluster has only this node.
-
-    Runs as a one-shot container that mounts the node's dqlite volume.
-    The caller must scale the dqlite service to 0 first so the data dir
-    is not in use. After this returns, scaling the service back to 1
-    starts dqlite at the new bind/membership.
-
-    The container also takes a defensive `cp -a` snapshot of the data
-    dir to `<dir>.backup-<ts>/` inside the volume, in case the recovery
-    needs manual unwinding later.
-
-    Only meaningful when called against the disco-daemon's local node —
-    docker volumes are node-local, so this won't reach other hosts.
-    """
+    # Caller must scale the service to 0 first. Volumes are node-local, so this
+    # only works for the daemon's own node.
     bind = dqlite_bind_address(disco_name)
     volume = f"dqlite-{disco_name}"
-    # The script that runs inside the dqlite image. Care with shell
-    # quoting: the f-string interpolates `bind` (which contains colons
-    # but not shell metacharacters in our addresses) and that's it.
-    #
-    # Both `.reconfigure` AND the cp of cluster.yaml are required (verified
-    # empirically): `.reconfigure` rewrites the raft binary state to match
-    # the new yaml, but does NOT touch cluster.yaml on disk. dqlite-demo
-    # reads cluster.yaml at startup to know the cluster membership, so if
-    # we skip the cp it would still see the old multi-member cluster and
-    # fail. Running only the cp without `.reconfigure` would leave the
-    # raft state thinking it's part of the old cluster.
+    # Both `.reconfigure` and copying cluster.yaml are required: `.reconfigure`
+    # rewrites the raft state but not cluster.yaml, which dqlite-demo reads at
+    # startup.
     script = (
         "set -eu\n"
         f"BIND='{bind}'\n"
@@ -487,7 +372,6 @@ async def reconfigure_node_as_single_member(disco_name: str) -> None:
         'TS=$(date -u +%Y%m%dT%H%M%SZ)\n'
         'BACKUP_DIR="$DATA_DIR.backup-$TS"\n'
         'cp -a "$DATA_DIR" "$BACKUP_DIR"\n'
-        # Tolerant parser: handle ID:42, ID: 42, ID:  42 alike.
         'NODE_ID=$(awk "/^ID:/ { sub(/^ID:[ \\t]*/, \\"\\"); print; exit }" '
         '"$DATA_DIR/info.yaml")\n'
         'if [ -z "$NODE_ID" ]; then\n'
@@ -514,12 +398,7 @@ async def reconfigure_node_as_single_member(disco_name: str) -> None:
 
 
 async def wipe_dqlite_volume_via_job(disco_name: str, timeout_seconds: int = 60) -> None:
-    """Erase the dqlite-<disco_name> volume's contents on its host.
-
-    Uses a replicated-job constrained to the target node, because the
-    volume lives on that node's host and can't be reached directly from
-    the daemon's container.
-    """
+    # The volume is node-local, so run a job constrained to that node.
     job_name = f"disco-wipe-dqlite-{disco_name}-{uuid.uuid4().hex[:8]}"
     args = [
         "docker", "service", "create",
@@ -540,7 +419,6 @@ async def wipe_dqlite_volume_via_job(disco_name: str, timeout_seconds: int = 60)
 
 
 async def _wait_for_job_complete(job_name: str, timeout_seconds: int) -> None:
-    """Wait for a replicated-job's tasks to reach Complete state."""
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         stdout, _, _ = await check_call([
@@ -564,11 +442,6 @@ async def scale_dqlite_service(disco_name: str, replicas: int) -> None:
 
 
 def start_first_dqlite_service_sync(disco_name: str) -> None:
-    """Bootstrap-create the very first dqlite service (single-node cluster).
-
-    Called from the init script, which runs in its own process and creates
-    the daemon's database. Subsequent nodes are managed by the reconciler.
-    """
     asyncio.run(
         start_dqlite_service(disco_name=disco_name, peers=None, bootstrap_allowed=True)
     )

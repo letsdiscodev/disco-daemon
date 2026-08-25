@@ -1,13 +1,3 @@
-"""Internal endpoint that serves the daemon's local backup files.
-
-Consumed only by the per-backup global-job that pushes backups out to
-every manager. Auth is a short-lived bearer token issued by the daemon
-just before dispatching the job. Not exposed to normal API consumers.
-
-The endpoint lives under /api/disco/internal/ so it's clearly internal
-machinery, not part of the operator-facing API.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -24,9 +14,6 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# auto_error=False so we raise our own 401 (so the body is consistent
-# with the rest of disco's errors and not FastAPI's default WWW-Authenticate
-# challenge).
 _bearer = HTTPBearer(auto_error=False)
 
 
@@ -35,15 +22,11 @@ async def serve_backup(
     filename: str,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ):
-    # HTTPBearer handles case-insensitive scheme matching and rejects
-    # multi-value Authorization headers automatically.
     if credentials is None:
         raise HTTPException(401, "missing bearer token")
     if not await backup_tokens.validate(credentials.credentials):
         raise HTTPException(401, "invalid or expired token")
 
-    # Filename sanitization. We reject anything that could escape the
-    # backup directory or that doesn't look like a backup file.
     if (
         "/" in filename
         or "\\" in filename
@@ -55,9 +38,7 @@ async def serve_backup(
     if not filename.endswith(".db"):
         raise HTTPException(400, "invalid filename")
 
-    # Resolve symlinks and verify the resolved path is actually inside
-    # BACKUP_DIR. Defends against a symlink planted in the backup dir
-    # by an attacker with host write access.
+    # Resolve so a symlink planted in the backup dir can't escape it.
     target = (BACKUP_DIR / filename).resolve()
     backup_root = BACKUP_DIR.resolve()
     try:

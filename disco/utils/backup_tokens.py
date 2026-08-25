@@ -1,16 +1,3 @@
-"""Short-lived bearer tokens for the internal backup-pull endpoint.
-
-Each backup-push issues one token, passes it to the global-job tasks via
-env var, and revokes it once the job completes. Tokens are held in
-memory only — they survive nowhere across daemon restarts, which is the
-right behavior (a fresh daemon issues fresh tokens for its own pushes).
-
-Tokens are use-counted: issuing a token for N expected pulls (typically
-one per manager) means the token becomes invalid after N validate()
-calls. Combined with a short TTL, this bounds the damage a token leak
-(via `docker inspect` of the service spec) could do.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -31,12 +18,8 @@ class BackupTokenRegistry:
         self._lock = asyncio.Lock()
 
     async def issue(self, *, uses: int, ttl_seconds: int = 120) -> str:
-        """Issue a token valid for `uses` calls and at most ttl_seconds.
-
-        Callers should pass uses=<expected pull count> (typically the
-        number of managers participating in the global-job) so a leaked
-        token can be replayed at most that many times in the worst case.
-        """
+        # A token is good for `uses` validate() calls or ttl_seconds, whichever
+        # runs out first.
         if uses < 1:
             raise ValueError("uses must be >= 1")
         token = secrets.token_urlsafe(32)

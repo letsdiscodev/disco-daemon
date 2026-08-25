@@ -1,13 +1,8 @@
-"""Migrate an existing sqlite-mode install to dqlite mode.
+"""Migrate a sqlite-mode install to dqlite mode.
 
-SSH-gated CLI (not an HTTP endpoint). Operator runs this from the main
-node with Docker socket access. It moves the internal database from the
-sqlite file to a fresh single-node dqlite cluster, migrates Caddy's TLS
-certificates and live config into dqlite, replaces the stock Caddy
-container with the dqlite-backed global Caddy service, and restarts the
-daemon in dqlite mode.
-
-Typical invocation (HOST_HOME is usually /root):
+Run on the main node. Moves the database and Caddy's certificates and config
+into a single-node dqlite cluster, swaps Caddy for the dqlite-backed global
+service and restarts the daemon in dqlite mode. HOST_HOME is usually /root.
 
     sudo docker run --rm -it \\
         -v /var/run/docker.sock:/var/run/docker.sock \\
@@ -18,21 +13,11 @@ Typical invocation (HOST_HOME is usually /root):
         letsdiscodev/daemon:<version> \\
         disco_migrate_to_dqlite
 
-Do not pass --network or --hostname: the script creates the disco-dqlite
-network itself and attaches this container to it (it resolves its own
-container id from the hostname).
+Do not pass --network or --hostname; the script attaches itself to disco-dqlite
+using its container id as hostname. Optional: -e DISCO_IMAGE, -e CADDY_IMAGE.
 
-Optional env overrides (mainly for the integration tester / private
-registries): -e DISCO_IMAGE=<daemon image> for the restarted daemon,
--e CADDY_IMAGE=<caddy image> for the dqlite-backed Caddy.
-
-The old sqlite file and the disco-caddy-data / disco-caddy-config
-volumes are never modified or deleted — they are the manual rollback
-path. To roll back after a failed migration:
-
-    docker service rm disco-caddy   # if it exists
-    (re-run the old Caddy container and daemon; the script prints the
-     exact state it left things in on failure)
+The sqlite file and the disco-caddy-data / disco-caddy-config volumes are never
+modified; on failure the script rolls back to sqlite mode using them.
 """
 
 from __future__ import annotations
@@ -61,8 +46,7 @@ OLD_CADDY_DATA_MOUNT = Path("/old-caddy-data")
 
 
 def main() -> None:
-    # Everything DB-related in this process must resolve to dqlite: the
-    # sqlite side is only ever read through private sqlite3 connections.
+    # The sqlite side is only read through private sqlite3 connections.
     config.pin_mode("dqlite")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -79,15 +63,15 @@ def main() -> None:
     state = _preflight()
 
     print()
-    print("===== Migration plan =====")
+    print("Migration plan")
     print(f"  Disco version:  {state['disco_version']}")
     print(f"  Disco host:     {state['disco_host']}")
     print(f"  Node:           {state['disco_name'] or '(will be named)'}")
     print("  sqlite file, disco-caddy-data and disco-caddy-config volumes")
-    print("  are kept untouched as the manual rollback path.")
+    print("  are left untouched.")
     print()
     print("The daemon restarts in dqlite mode; ingress is briefly")
-    print("interrupted while Caddy is swapped (seconds).")
+    print("interrupted while Caddy is swapped.")
     print()
 
     if not args.yes:
@@ -101,15 +85,13 @@ def main() -> None:
             sys.exit(1)
 
     _migrate(state)
-    print("Migration complete. Disco is now running in dqlite mode.")
+    print("Migration complete; disco is running in dqlite mode.")
 
 
 def _preflight() -> dict:
-    """Read-only checks; abort cleanly on any failure."""
     from disco.utils import caddy
 
-    # Current mode, read from the marker file directly (our own env pin
-    # would lie to config.get_disco_mode()).
+    # Read the marker file directly; pin_mode() hides the real mode.
     if config.DISCO_MODE_FILE and Path(config.DISCO_MODE_FILE).is_file():
         marker = Path(config.DISCO_MODE_FILE).read_text().strip()
         if marker == "dqlite":
@@ -117,17 +99,16 @@ def _preflight() -> dict:
 
     if not SQLITE_DB_PATH.is_file():
         _fail(
-            f"sqlite database not found at {SQLITE_DB_PATH} — is the "
-            "disco-data volume mounted?"
+            f"sqlite database not found at {SQLITE_DB_PATH}; mount the "
+            "disco-data volume"
         )
     if not OLD_CADDY_DATA_MOUNT.is_dir():
         _fail(
-            f"{OLD_CADDY_DATA_MOUNT} not mounted — mount the "
-            "disco-caddy-data volume there (readonly) so TLS certificates "
-            "can be migrated"
+            f"{OLD_CADDY_DATA_MOUNT} not mounted; mount the disco-caddy-data "
+            "volume there (readonly)"
         )
     if not BACKUP_DIR.is_dir():
-        _fail(f"{BACKUP_DIR} not mounted — mount $HOST_HOME/disco/backups there")
+        _fail(f"{BACKUP_DIR} not mounted; mount $HOST_HOME/disco/backups there")
 
     values = _read_sqlite_keyvalues(
         ["DISCO_VERSION", "DISCO_HOST", "HOST_HOME", "CLOUDFLARE_TUNNEL_TOKEN"]
@@ -148,9 +129,8 @@ def _preflight() -> dict:
     existing = asyncio.run(_list_dqlite_services())
     if existing:
         _fail(
-            f"dqlite services already exist ({', '.join(existing)}) — "
-            "clean up a previous failed migration first (docker service rm "
-            "them and remove their volumes), then re-run"
+            f"dqlite services already exist ({', '.join(existing)}); remove "
+            "them and their volumes, then re-run"
         )
 
     node_count = len(
@@ -158,14 +138,11 @@ def _preflight() -> dict:
     )
     if node_count > 1:
         print(
-            "WARNING: this Swarm has multiple nodes. The migration "
-            "bootstraps dqlite on this node only; the reconciler adds the "
-            "other nodes after the daemon starts. This path is tested on "
-            "single-node installs."
+            "WARNING: multi-node Swarm. dqlite is bootstrapped on this node "
+            "only; the reconciler adds the others once the daemon starts."
         )
 
-    # Capture the live Caddy config while the old Caddy is still running —
-    # it carries every project route, redirect and domain verbatim.
+    # Capture the live Caddy config while the old Caddy is still running.
     try:
         caddy_config = caddy.get_config()
     except Exception as exc:
@@ -203,8 +180,7 @@ def _migrate(state: dict) -> None:
 
         print("Stopping the disco daemon")
         _run(["docker", "service", "rm", "disco"], check=False)
-        # Wait for the daemon task container to actually exit so nothing
-        # writes to the sqlite file while we copy it into dqlite.
+        # Nothing may write to the sqlite file while it is copied.
         _wait_for_daemon_stopped()
 
         _bootstrap_dqlite(state)
@@ -230,8 +206,7 @@ def _migrate(state: dict) -> None:
         if tunnel:
             _reattach_cloudflare_tunnel()
     except BaseException:
-        # BaseException so an operator's Ctrl+C mid-migration still rolls
-        # back — by this point the daemon (and possibly Caddy) is gone.
+        # BaseException so Ctrl+C mid-migration still rolls back.
         log.exception("Migration failed; rolling back to sqlite mode")
         _rollback(host_home=host_home, tunnel=tunnel, caddy_swapped=caddy_swapped,
                   marker_flipped=marker_flipped)
@@ -277,8 +252,8 @@ def _bootstrap_dqlite(state: dict) -> None:
         ],
         check=False,  # may exist from a previous attempt
     )
-    # Join the overlay ourselves so the SQL replay below can reach dqlite.
-    # The container id is the default hostname.
+    # Attach this container so the SQL replay can reach dqlite; the container
+    # id is the hostname.
     _run(["docker", "network", "connect", "disco-dqlite", socket.gethostname()])
 
     print("Starting dqlite (bootstrap node)")
@@ -291,20 +266,18 @@ def _bootstrap_dqlite(state: dict) -> None:
 
 
 def _swap_caddy(state: dict) -> None:
-    """The only downtime window: replace the Caddy container with the
-    dqlite-backed global service and seed it with the captured config."""
     from disco.scripts.init import start_caddy_service
     from disco.utils import caddy
 
     tunnel = state["tunnel_token"] is not None
-    print("Swapping Caddy (brief ingress interruption)")
+    print("Swapping Caddy")
     _run(["docker", "container", "stop", "disco-caddy"], check=False)
     _run(["docker", "container", "rm", "disco-caddy"], check=False)
     start_caddy_service(
         state["host_home"], tunnel=tunnel, caddy_image=config.get_caddy_image()
     )
     _wait_for_caddy_socket()
-    print("Seeding the captured Caddy config (all project routes preserved)")
+    print("Seeding the captured Caddy config")
     caddy.set_config(caddy.add_dqlite_config_fragments(state["caddy_config"]))
 
 
@@ -316,29 +289,26 @@ def _rollback(
 
     if marker_flipped:
         config.write_disco_mode("sqlite")
-    # Everything below must resolve to sqlite mode.
     config.pin_mode("sqlite")
 
     if caddy_swapped:
         print("Rollback: restoring the stock Caddy container")
         try:
             _run(["docker", "service", "rm", "disco-caddy"], check=False)
-            # --resume restores the exact pre-migration config from the
-            # untouched disco-caddy-config autosave volume.
+            # --resume restores the pre-migration config from the untouched
+            # disco-caddy-config volume.
             start_caddy_container(host_home, tunnel=tunnel)
             if tunnel:
-                # With tunnel=True the container publishes no ports, so
-                # ingress depends on cloudflared reaching it again.
+                # With tunnel=True the container publishes no ports.
                 docker.add_network_to_container_sync(
                     "disco-caddy", "disco-cloudflare-tunnel", alias="disco-server"
                 )
         except Exception:
             log.exception(
-                "Rollback: could not fully restore the Caddy container; "
-                "restore it manually (docker service rm disco-caddy, re-run "
-                "the old disco-caddy container, and if using a Cloudflare "
-                "tunnel: docker network connect --alias disco-server "
-                "disco-cloudflare-tunnel disco-caddy)"
+                "Rollback: could not restore the Caddy container. Manually: "
+                "docker service rm disco-caddy, re-run the old disco-caddy "
+                "container, and with a Cloudflare tunnel: docker network "
+                "connect --alias disco-server disco-cloudflare-tunnel disco-caddy"
             )
     print("Rollback: restarting the disco daemon in sqlite mode")
     try:
@@ -347,18 +317,13 @@ def _rollback(
     except Exception:
         log.exception("Rollback: could not restart the daemon; restart it manually")
     print(
-        "Rolled back to sqlite mode. dqlite leftovers you may want to clean "
-        "up: the dqlite-* service and volume, and the disco-dqlite network."
+        "Rolled back to sqlite mode. Leftovers to clean up: the dqlite-* "
+        "service and volume, and the disco-dqlite network."
     )
 
 
 def _reattach_cloudflare_tunnel() -> None:
-    """Attach the local Caddy task container to the tunnel network.
-
-    Note: this attach does not survive the Caddy task being rescheduled;
-    Cloudflare tunnel semantics on dqlite mode (especially multi-node) are
-    still being worked out.
-    """
+    # Does not survive the Caddy task being rescheduled.
     from disco.scripts.init import _resolve_caddy_container
     from disco.utils import docker
 
@@ -369,8 +334,8 @@ def _reattach_cloudflare_tunnel() -> None:
         )
     except Exception:
         log.exception(
-            "Could not attach the Cloudflare tunnel network to the new Caddy; "
-            "attach it manually: docker network connect --alias disco-server "
+            "Could not attach the Cloudflare tunnel network to the new Caddy. "
+            "Manually: docker network connect --alias disco-server "
             "disco-cloudflare-tunnel <disco-caddy task container>"
         )
 
@@ -449,21 +414,14 @@ def _wait_for_caddy_socket() -> None:
 
 
 def _wait_for_daemon_stopped() -> None:
-    """Block until no disco task container is left running.
-
-    Exact-prefix match on container names ("disco.<slot>.<taskid>") rather
-    than a docker name filter, whose regex/substring semantics could match
-    unrelated containers. Raises after 120s: proceeding while the old
-    daemon can still write would silently lose data from the migration.
-    """
+    # Prefix-match names; a docker name filter substring-matches.
     for _ in range(120):
         names = _run(["docker", "ps", "--format", "{{.Names}}"]).splitlines()
         if not any(name.startswith("disco.") for name in names):
             return
         time.sleep(1)
     raise Exception(
-        "old disco daemon container did not stop; not copying the database "
-        "while it can still be written to"
+        "old disco daemon container did not stop; refusing to copy the database"
     )
 
 

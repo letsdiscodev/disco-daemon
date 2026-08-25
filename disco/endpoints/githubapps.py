@@ -266,11 +266,8 @@ async def list_github_repos():
 async def get_installation_access_token(
     installation_id: Annotated[int, Path()],
 ):
-    # Validate the installation exists, then close the session: dqlite is a
-    # single-writer store, so we must NOT hold a transaction open across
-    # get_access_token_for_installation_id() below, which opens (and commits)
-    # its own session to refresh + persist the token. This is a pure read, so
-    # use the read-only session.
+    # Don't hold a session open across get_access_token_for_installation_id,
+    # which opens and commits its own.
     async with AsyncReadSession.begin() as dbsession:
         installation = await get_github_app_installation_by_id(
             dbsession, installation_id
@@ -286,7 +283,6 @@ async def get_installation_access_token(
         raise HTTPException(
             status_code=502, detail="Failed to get access token from GitHub"
         ) from e
-    # Re-read the (now updated) expiry in a fresh short-lived read session.
     async with AsyncReadSession.begin() as dbsession:
         installation = await get_github_app_installation_by_id(
             dbsession, installation_id

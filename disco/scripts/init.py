@@ -58,11 +58,7 @@ def main() -> None:
 
     docker_swarm_create_disco_encryption_key()
 
-    # Persist the mode to the disco-data volume before any DB access so
-    # every later component (this process included) resolves the same mode.
-    # The sqlite flow has the volume mounted (it writes the sqlite file
-    # in-process); the dqlite flow may not, so it goes through a one-shot
-    # container instead.
+    # Write the mode marker before any DB access.
     if disco_mode == "sqlite":
         config.write_disco_mode("sqlite")
     else:
@@ -133,9 +129,7 @@ def _init_dqlite_mode(
     start_first_dqlite_service_sync(disco_name)
     print("Waiting for dqlite to be ready")
     wait_for_dqlite_service_healthy_sync(dqlite_service_name(disco_name))
-    # Strip BOOTSTRAP_ALLOWED so a future volume loss can't accidentally
-    # bootstrap a second cluster. This rolls the task once; dqlite-demo
-    # picks up the persisted bind address (a DNS name) and resumes.
+    # Strip BOOTSTRAP_ALLOWED so a volume loss can't bootstrap a second cluster.
     print("Disabling bootstrap mode")
     strip_bootstrap_allowed_sync(disco_name)
     wait_for_dqlite_service_healthy_sync(dqlite_service_name(disco_name))
@@ -254,8 +248,6 @@ def create_caddy_socket_dir(host_home: str) -> None:
 
 
 def write_disco_mode_to_volume(image: str, mode: str) -> None:
-    # One-shot container write so this works no matter which mounts the
-    # installer gave the init container.
     _run_cmd(
         [
             "docker",
@@ -272,12 +264,6 @@ def write_disco_mode_to_volume(image: str, mode: str) -> None:
 
 
 def start_caddy_container(host_home: str, tunnel: bool) -> None:
-    """sqlite mode: run stock Caddy as a plain container on this node.
-
-    TLS certs live on the disco-caddy-data volume and config persists via
-    Caddy's autosave on the disco-caddy-config volume; --resume makes the
-    autosave win over the initconfig once it exists.
-    """
     more_args = []
     if not tunnel:
         more_args += [
@@ -327,15 +313,6 @@ def start_caddy_container(host_home: str, tunnel: bool) -> None:
 
 
 def start_caddy_service(host_home: str, tunnel: bool, caddy_image: str) -> None:
-    """dqlite mode: run Caddy as a global Swarm service (one task per node) for HA ingress.
-
-    TLS certs and routing config live in dqlite (shared by all instances), so no
-    cert/config volumes. Each task starts from the baked-in minimal bootstrap and
-    the config-sync module pulls the real config from dqlite; the daemon seeds the
-    base config on startup. Ports 80/443 are published in host mode to preserve
-    the real client IP. The bind-mount source dirs are created by Swarm on each
-    node if absent.
-    """
     from disco.utils.dqlite import get_local_dqlite_address
 
     publish_args = []
@@ -362,8 +339,6 @@ def start_caddy_service(host_home: str, tunnel: bool, caddy_image: str) -> None:
             "--network",
             "disco-dqlite",
             "--env",
-            # One reachable node is enough to bootstrap; go-dqlite discovers the
-            # rest. The reconciler keeps this in sync as nodes join/leave.
             f"DISCO_DQLITE_NODES={get_local_dqlite_address()}",
             "--mount",
             f"type=bind,source={host_home}/disco/caddy-socket,target=/disco/caddy-socket",
@@ -396,9 +371,6 @@ def create_static_site_dir(host_home: str) -> None:
 
 
 def create_backups_dir(host_home: str) -> None:
-    # Holds the dqlite backup file (latest.db + rotated timestamped copies).
-    # Bind-mounted into the daemon container and into one-shot tooling
-    # (disco_update, disco_restore) that needs to read/write it.
     os.makedirs(f"/host{host_home}/disco/backups", exist_ok=True)
 
 
@@ -411,14 +383,6 @@ def create_docker_config(host_home: str) -> None:
 
 
 def _resolve_caddy_container() -> str:
-    """Name/id of the local Caddy container to attach networks to.
-
-    sqlite mode: the plain container is named disco-caddy. dqlite mode: Caddy
-    is a global Swarm service, so the local task container has a generated
-    name — resolve it via docker ps. Note that an out-of-band network attach
-    to a service task does not survive the task being rescheduled; multi-node
-    tunnel semantics are still an open question for dqlite mode.
-    """
     if not config.is_dqlite_mode():
         return "disco-caddy"
     for _ in range(30):
@@ -478,8 +442,6 @@ def start_disco_daemon(host_home: str, image: str) -> None:
             "disco-dqlite",
         ]
     else:
-        # Cert storage and Caddy's autosaved config live on volumes the
-        # daemon needs to read (project export) and update tasks rewrite.
         mode_args = [
             "--mount",
             "source=disco-caddy-data,target=/disco/caddy/data",
@@ -519,7 +481,6 @@ def start_disco_daemon(host_home: str, image: str) -> None:
             "--env",
             f"DISCO_IMAGE={image}",
             "--env",
-            # Belt and braces on top of the disco-mode marker file.
             f"DISCO_MODE={config.get_disco_mode()}",
             "--secret",
             "disco_encryption_key",
@@ -619,8 +580,7 @@ def _seed_initial_state(
 
 
 def init_database_script():
-    # dqlite-mode one-shot (disco_init_db): runs on the disco-dqlite network
-    # without the disco-data mount, so pin the mode explicitly.
+    # disco_init_db runs without the disco-data mount, so pin the mode.
     config.pin_mode("dqlite")
     disco_host = os.environ.get("DISCO_HOST")
     disco_advertise_addr = os.environ.get("DISCO_ADVERTISE_ADDR")
@@ -630,7 +590,6 @@ def init_database_script():
     assert disco_advertise_addr is not None
     assert host_home is not None
 
-    # Now that dqlite is ready, create the database
     create_database()
 
     print("Setting initial state in internal database")

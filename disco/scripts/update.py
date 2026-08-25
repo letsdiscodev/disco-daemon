@@ -59,9 +59,6 @@ def main() -> None:
                 return
     print(f"Installed version: {installed_version}")
     print(f"New version: {disco.__version__}")
-    # Pre-update backup, local-only. Distribution happens later via the
-    # new daemon's hourly cron once it's healthy. This file is for
-    # manual operator inspection if something goes wrong.
     try:
         pre = _persistent_backup_dir() / special_filename(
             "pre-update-", datetime.now(timezone.utc)
@@ -69,7 +66,7 @@ def main() -> None:
         print(f"Taking pre-update backup at {pre}")
         make_local_backup_sync(pre)
     except Exception:
-        log.exception("Pre-update backup failed; continuing with update")
+        log.exception("Pre-update backup failed")
     print("Stopping existing Disco processes")
     try:
         stop_disco_daemon()
@@ -102,8 +99,6 @@ def main() -> None:
         host_home = keyvalues.get_value_sync(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
     start_disco_daemon(host_home, image)
-    # Post-update backup, local-only. Captures the state immediately after
-    # all version-tasks have completed.
     try:
         post = _persistent_backup_dir() / special_filename(
             "post-update-", datetime.now(timezone.utc)
@@ -111,19 +106,13 @@ def main() -> None:
         print(f"Taking post-update backup at {post}")
         make_local_backup_sync(post)
     except Exception:
-        log.exception("Post-update backup failed; update is otherwise complete")
+        log.exception("Post-update backup failed")
     with Session.begin() as dbsession:
         save_done_updating(dbsession)
 
 
 def _persistent_backup_dir() -> pathlib.Path:
-    """Where pre/post-update backups survive this --rm container.
-
-    BACKUP_DIR when the host backups directory is actually mounted;
-    otherwise fall back to the disco-data volume — a pre-0.33 daemon
-    launches the update container without the backups mount, and a backup
-    written to the container's own filesystem would vanish with it.
-    """
+    # A pre-0.33 daemon starts the update container without the backups mount.
     if os.path.ismount(str(BACKUP_DIR)):
         return BACKUP_DIR
     fallback = pathlib.Path("/disco/data/backups")
@@ -186,9 +175,6 @@ def task_0_32_x(image: str) -> None:
     with ReadSession.begin() as dbsession:
         host_home = keyvalues.get_value_sync(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
-    # Local pre/post-update backups now run in both modes; make sure the
-    # host-side backups directory the daemon and update containers mount
-    # exists (fresh installs get it from init).
     _run_cmd(
         [
             "docker",

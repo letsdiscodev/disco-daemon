@@ -1,11 +1,7 @@
-"""Restore disco-daemon's dqlite cluster from a backup file.
+"""Restore the dqlite cluster from a backup file.
 
-SSH-gated CLI (not an HTTP endpoint). Operator runs this from a manager
-host with Docker socket access. Works whether or not the disco daemon
-is currently running. Destructive: replaces the keep-node's dqlite data
-with the backup's contents.
-
-Typical invocation:
+Run from a manager host, with or without the daemon running. Destructive:
+the keep node's dqlite data is wiped and replaced by the backup.
 
     sudo docker run --rm -it \\
         -v /var/run/docker.sock:/var/run/docker.sock \\
@@ -17,8 +13,7 @@ Typical invocation:
             --keep-node node-A \\
             --remove-nodes node-C,node-D,node-E
 
-The --network disco-dqlite bind matters: this script connects to the
-restored dqlite via SQLAlchemy to replay the backup's SQL.
+--network disco-dqlite is required: the backup is replayed over SQLAlchemy.
 """
 
 from __future__ import annotations
@@ -52,8 +47,7 @@ CONFIRM_TOKEN = "RESTORE"
 
 
 def main() -> None:
-    # This tool only exists in dqlite mode; it runs in a one-shot container
-    # that doesn't mount disco-data, so pin the mode explicitly.
+    # Runs in a one-shot container without disco-data, so pin the mode.
     config.pin_mode("dqlite")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -111,21 +105,21 @@ def main() -> None:
     rejoin_nodes = sorted(swarm_names - {args.keep_node} - set(remove_nodes))
 
     print()
-    print("===== Restore plan =====")
+    print("Restore plan")
     print(f"  Backup file:       {backup_path}")
     print(f"  Disco version:     {backup_version}")
     print(f"  Keep node:         {args.keep_node}")
-    print("                     (its current dqlite data WILL BE DESTROYED")
-    print("                      and replaced by the backup's contents)")
+    print("                     (current dqlite data is wiped and")
+    print("                      replaced by the backup)")
     if rejoin_nodes:
         print(f"  Survivors to rejoin (data wiped, join fresh): {', '.join(rejoin_nodes)}")
     if remove_nodes:
         print(f"  Force-remove from Swarm: {', '.join(remove_nodes)}")
     print()
-    print("This is destructive and not automatically reversible.")
+    print("This is destructive and not reversible.")
     print(
-        "A backup of the keep-node's pre-restore data dir is left at "
-        "/data/<bind>.backup-<ts>/ inside the dqlite volume."
+        "The keep node's current dqlite data is not backed up; take a backup "
+        "first if you need it."
     )
     print()
 
@@ -161,7 +155,7 @@ def _read_disco_version_from_backup(path: Path) -> str | None:
 
 
 def _list_swarm_nodes() -> dict[str, str]:
-    """Return {node_id: disco-name} for all Swarm nodes that have one."""
+    """{node_id: disco-name} for Swarm nodes that have one."""
     out = subprocess.check_output(
         ["docker", "node", "ls", "--format", "{{.ID}}"],
         text=True,
@@ -192,17 +186,12 @@ async def _do_restore(
 ) -> None:
     started = time.monotonic()
 
-    # Phase 1: stop every dqlite-* service so volumes can be wiped.
-    # Use the same helper the daemon uses so we never accidentally pick
-    # up unrelated services that happen to start with "dqlite-".
     existing_services = await list_dqlite_services()
     for svc in existing_services:
         log.info("Scaling %s to 0", svc)
         await async_call(["docker", "service", "scale", f"{svc}=0", "--detach"])
-    # Actively wait until tasks have exited and released their volumes
-    # rather than blind-sleeping. `docker service scale --detach` returns
-    # before the container actually stops; mounting the same volume from
-    # another container would race the still-running task.
+    # scale --detach returns before tasks stop; the wipe job must not mount a
+    # volume a task still holds.
     for svc in existing_services:
         try:
             await wait_for_service_tasks_stopped(svc, timeout_seconds=30)
@@ -211,12 +200,10 @@ async def _do_restore(
                 "Service %s did not stop within 30s; continuing", svc,
             )
 
-    # Phase 2: wipe keep-node's volume so dqlite-demo will fresh-bootstrap.
     log.info("Wiping dqlite volume on keep-node %s", keep_node)
     await wipe_dqlite_volume_via_job(keep_node)
 
-    # Phase 3: scale keep-node service back to 1 WITH BOOTSTRAP_ALLOWED so
-    # the fresh container starts a single-node cluster of its own.
+    # BOOTSTRAP_ALLOWED so the fresh container starts its own single-node cluster.
     keep_service = dqlite_service_name(keep_node)
     log.info("Adding BOOTSTRAP_ALLOWED=true to %s", keep_service)
     await async_check_call([
@@ -227,16 +214,11 @@ async def _do_restore(
     await scale_dqlite_service(keep_node, 1)
     await wait_for_dqlite_service_healthy(keep_service)
 
-    # Phase 4: replay backup's SQL into the fresh dqlite.
     log.info("Replaying backup SQL into fresh cluster")
     await replay_sqlite_file(backup_path)
 
-    # Phase 5: strip BOOTSTRAP_ALLOWED so a future task restart doesn't
-    # accidentally create a second single-node cluster. We only roll the
-    # service if the env was actually added in Phase 3 — in some
-    # restore scenarios the original service already had no
-    # BOOTSTRAP_ALLOWED, and an --env-rm --force would gratuitously
-    # bounce the just-restored container.
+    # Only roll the service if the env is present; --env-rm --force would bounce
+    # the restored container otherwise.
     inspect_out, _, _ = await async_check_call([
         "docker", "service", "inspect", "--format",
         "{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}",
@@ -254,19 +236,17 @@ async def _do_restore(
         ])
         await wait_for_dqlite_service_healthy(keep_service)
     else:
-        log.info("%s has no BOOTSTRAP_ALLOWED env to strip; skipping roll", keep_service)
+        log.info("%s has no BOOTSTRAP_ALLOWED env; not rolling", keep_service)
 
-    # Phase 6: rejoin survivors (wipe + restart).
     for rn in rejoin_nodes:
         try:
-            log.info("Rejoining %s (wipe + restart)", rn)
+            log.info("Rejoining %s", rn)
             await wipe_dqlite_volume_via_job(rn)
             await scale_dqlite_service(rn, 1)
             await wait_for_dqlite_service_healthy(dqlite_service_name(rn))
         except Exception:
             log.exception("Failed to rejoin %s; continuing", rn)
 
-    # Phase 7: force-remove gone nodes from Swarm.
     name_to_id = {n: i for i, n in swarm_names_by_id.items()}
     for rn in remove_nodes:
         node_id = name_to_id.get(rn)

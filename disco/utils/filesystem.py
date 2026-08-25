@@ -121,14 +121,11 @@ async def copy_static_site_src_to_deployment_folder(
     await loop.run_in_executor(None, copytree_sync)
 
 
-# Caddy TLS certs: in dqlite mode they live in the caddy_data table (managed by
-# the Caddy dqlite storage module); in sqlite mode they live on the
-# disco-caddy-data volume, mounted in the daemon at /disco/caddy/data. Keys
-# mirror Caddy's certmagic layout relative to its storage root in both cases.
+# certmagic storage keys; dqlite mode reads the caddy_data table, sqlite mode
+# reads the disco-caddy-data volume.
 _CERT_STORAGE_PREFIX = "certificates/acme-v02.api.letsencrypt.org-directory"
 
-# The official Caddy image sets XDG_DATA_HOME=/data, so certmagic's storage
-# root inside the disco-caddy-data volume is <volume>/caddy.
+# The Caddy image sets XDG_DATA_HOME=/data, so the storage root is <volume>/caddy.
 _SQLITE_MODE_CADDY_STORAGE_ROOT = "/disco/caddy/data/caddy"
 
 

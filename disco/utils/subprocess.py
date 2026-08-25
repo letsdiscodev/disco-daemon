@@ -11,15 +11,6 @@ async def call(
     stdin: str | None = None,
     timeout: float | None = None,
 ) -> tuple[list[str], list[str], subprocess.Process]:
-    """Run a subprocess and capture its output.
-
-    When ``timeout`` is set (seconds), the process is killed and a
-    ``TimeoutError`` is raised if it does not finish in time. This matters for
-    docker/dqlite commands that can hang indefinitely (e.g. ``docker exec`` into
-    a half-dead container during cluster recovery) and would otherwise block the
-    caller — and any lock it holds — forever. Defaults to ``None`` (no timeout)
-    to preserve existing behaviour for long-running commands like image pulls.
-    """
     process = await asyncio.create_subprocess_exec(
         *args,
         stdin=subprocess.PIPE if stdin is not None else None,
@@ -35,7 +26,6 @@ async def call(
         )
     except (asyncio.TimeoutError, TimeoutError):
         process.kill()
-        # Reap the killed process so we don't leak a zombie / orphaned pipes.
         try:
             await process.wait()
         except Exception:

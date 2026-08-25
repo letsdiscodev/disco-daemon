@@ -1,18 +1,3 @@
-"""Trigger a backup-and-push when an API key is created or deleted.
-
-Subscribes to disco's internal event bus and reacts to apiKey:* events.
-This is the "immediate freshness" path for the emergency-auth use case:
-a newly-created admin key needs to be in every manager's local backup
-file as soon as possible, in case the cluster locks up before the next
-hourly cron runs.
-
-Backup pushes can take ~5-30s; we don't want the API-key CRUD HTTP
-response to block on that. So this listener runs as its own long-lived
-asyncio task, draining the event queue and triggering backups out-of-
-band. If a burst of API-key changes happens we coalesce — only one
-push runs at a time.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -27,7 +12,6 @@ _INTERESTING_EVENT_TYPES = {"apiKey:created", "apiKey:removed"}
 
 
 async def watch_for_apikey_events_forever() -> None:
-    """Top-level loop. Cancellable; tolerates exceptions and re-subscribes."""
     while True:
         try:
             await _watch_once()
@@ -46,17 +30,14 @@ async def _watch_once() -> None:
             event = await queue.get()
             if event.type not in _INTERESTING_EVENT_TYPES:
                 continue
-            # Coalesce: drain any further matching events queued behind this one,
-            # then do a single push capturing the latest state.
+            # Drain the burst so it produces a single push.
             while not queue.empty():
                 try:
                     next_event = queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
                 if next_event.type not in _INTERESTING_EVENT_TYPES:
-                    # Put it back at the head — except asyncio.Queue is FIFO with
-                    # no put-front. We process it later; backup will just run twice
-                    # in the unlikely worst case.
+                    # Dropped; asyncio.Queue has no put-front.
                     pass
             try:
                 log.info("API key change observed; triggering backup-and-push")

@@ -1,25 +1,3 @@
-"""Backup the live dqlite database to a portable SQLite file.
-
-We can't `.backup` directly against dqlite's data dir — dqlite uses a
-custom VFS and the on-disk layout isn't a plain SQLite file. So we
-materialize a snapshot through the daemon's own SQL connection, stage
-it in a stdlib in-memory SQLite, and use Python's online backup API
-(sqlite3.Connection.backup) to write a clean .db file out.
-
-The resulting file is a standard SQLite database. Operators can open it
-with the `sqlite3` CLI (e.g. `sqlite3 latest.db .schema`) without any
-disco-specific tooling.
-
-Retention is age-based, applied during periodic pushes:
-  - last 4 hours: keep every periodic backup
-  - 4h-7d: keep one per day (the newest in each day)
-  - 7d-13w: keep one per week
-  - older: delete
-
-Backups named with `pre-update-`, `post-update-`, or `pre-recovery-`
-prefixes are exempt from thinning and kept indefinitely.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -44,18 +22,18 @@ LATEST_FILENAME = "latest.db"
 PERIODIC_FILENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z\.db$")
 SPECIAL_PREFIXES = ("pre-update-", "post-update-", "pre-recovery-")
 
-# Retention.
+# Retention for periodic backups: keep everything from the last 4 hours,
+# one per day up to 7 days, one per week up to 13 weeks, then delete.
+# Special-prefixed backups are never thinned.
 KEEP_RECENT_HOURS = 4
 KEEP_DAILY_DAYS = 7
 KEEP_WEEKLY_WEEKS = 13
 
-# Backup size monitoring thresholds (#3).
 SIZE_WARN_BYTES = 50 * 1024 * 1024
 SIZE_ERROR_BYTES = 500 * 1024 * 1024
 
 
 def utc_iso_filename(when: datetime) -> str:
-    """Filename-safe UTC ISO timestamp, e.g. 2026-05-23T14-30-00Z."""
     if when.tzinfo is None:
         raise ValueError("when must be timezone-aware")
     s = when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
@@ -72,14 +50,6 @@ def special_filename(prefix: str, when: datetime) -> str:
 
 
 def _adapt_value(value):
-    """Coerce SQLAlchemy row values to types stdlib sqlite3 will accept.
-
-    Native-passthrough for the types sqlite3 already understands. Datetime
-    and date are normalized to ISO 8601 strings. Anything else triggers a
-    loud error rather than silently producing a broken backup — a future
-    schema migration that adds Decimal/UUID/bytes/JSON columns should
-    surface here so we update the adapter intentionally.
-    """
     if value is None:
         return value
     if isinstance(value, (str, int, float, bool, bytes, bytearray)):
@@ -95,8 +65,6 @@ def _adapt_value(value):
 
 
 async def make_local_backup(target: pathlib.Path) -> None:
-    """Write a portable .db file at `target` containing a snapshot of the
-    live dqlite database. Atomic via tmp+rename."""
     log.info("Creating dqlite backup at %s", target)
 
     mem = sqlite3.connect(":memory:")
@@ -127,7 +95,6 @@ async def make_local_backup(target: pathlib.Path) -> None:
 
 
 def _build_schema_in_mem(mem: sqlite3.Connection) -> None:
-    """Mirror disco's schema into the in-memory SQLite using the sqlite dialect."""
     dialect = sqlite_dialect_module.dialect()
     for table in base_metadata.sorted_tables:
         ddl = str(CreateTable(table).compile(dialect=dialect)).strip()
@@ -140,17 +107,8 @@ def _build_schema_in_mem(mem: sqlite3.Connection) -> None:
 
 
 async def _copy_data_into_mem(mem: sqlite3.Connection) -> None:
-    """Snapshot-isolated copy of every table into the in-memory SQLite.
-
-    Acquires the dqlite write lock up-front so the snapshot is pinned for the
-    whole copy (a deferred read transaction can lose its snapshot if promoted to
-    write later or if other connections commit between our SELECTs; an IMMEDIATE
-    transaction pins it, keeping cross-table reads consistent — important for FK
-    validity on restore). The write engine runs with session_mode="immediate",
-    so `session.begin()` already opens the transaction as BEGIN IMMEDIATE; an
-    additional explicit BEGIN IMMEDIATE would nest and raise "cannot start a
-    transaction within a transaction".
-    """
+    # The write engine's session.begin() is already BEGIN IMMEDIATE, which pins
+    # the snapshot across tables; an explicit BEGIN IMMEDIATE here would nest.
     async with AsyncSession() as session:
         async with session.begin():
             for table in base_metadata.sorted_tables:
@@ -168,11 +126,6 @@ async def _copy_data_into_mem(mem: sqlite3.Connection) -> None:
 
 
 def replace_latest(latest_path: pathlib.Path, source: pathlib.Path) -> None:
-    """Atomically point `latest.db` at the content of `source`.
-
-    Uses shutil.copyfile so we don't materialize the whole file in
-    memory — backups can grow to hundreds of MB.
-    """
     latest_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = latest_path.with_suffix(latest_path.suffix + ".tmp")
     shutil.copyfile(source, tmp)
@@ -180,11 +133,6 @@ def replace_latest(latest_path: pathlib.Path, source: pathlib.Path) -> None:
 
 
 def thin(backup_dir: pathlib.Path, now: datetime) -> list[pathlib.Path]:
-    """Apply retention policy to periodic backups. Returns deleted paths.
-
-    Special-prefixed backups (pre-update-, post-update-, pre-recovery-)
-    are never touched. `latest.db` is never touched.
-    """
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
 
@@ -224,7 +172,6 @@ def thin(backup_dir: pathlib.Path, now: datetime) -> list[pathlib.Path]:
             if week not in seen_weeks:
                 seen_weeks.add(week)
                 keep.add(f)
-        # else: too old, drop
 
     deleted: list[pathlib.Path] = []
     for _, f in files:
@@ -233,14 +180,11 @@ def thin(backup_dir: pathlib.Path, now: datetime) -> list[pathlib.Path]:
                 f.unlink()
                 deleted.append(f)
             except FileNotFoundError:
-                # Concurrent pull_backup on another caller may have
-                # already unlinked it; treat as a no-op.
                 pass
     return deleted
 
 
 def list_backups(backup_dir: pathlib.Path) -> Iterable[pathlib.Path]:
-    """Iterate over .db files (excluding tmp files) in `backup_dir`."""
     if not backup_dir.exists():
         return
     for f in sorted(backup_dir.iterdir()):
@@ -248,23 +192,11 @@ def list_backups(backup_dir: pathlib.Path) -> Iterable[pathlib.Path]:
             yield f
 
 
-# Serialises concurrent calls from the hourly cron and the API-key event
-# listener. Two simultaneous backups would race on latest.db, dispatch
-# two global-jobs, and produce non-deterministic latest contents on each
-# receiving manager. The lock makes the second caller wait; in practice
-# both wake-up sources fire infrequently so the wait is short.
+# The hourly cron and the API-key listener would otherwise race on latest.db.
 _periodic_backup_lock = asyncio.Lock()
 
 
 async def make_and_push_periodic_backup() -> None:
-    """Create a periodic backup on local disk and distribute it (dqlite mode).
-
-    On every call: writes /disco/backups/<UTC-ISO>Z.db, refreshes
-    latest.db. In dqlite mode, additionally dispatches the global-job to
-    fan the file out to every manager; the receiving job also runs
-    thinning on each node. In sqlite mode (single daemon node), thinning
-    runs locally instead.
-    """
     from disco import config
     from disco.utils.backup_distribution import push_backup_to_all_managers
 
@@ -281,14 +213,8 @@ async def make_and_push_periodic_backup() -> None:
 
 
 def make_local_backup_sync(target: pathlib.Path) -> None:
-    """Sync wrapper for non-async callers (e.g. the update script).
-
-    Disposes the module-global async engine before running. asyncio.run
-    creates a fresh event loop each call, but the SQLAlchemy engine is
-    process-global and its connection pool is bound to the first loop
-    it saw. Calling this twice in one process (pre + post-update in
-    disco_update) would otherwise reuse a destroyed loop's connections.
-    """
+    # The engine pool is bound to the first event loop it saw; dispose it so
+    # a second asyncio.run in the same process (disco_update) doesn't reuse it.
     from disco.models.db import get_async_engine
 
     async def run() -> None:
@@ -300,24 +226,13 @@ def make_local_backup_sync(target: pathlib.Path) -> None:
     asyncio.run(run())
 
 
-# iterdump emits these around the actual statements; the caller's outer
-# transaction handles commit semantics so we strip them.
+# iterdump's own BEGIN/COMMIT; the session transaction handles commit.
 _TRANSACTION_BOUNDARY_RE = re.compile(
     r"^(BEGIN(?:\s+TRANSACTION)?|COMMIT)\s*;?\s*$", re.I
 )
 
 
 async def replay_sqlite_file(path: pathlib.Path) -> None:
-    """Stream a SQLite file's iterdump output into the live database.
-
-    Replays schema DDL, all rows, and the alembic_version row in a single
-    transaction through the module-global engine. Used by disco_restore
-    (backup file -> fresh dqlite) and disco_migrate_to_dqlite (live sqlite
-    file -> fresh dqlite). Statements stream straight from iterdump —
-    only its outer BEGIN/COMMIT markers are skipped (we control commit) —
-    so the whole dump is never buffered in memory; sources can be large
-    (api_key_usages grows with every authenticated request).
-    """
     from sqlalchemy import text as sql_text
 
     src = sqlite3.connect(f"file:{path}?mode=ro", uri=True)

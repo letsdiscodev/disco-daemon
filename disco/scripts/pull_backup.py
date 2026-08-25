@@ -1,13 +1,10 @@
-"""Receiver side of the backup distribution global-job.
+"""Receiver side of the backup-push global-job, run once on each manager.
 
-Runs as a one-shot container on each manager (via --mode global-job).
-Pulls the named backup file from the daemon's internal HTTP endpoint,
-atomically lands it at /cache/<filename>, refreshes /cache/latest.db,
-and (for periodic backups) thins old backups according to retention.
+    BACKUP_URL=... BACKUP_TOKEN=... BACKUP_FILENAME=... BACKUP_KIND=periodic \
+        python -m disco.scripts.pull_backup
 
-The bind mount maps the host's ${HOST_HOME}/disco/backups to /cache, so
-writes here persist on the manager's host disk and become readable by
-the daemon when it runs on that node.
+Pulls the backup into /cache (the host's disco/backups dir), refreshes
+latest.db, and thins old periodic backups.
 """
 
 from __future__ import annotations
@@ -41,9 +38,6 @@ def main() -> None:
         headers={"Authorization": f"Bearer {token}"},
     )
     tmp = target.with_suffix(target.suffix + ".tmp")
-    # Bounded timeout so a hung HTTP server doesn't deadlock the Swarm
-    # task indefinitely (which would in turn make the parent push job's
-    # _wait_for_global_job hit its own timeout much later).
     with urllib.request.urlopen(req, timeout=120) as resp:
         with open(tmp, "wb") as f:
             shutil.copyfileobj(resp, f)

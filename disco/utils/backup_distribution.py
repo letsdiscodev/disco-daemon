@@ -1,18 +1,3 @@
-"""Fan a backup file out to every manager's local disk via a Swarm global-job.
-
-The daemon already has the backup on its own host (it just wrote it).
-We dispatch a one-shot service (--mode global-job, constrained to
-managers) where each task curl-pulls the file from the daemon's
-internal HTTP endpoint and writes it to that manager's host.
-
-Why HTTP pull rather than env-var push: SQLite backup files routinely
-exceed safe env-var sizes (and Docker config / secret limits). HTTP
-pull on the disco-main overlay scales to any reasonable backup size.
-
-Token machinery: a fresh short-lived bearer is minted per push, passed
-to the job via env var, and revoked when the job is removed.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -35,19 +20,9 @@ async def push_backup_to_all_managers(
     is_periodic: bool = True,
     timeout_seconds: int = 300,
 ) -> None:
-    """Distribute the named backup file to every manager.
-
-    Assumes the file already exists at /disco/backups/<backup_filename>
-    on the daemon's host (the daemon just wrote it). After this call
-    returns, the same file exists on every manager's host with the
-    matching name, latest.db is refreshed everywhere, and (for periodic
-    backups) thinning has run on each receiver.
-    """
     job_name = f"disco-backup-push-{uuid.uuid4().hex[:12]}"
 
-    # One pull per manager. A small slack lets us tolerate Swarm retrying
-    # a task that hit a transient transport error before the entrypoint
-    # ran; without slack the second attempt's pull would 401.
+    # One use per manager, plus slack so a Swarm task retry doesn't 401.
     manager_count = await _count_manager_nodes()
     token = await backup_tokens.issue(
         uses=max(manager_count + 2, 2),
@@ -57,6 +32,7 @@ async def push_backup_to_all_managers(
     async with AsyncReadSession.begin() as dbsession:
         host_home = await keyvalues.get_value_str(dbsession, "HOST_HOME")
 
+    # Tasks pull over HTTP; backup files exceed env-var and Docker config limits.
     image = disco.daemon_image()
     args = [
         "docker", "service", "create",
@@ -87,7 +63,6 @@ async def push_backup_to_all_managers(
 
 
 async def _count_manager_nodes() -> int:
-    """Number of Swarm manager nodes — used to size the token's use-count."""
     stdout, _, _ = await check_call([
         "docker", "node", "ls",
         "--filter", "role=manager",
@@ -97,12 +72,7 @@ async def _count_manager_nodes() -> int:
 
 
 async def cleanup_orphaned_push_jobs() -> None:
-    """Remove backup-push global-job services left over from a previous
-    daemon process. A daemon crash mid-push leaves the in-memory bearer
-    token gone and the `finally`-block `service rm` un-run, so the job
-    service lingers. Run this on daemon startup before issuing new
-    pushes, otherwise these dead services pile up.
-    """
+    # A daemon crash mid-push skips the service rm in push_backup_to_all_managers.
     try:
         stdout, _, _ = await check_call([
             "docker", "service", "ls",
@@ -119,12 +89,6 @@ async def cleanup_orphaned_push_jobs() -> None:
 
 
 async def _wait_for_global_job(job_name: str, timeout_seconds: int) -> None:
-    """Block until every task of a global-job service has finished.
-
-    `docker service ps` on a global-job shows tasks in "Complete" state
-    once they exit successfully. We declare success when no task is
-    still Running and no task is Failed/Rejected.
-    """
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         stdout, _, _ = await check_call([

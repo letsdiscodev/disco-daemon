@@ -57,11 +57,6 @@ async def lifespan(app: FastAPI):
     if config.is_dqlite_mode():
         dqlite_tasks.append(loop.create_task(watch_swarm_events_forever()))
         dqlite_tasks.append(loop.create_task(watch_for_apikey_events_forever()))
-        # Seed the base Caddy config (disco_host route etc.) into the local
-        # Caddy if absent; the config-sync module then publishes it to dqlite
-        # for all instances. Idempotent and best-effort. (In sqlite mode the
-        # stock Caddy container gets its config from the initconfig volume +
-        # autosave instead.)
         async with AsyncReadSession() as dbsession:
             disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
             tunnel_token = await keyvalues.get_value(
@@ -72,9 +67,7 @@ async def lifespan(app: FastAPI):
     await cleanup_deployments_on_disco_boot()
     await enqueue_deployments_on_disco_boot()
     if config.is_dqlite_mode():
-        # Clean up any backup-push global-job services left over from a
-        # previous daemon process (crashed mid-push, etc.). Must run before
-        # any push trigger fires.
+        # Must run before any push trigger fires.
         await cleanup_orphaned_push_jobs()
     yield
     async_worker.stop()

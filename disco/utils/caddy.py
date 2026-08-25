@@ -18,11 +18,9 @@ log = logging.getLogger(__name__)
 HEADERS = {"Accept": "application/json"}
 BASE_URL = "http://disco-caddy"
 
-# Edit-loop tuning. Disco edits the *local* Caddy over the unix socket; the
-# config-sync module then publishes the result to dqlite. Two guards keep this
-# correct: a gate that waits until the local Caddy holds the config published in
-# dqlite (so we never edit a stale/bootstrap config that the sync module would
-# discard), and Caddy's native If-Match optimistic concurrency (retry on 412).
+# Edits go to the local Caddy; the config-sync module publishes them to dqlite.
+# Wait until the local Caddy holds the published config before editing, or the
+# sync module discards the edit. 412 means an If-Match conflict, retry.
 MAX_EDIT_ATTEMPTS = 12
 _GATE_TIMEOUT = 30.0
 _GATE_POLL = 0.5
@@ -56,19 +54,12 @@ def _configs_equal(a: bytes | None, b: bytes | None) -> bool:
 async def _wait_until_current(
     timeout: float = _GATE_TIMEOUT, poll: float = _GATE_POLL
 ) -> None:
-    """Block until the local Caddy holds the config published in dqlite.
-
-    Prevents editing a stale/bootstrap config (e.g. right after a Caddy restart,
-    before the config-sync module has adopted the latest from dqlite) — such an
-    edit would 404 or be discarded when the sync module adopts. Best-effort: on
-    timeout we proceed and let the edit's own error handling surface problems.
-    """
     loop = asyncio.get_event_loop()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         target = await caddyconfig.get_config_bytes()
         if target is None:
-            return  # nothing published yet; the local Caddy is the seeder
+            return
         session = _get_session()
         local = await loop.run_in_executor(
             None, lambda: _blocking_get_config_bytes(session)
@@ -82,8 +73,6 @@ async def _apply_edit(
     make_request: Callable[[requests.Session, dict], requests.Response],
     etag_path: str,
 ) -> requests.Response:
-    """Apply a mutating admin request, gated on the local Caddy being current
-    and guarded by Caddy's If-Match optimistic concurrency (retry on 412)."""
     loop = asyncio.get_event_loop()
     for _ in range(MAX_EDIT_ATTEMPTS):
         await _wait_until_current()
@@ -373,21 +362,8 @@ async def update_disco_host(disco_host: str) -> None:
 
 
 def add_dqlite_config_fragments(config: dict[str, Any]) -> dict[str, Any]:
-    """Graft the dqlite-mode keys onto a Caddy config (in place; returned).
-
-    Used to turn any config that runs on stock Caddy into one for the
-    dqlite-backed Caddy: the migration from sqlite mode applies this to the
-    captured live config so project routes survive verbatim.
-    """
-    # The dqlite caddy_config row is the source of truth, not Caddy's
-    # filesystem autosave.
     config.setdefault("admin", {})["config"] = {"persist": False}
-    # TLS certs/keys live in dqlite (shared across all Caddy instances), not
-    # on a local filesystem volume.
     config["storage"] = {"module": "dqlite"}
-    # Keeps every Caddy instance's config in sync via dqlite: the instance
-    # Disco edits publishes the running config; the others poll and adopt it.
-    # dqlite node addresses come from DISCO_DQLITE_NODES.
     config.setdefault("apps", {})["dqlite_config_sync"] = {
         "admin_endpoint": "unix//disco/caddy-socket/caddy.sock",
         "admin_origin": "disco-caddy",
@@ -396,26 +372,12 @@ def add_dqlite_config_fragments(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_caddy_base_config(disco_host: str, tunnel: bool) -> dict[str, Any]:
-    """Build the full base Caddy config for dqlite mode.
-
-    Includes the admin unix socket (only Disco, sharing the socket dir, can edit
-    config — projects on disco-main cannot), dqlite storage, the config-sync app,
-    and the disco_host route. The daemon seeds this into the local Caddy over the
-    admin socket on startup (``ensure_base_config``); the config-sync module then
-    publishes it to dqlite so every Caddy instance adopts it.
-    """
     return add_dqlite_config_fragments(_build_base_config(disco_host, tunnel))
 
 
 def write_caddy_init_config(disco_host: str, tunnel: bool) -> None:
-    """sqlite mode: write the initial config for the stock Caddy container.
-
-    We write the initial config directly to the config file (initconfig volume)
-    so that Caddy listens to the unix socket instead of a regular port. We use a
-    unix socket because that's the only way at the moment to let only Disco
-    update the config using the endpoints. Otherwise, projects could read/write
-    the config.
-    """
+    # Written to the config file so Caddy listens on the unix socket instead of
+    # a port; only Disco can then update the config, not projects.
     with open("/initconfig/config.json", "w", encoding="utf-8") as f:
         json.dump(_build_base_config(disco_host, tunnel), f)
 
@@ -490,13 +452,6 @@ def _build_base_config(disco_host: str, tunnel: bool) -> dict[str, Any]:
 
 
 async def ensure_base_config(disco_host: str, tunnel: bool) -> bool:
-    """Seed the base Caddy config if the local Caddy doesn't have it yet.
-
-    Idempotent and best-effort: returns True if the base config is present
-    (already configured or just seeded), False if it couldn't be applied (logged;
-    the daemon still starts and can retry on the next restart). POSTs over the
-    admin socket; the config-sync module then publishes the result to dqlite.
-    """
     loop = asyncio.get_event_loop()
     session = _get_session()
     for _ in range(30):
@@ -511,9 +466,9 @@ async def ensure_base_config(disco_host: str, tunnel: bool) -> bool:
             await asyncio.sleep(1)
             continue
         if resp.status_code == 200:
-            return True  # already configured
+            return True
         if resp.status_code == 404:
-            break  # needs seeding
+            break
         await asyncio.sleep(1)
     config = build_caddy_base_config(disco_host, tunnel)
     try:

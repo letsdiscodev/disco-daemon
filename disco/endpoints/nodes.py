@@ -40,18 +40,6 @@ async def join_token_get():
 
 @router.get("/api/disco/swarm/nodes")
 async def get_node_list():
-    """Snapshot of the current Swarm membership.
-
-    This is a *Swarm-side* view, so it works even when one or more nodes
-    are unreachable — we read everything from the manager's local Swarm
-    raft state via `docker node inspect`, not from the nodes themselves.
-
-    In dqlite mode, new disco-name assignment (for nodes that don't yet
-    have a label) and per-node dqlite service creation are owned by the
-    reconciler, not this endpoint — we just describe what's there. In
-    sqlite mode there is no reconciler, so this endpoint assigns names
-    to unlabeled nodes inline (as it always did).
-    """
     node_ids = await docker.get_node_list()
     nodes = await docker.get_node_details(node_ids)
     if not config.is_dqlite_mode():
@@ -72,10 +60,7 @@ async def get_node_list():
                 "address": node.address,
                 "isLeader": node.labels.get("disco-role") == "main",
                 "isReady": node.state == "ready",
-                # "unknown" can happen when a manager hasn't heard from a
-                # node yet (e.g. just-rebooted host). Treat it as down so
-                # the down-tolerant DELETE path doesn't try to ssh into
-                # an unreachable node.
+                # "unknown": manager hasn't heard from the node yet, treat as down
                 "isDown": node.state in ("down", "disconnected", "unknown"),
             }
             for node in nodes
@@ -85,16 +70,6 @@ async def get_node_list():
 
 @router.delete("/api/disco/swarm/nodes/{node_name}")
 async def node_delete(node_name: str):
-    """Remove a node from the Swarm and clean up its dqlite footprint.
-
-    Works whether the target node is reachable or not. For unreachable
-    nodes we skip the graceful "tell the node to leave" steps (which
-    would hang) and go straight to forced removal on the manager side.
-    The dqlite service + raft membership cleanup happens via the
-    reconciler at the end — that codepath is the same for both flows
-    and is idempotent, so a partial failure just gets retried by the
-    periodic reconcile.
-    """
     log.info("Removing node %s", node_name)
     node_ids = await docker.get_node_list()
     nodes = await docker.get_node_details(node_ids)
@@ -111,14 +86,10 @@ async def node_delete(node_name: str):
 
     node_is_down = target.state in ("down", "disconnected", "unknown")
     if config.is_dqlite_mode():
-        # Hold the reconciler lock through the mutating section so a periodic
-        # reconcile can't race with us (e.g. recreating the dqlite service
-        # we're in the middle of tearing down).
+        # Keep a periodic reconcile from recreating the service mid-teardown.
         async with reconciler_lock:
             await _do_node_delete(target, node_name, node_is_down)
 
-        # Final reconciler pass: removes the per-node dqlite service if it's
-        # still around and ensures cluster .remove was called (idempotent).
         await reconcile_dqlite_services()
     else:
         await _do_node_delete(target, node_name, node_is_down)
@@ -131,13 +102,8 @@ async def _do_node_delete(target, node_name: str, node_is_down: bool) -> None:
             "Node %s is %s; using forced removal path", node_name, target.state
         )
         if config.is_dqlite_mode():
-            # Try to evict the dqlite address proactively before tearing the
-            # service down — cluster_remove uses a local container so it
-            # doesn't need the dead node to be reachable. If our local
-            # container is itself momentarily down (e.g. mid-restart),
-            # queue the address for the reconciler to retry; without that,
-            # the phantom voter would persist indefinitely because once the
-            # service is removed the reconciler can no longer detect it.
+            # Evict from the raft cluster before removing the service; once
+            # the service is gone the reconciler can't detect the phantom voter.
             address = dqlite_bind_address(node_name)
             if not await cluster_remove(address):
                 pending_cluster_removes.add(address)
@@ -157,8 +123,7 @@ async def _do_node_delete(target, node_name: str, node_is_down: bool) -> None:
         await docker.drain_node(node_id=target.id)
         log.info("Removing swarm leaver service for node %s", node_name)
         await docker.rm_service(leaver_service)
-        # Once the node has left the swarm, docker node rm will succeed.
-        # It can lag — wait for up to 20 minutes, then force.
+        # docker node rm can lag after the node leaves; wait, then force.
         deadline = datetime.now(timezone.utc) + timedelta(minutes=20)
         removed = False
         while datetime.now(timezone.utc) < deadline:

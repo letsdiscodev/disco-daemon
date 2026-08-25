@@ -48,8 +48,6 @@ async def cron_minute() -> None:
     if config.is_dqlite_mode():
         from disco.utils.swarmreconciler import reconcile_dqlite_services
 
-        # Periodic safety net: catch any state drift the event watcher missed
-        # (stream disconnects, daemon restart races, etc.). Idempotent.
         await reconcile_dqlite_services()
 
 
@@ -327,8 +325,6 @@ class AsyncWorker:
         from disco.utils.projects import get_project_by_name
 
         log.info("Reloading project crons of %s", project_name)
-        # Read-only: this only loads the deployment + rebuilds the in-memory
-        # cron list; it never writes, so use the read session (no writer lock).
         async with AsyncReadSession.begin() as dbsession:
             disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
             project = await get_project_by_name(dbsession, project_name)

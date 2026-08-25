@@ -867,12 +867,6 @@ async def serve_new_deployment(
     log_output: Callable[[str], Awaitable[None]],
 ) -> None:
     assert new_deployment_info.disco_file is not None
-    # dqlite mode only: version of the shared Caddy config before our edit.
-    # After editing the local Caddy, the config-sync module publishes a new
-    # version to dqlite; we wait for every live Caddy instance to apply it
-    # before the caller tears down the previous deployment
-    # (stop_prev_services). In sqlite mode there is a single Caddy and no
-    # caddy_config table — waiting would just burn the full timeout.
     version_before = (
         await caddyconfig.get_config_version() if config.is_dqlite_mode() else None
     )
@@ -939,9 +933,8 @@ async def serve_new_deployment(
             f"Deployment type not handled {new_deployment_info.disco_file.services['web'].type}"
         )
 
-    # Wait for the Caddy edit to propagate to every live instance before the
-    # caller removes the previous deployment, so no ingress node briefly routes
-    # to a torn-down container. Best-effort: never let this block a deploy.
+    # Wait for every Caddy instance to pick up the edit before the caller
+    # removes the previous deployment.
     if edited and config.is_dqlite_mode():
         try:
             await caddyconfig.wait_for_convergence(

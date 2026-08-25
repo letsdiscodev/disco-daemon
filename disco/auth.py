@@ -28,8 +28,6 @@ from disco.utils.backup_auth import (
 
 log = logging.getLogger(__name__)
 
-# Short timeout for the normal DB path before we give up and fall back
-# to the local backup. Chosen so locked-cluster cases surface quickly.
 EMERGENCY_DB_TIMEOUT_S = 3.0
 
 basic_header = HTTPBasic(auto_error=False)
@@ -91,24 +89,8 @@ async def get_api_key_emergency_capable(
         HTTPAuthorizationCredentials | None, Depends(bearer_header)
     ],
 ):
-    """Auth dependency that survives dqlite being locked.
-
-    Tries the normal DB path first with a short timeout. If dqlite is
-    unreachable (cluster lockup, quorum loss), falls back to reading
-    the local backup file at /disco/backups/latest.db and looking up
-    the key there. For use on status and recovery endpoints that must
-    remain reachable during a cluster outage.
-
-    Bearer-JWT auth only works in the DB path because JWT verification
-    requires reading the API key's secret from the DB. During an
-    outage, operators should use Basic auth (the CLI's default).
-    """
-    # Resolve credentials under a SHORT timeout. We must NOT hold the timeout
-    # open across `yield`: FastAPI yield-dependencies wrap the entire endpoint,
-    # and many of our emergency-capable endpoints (recover-quorum, etc.)
-    # intentionally do multi-second Docker orchestration that would otherwise
-    # be cancelled. This is a read-only path; the usage record is written
-    # separately (deferred to the async worker) so it never holds a write lock.
+    """Falls back to latest.db when the DB is unreachable (Basic auth only)."""
+    # The timeout must not span the yield: emergency endpoints run long Docker work.
     resolved_api_key_id: str | None = None
     db_unreachable = False
     try:
@@ -136,10 +118,7 @@ async def get_api_key_emergency_capable(
         yield resolved_api_key_id
         return
 
-    # Fallback: cluster is locked. Validate against the local backup file.
     if not db_unreachable:
-        # We didn't get here because of a timeout/connection error; some
-        # other code path produced None without raising. Treat as unauth.
         raise HTTPException(status_code=401)
     if basic_credentials is None:
         raise HTTPException(
@@ -166,8 +145,6 @@ async def _resolve_credentials_via_db(
     bearer_credentials: HTTPAuthorizationCredentials | None,
     dbsession: AsyncDBSession,
 ) -> str | None:
-    """Return the API key id from either Basic or Bearer-JWT credentials,
-    or None if neither resolves. Mirrors the logic in get_api_key()."""
     if basic_credentials is not None:
         return basic_credentials.username
     if bearer_credentials is None:

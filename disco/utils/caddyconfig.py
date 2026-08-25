@@ -1,14 +1,5 @@
-"""Read-only access to the dqlite Caddy config-sync state.
-
-The Caddy config-sync module (``caddy-config-dqlite``) owns the ``caddy_config``
-and ``caddy_instances`` tables in the ``disco`` dqlite database. Disco only
-READS them, to gate deployment teardown on fleet-wide convergence: after Disco
-edits the local Caddy over the admin socket (which the config-sync module then
-publishes to dqlite), we wait until every live Caddy instance has applied the
-new config version before removing the previous deployment's containers.
-
-Disco never WRITES config to dqlite — that is owned by the config-sync module.
-"""
+# caddy_config and caddy_instances are owned by the caddy-config-dqlite Caddy
+# module. Disco only reads them; never write to them from here.
 
 import asyncio
 import logging
@@ -23,17 +14,12 @@ from disco.models.db import AsyncReadSession
 
 log = logging.getLogger(__name__)
 
-# A Caddy instance counts as "live" if it refreshed its heartbeat within this
-# window. Instances that went away (dead/rescheduled) must not freeze deploys.
+# Instances without a heartbeat in this window are ignored so dead ones
+# don't block deploys.
 INSTANCE_FRESH_SECONDS = 15
 
 
 async def get_config_version() -> int | None:
-    """Current ``caddy_config`` version, or None if the table/row is absent.
-
-    Returns None when the config-sync tables don't exist yet (Caddy hasn't
-    started) so callers can treat it as "nothing to wait for".
-    """
     if not config.is_dqlite_mode():
         return None
     try:
@@ -48,11 +34,6 @@ async def get_config_version() -> int | None:
 
 
 async def get_config_bytes() -> bytes | None:
-    """The full Caddy config blob currently published in dqlite, or None.
-
-    Used by the edit gate to tell whether the local Caddy is current before
-    Disco edits it.
-    """
     if not config.is_dqlite_mode():
         return None
     try:
@@ -74,7 +55,6 @@ async def get_config_bytes() -> bytes | None:
 async def live_instances(
     fresh_seconds: int = INSTANCE_FRESH_SECONDS,
 ) -> list[tuple[str, int]]:
-    """Return (instance_id, applied_version) for instances with a recent heartbeat."""
     cutoff = time.time_ns() - fresh_seconds * 1_000_000_000
     try:
         async with AsyncReadSession() as dbsession:
@@ -97,19 +77,7 @@ async def wait_for_convergence(
     poll: float = 0.5,
     log_output: Callable[[str], Awaitable[None]] | None = None,
 ) -> bool:
-    """Wait until our Caddy config edit has propagated to every live instance.
-
-    ``after_version`` is the ``caddy_config`` version observed *before* the edit.
-    We wait for (1) a newer version to appear — the config-sync module publishing
-    our edit — and then (2) every live instance to apply at least that version.
-
-    Returns True on convergence; False on timeout (the caller should proceed and
-    log: a wedged/dead instance must not freeze deploys). Also returns False if
-    no new version ever appears (e.g. the edit was a no-op), which is harmless.
-
-    In sqlite mode there is a single Caddy and no config-sync tables — return
-    immediately so a caller missing its own mode guard can't burn the timeout.
-    """
+    """Returns False on timeout; callers proceed anyway."""
     if not config.is_dqlite_mode():
         return True
     deadline = time.monotonic() + timeout

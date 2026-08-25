@@ -1440,13 +1440,6 @@ async def builder_prune() -> None:
 
 
 async def caddy_nc(service_name: str, port: int) -> bool:
-    """Run netcat from a local Caddy task container to probe a service port.
-
-    Caddy sits on disco-main and ships nc, so we exec into it to reach a
-    project's service over the overlay. Caddy is a global Swarm service now, so
-    the container name is task-suffixed (disco-caddy.<n>.<id>) — resolve the
-    local task container dynamically rather than exec'ing a fixed name.
-    """
     log.info("Running nc in Caddy's container for %s:%d", service_name, port)
     stdout, _, _ = await check_call(
         [
