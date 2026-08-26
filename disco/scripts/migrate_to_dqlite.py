@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import socket
 import sqlite3
 import subprocess
@@ -55,6 +56,7 @@ class Preflight(NamedTuple):
     tunnel_token: str | None
     node_id: str
     disco_name: str
+    image: str
     caddy_config: dict[str, Any]
 
 SQLITE_DB_PATH = Path("/disco/data/disco.sqlite3")
@@ -162,6 +164,8 @@ def _preflight() -> Preflight:
             "only; the reconciler adds the others once the daemon starts."
         )
 
+    image = _daemon_service_image()
+
     # Capture the live Caddy config while the old Caddy is still running.
     try:
         caddy_config = caddy.get_config()
@@ -176,6 +180,7 @@ def _preflight() -> Preflight:
         tunnel_token=tunnel_token,
         node_id=node_id,
         disco_name=disco_name,
+        image=image,
         caddy_config=caddy_config,
     )
 
@@ -201,7 +206,7 @@ def _migrate(state: Preflight) -> None:
         print("Stopping the disco daemon")
         _run(["docker", "service", "rm", "disco"], check=False)
         # Nothing may write to the sqlite file while it is copied.
-        _wait_for_daemon_stopped()
+        _wait_for_containers_stopped("disco.", "old disco daemon container")
 
         _bootstrap_dqlite(state)
 
@@ -220,7 +225,7 @@ def _migrate(state: Preflight) -> None:
         marker_flipped = True
 
         print("Starting the disco daemon in dqlite mode")
-        start_disco_daemon(host_home, disco.daemon_image())
+        start_disco_daemon(host_home, state.image)
         _wait_for_daemon_running()
 
         if tunnel:
@@ -228,8 +233,13 @@ def _migrate(state: Preflight) -> None:
     except BaseException:
         # BaseException so Ctrl+C mid-migration still rolls back.
         log.exception("Migration failed; rolling back to sqlite mode")
-        _rollback(host_home=host_home, tunnel=tunnel, caddy_swapped=caddy_swapped,
-                  marker_flipped=marker_flipped)
+        _rollback(
+            host_home=host_home,
+            image=state.image,
+            tunnel=tunnel,
+            caddy_swapped=caddy_swapped,
+            marker_flipped=marker_flipped,
+        )
         sys.exit(1)
 
 
@@ -291,7 +301,12 @@ def _swap_caddy(state: Preflight) -> None:
 
 
 def _rollback(
-    *, host_home: str, tunnel: bool, caddy_swapped: bool, marker_flipped: bool
+    *,
+    host_home: str,
+    image: str,
+    tunnel: bool,
+    caddy_swapped: bool,
+    marker_flipped: bool,
 ) -> None:
     from disco.scripts.init import start_caddy_container, start_disco_daemon
     from disco.utils import docker
@@ -304,6 +319,8 @@ def _rollback(
         print("Rollback: restoring the stock Caddy container")
         try:
             _run(["docker", "service", "rm", "disco-caddy"], check=False)
+            # The container publishes the same ports as the global service's task.
+            _wait_for_containers_stopped("disco-caddy.", "disco-caddy task")
             # --resume restores the pre-migration config from the untouched
             # disco-caddy-config volume.
             start_caddy_container(host_home, tunnel=tunnel)
@@ -322,7 +339,7 @@ def _rollback(
     print("Rollback: restarting the disco daemon in sqlite mode")
     try:
         _run(["docker", "service", "rm", "disco"], check=False)
-        start_disco_daemon(host_home, disco.daemon_image())
+        start_disco_daemon(host_home, image)
     except Exception:
         log.exception("Rollback: could not restart the daemon; restart it manually")
     print(
@@ -408,16 +425,35 @@ def _wait_for_caddy_socket() -> None:
     raise Exception("new Caddy did not become reachable over the admin socket")
 
 
-def _wait_for_daemon_stopped() -> None:
+def _daemon_service_image() -> str:
+    # DISCO_IMAGE in this container is usually unset, and disco.daemon_image()
+    # would then guess a Docker Hub tag; the running service knows the truth.
+    override = os.environ.get("DISCO_IMAGE")
+    if override:
+        return override
+    image = _run(
+        [
+            "docker",
+            "service",
+            "inspect",
+            "disco",
+            "--format",
+            "{{.Spec.TaskTemplate.ContainerSpec.Image}}",
+        ]
+    ).strip()
+    if not image:
+        _fail("could not read the daemon image from the disco service")
+    return image.split("@", 1)[0]
+
+
+def _wait_for_containers_stopped(prefix: str, what: str) -> None:
     # Prefix-match names; a docker name filter substring-matches.
     for _ in range(120):
         names = _run(["docker", "ps", "--format", "{{.Names}}"]).splitlines()
-        if not any(name.startswith("disco.") for name in names):
+        if not any(name.startswith(prefix) for name in names):
             return
         time.sleep(1)
-    raise Exception(
-        "old disco daemon container did not stop; refusing to copy the database"
-    )
+    raise Exception(f"{what} did not stop")
 
 
 def _wait_for_daemon_running() -> None:
