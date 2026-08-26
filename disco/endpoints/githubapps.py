@@ -64,7 +64,7 @@ async def get_pending_app_id_from_url_with_state(
             raise HTTPException(status_code=404)
         if pending_app.state != state:
             raise HTTPException(status_code=404)
-        yield pending_app.id
+    yield pending_app_id
 
 
 class NewGithubAppRequestBody(BaseModel):
@@ -272,19 +272,26 @@ async def get_installation_access_token(
         )
         if installation is None:
             raise HTTPException(status_code=404, detail="Installation not found")
-        try:
-            token = await get_access_token_for_installation_id(installation_id)
-        except Exception as e:
-            log.exception(
-                "Failed to get access token for installation %d", installation_id
-            )
-            raise HTTPException(
-                status_code=502, detail="Failed to get access token from GitHub"
-            ) from e
-        await dbsession.refresh(installation)  # access_token_expires
-        return {
-            "token": token,
-            "expiresAt": installation.access_token_expires.isoformat()
+    try:
+        token = await get_access_token_for_installation_id(installation_id)
+    except Exception as e:
+        log.exception(
+            "Failed to get access token for installation %d", installation_id
+        )
+        raise HTTPException(
+            status_code=502, detail="Failed to get access token from GitHub"
+        ) from e
+    async with AsyncReadSession.begin() as dbsession:
+        installation = await get_github_app_installation_by_id(
+            dbsession, installation_id
+        )
+        assert installation is not None
+        expires_at = (
+            installation.access_token_expires.isoformat()
             if installation.access_token_expires
-            else None,
-        }
+            else None
+        )
+    return {
+        "token": token,
+        "expiresAt": expires_at,
+    }
