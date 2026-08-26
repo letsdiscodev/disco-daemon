@@ -156,10 +156,8 @@ async def process_deployment(deployment_id: str) -> None:
             await set_deployment_status(deployment, status)
 
     async def maybe_keep_queued_or_skip() -> bool:
-        # Defined as a function so that we can shield it from
-        # cancellation and avoid strange states when deployments
-        # are cancelled.
-        async with AsyncReadSession.begin() as dbsession:
+        process_deployment_of_project_id = None
+        async with AsyncSession.begin() as dbsession:
             deployment = await get_deployment_by_id(dbsession, deployment_id)
             assert deployment is not None
             project: Project = await deployment.awaitable_attrs.project
@@ -173,22 +171,19 @@ async def process_deployment(deployment_id: str) -> None:
                     f"before processing deployment {deployment.number}.\n"
                 )
                 return False
-        async with AsyncSession.begin() as dbsession:
-            deployment = await get_deployment_by_id(dbsession, deployment_id)
-            assert deployment is not None
-            project = await deployment.awaitable_attrs.project
             last_deployment = await get_last_deployment(
                 dbsession, project, statuses=["QUEUED"]
             )
-            process_deployment_of_project_id = None
             if last_deployment is not None and last_deployment.id != deployment_id:
                 await log_output(
                     f"Deployment {last_deployment.number} is latest, "
                     f"skipping deployment {deployment.number}.\n"
                 )
-                await set_current_deployment_status("SKIPPED")
+                await set_deployment_status(deployment, "SKIPPED")
                 await log_output_terminate()
                 process_deployment_of_project_id = deployment.project_id
+            else:
+                await set_deployment_status(deployment, "PREPARING")
         if process_deployment_of_project_id is not None:
             await process_deployment_if_any(process_deployment_of_project_id)
             return False
@@ -199,7 +194,6 @@ async def process_deployment(deployment_id: str) -> None:
         return
 
     try:
-        await set_current_deployment_status("PREPARING")
         await log_output("Starting deployment\n")
         async with AsyncSession.begin() as dbsession:
             log.info("Getting data from database for deployment %s", deployment_id)
@@ -564,7 +558,9 @@ async def checkout_commit(
                 repo_full_name=new_deployment_info.github_repo_full_name,
             )
         except github.GithubException:
-            log_output("Failed to clone repository. Is the repository accessible?\n")
+            await log_output(
+                "Failed to clone repository. Is the repository accessible?\n"
+            )
             raise
     else:
         await log_output(
