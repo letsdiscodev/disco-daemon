@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from asyncio import subprocess
+from collections.abc import AsyncGenerator
 from typing import Sequence
 
 log = logging.getLogger(__name__)
@@ -50,3 +51,40 @@ def decode_text(output_line: bytes) -> str:
         except UnicodeDecodeError:
             pass
     return output_line.decode("utf-8", errors="replace")
+
+
+async def check_call_streaming(
+    args: Sequence[str], timeout: float = 600
+) -> AsyncGenerator[str, None]:
+    """Run a command, yielding each output line as it arrives."""
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    assert process.stdout is not None
+    output = ""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    try:
+        while True:
+            try:
+                line = await asyncio.wait_for(
+                    process.stdout.readline(), deadline - loop.time()
+                )
+            except TimeoutError:
+                raise Exception(
+                    f"Running command failed, timeout after {timeout} seconds"
+                )
+            if len(line) == 0:
+                break
+            decoded_line = decode_text(line)
+            output += decoded_line
+            yield decoded_line
+        await process.wait()
+    finally:
+        if process.returncode is None:
+            process.terminate()
+            await process.wait()
+    if process.returncode != 0:
+        raise Exception(f"Process returned status {process.returncode}:\n{output}")

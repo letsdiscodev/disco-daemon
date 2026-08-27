@@ -16,7 +16,7 @@ from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker
 
 import disco
-from disco.models.db import ReadSession, Session
+from disco.models.db import ReadSession, Session, build_engines
 from disco.scripts.init import start_disco_daemon
 from disco.utils import keyvalues
 from disco.utils.meta import save_done_updating
@@ -27,6 +27,7 @@ log = logging.getLogger(__name__)
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
+    asyncio.run(build_engines())
     image = os.environ.get("DISCO_IMAGE")
     if image is None:  # backward compat for version <= 0.4.1
         image = "letsdiscodev/daemon:latest"
@@ -84,7 +85,7 @@ def main() -> None:
     with ReadSession.begin() as dbsession:
         host_home = keyvalues.get_value_sync(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
-    start_disco_daemon(host_home, image)
+    asyncio.run(start_disco_daemon(host_home, image))
     with Session.begin() as dbsession:
         save_done_updating(dbsession)
 
@@ -275,7 +276,9 @@ def task_0_25_x(image: str) -> None:
             "disco-caddy",
         ]
     )
-    start_caddy(host_home=host_home, tunnel=cloudflare_tunnel_token is not None)
+    asyncio.run(
+        start_caddy(host_home=host_home, tunnel=cloudflare_tunnel_token is not None)
+    )
     if cloudflare_tunnel_token is not None:
         docker.add_network_to_container_sync(
             "disco-caddy", "disco-cloudflare-tunnel", alias="disco-server"
@@ -355,7 +358,9 @@ def task_0_22_x(image: str) -> None:
             "disco-caddy",
         ]
     )
-    start_caddy(host_home=host_home, tunnel=cloudflare_tunnel_token is not None)
+    asyncio.run(
+        start_caddy(host_home=host_home, tunnel=cloudflare_tunnel_token is not None)
+    )
     if cloudflare_tunnel_token is not None:
         docker.add_network_to_container_sync(
             "disco-caddy", "disco-cloudflare-tunnel", alias="disco-server"
@@ -523,7 +528,7 @@ def task_0_12_x(image: str) -> None:
             "disco-caddy",
         ]
     )
-    start_caddy(host_home=host_home, tunnel=False)
+    asyncio.run(start_caddy(host_home=host_home, tunnel=False))
     with Session.begin() as dbsession:
         keyvalues.set_value_sync(
             dbsession=dbsession, key="DISCO_VERSION", value="0.13.0"
@@ -702,7 +707,7 @@ def task_0_8_x(image: str) -> None:
             "/disco/caddy/config/caddy/autosave.json",
         ]
     )
-    start_caddy(host_home=host_home, tunnel=False)
+    asyncio.run(start_caddy(host_home=host_home, tunnel=False))
     with Session.begin() as dbsession:
         keyvalues.set_value_sync(
             dbsession=dbsession, key="DISCO_VERSION", value="0.9.0"

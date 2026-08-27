@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlalchemy.orm import sessionmaker
 
 from disco import config
+from disco.utils.dqlite import resolve_node_name
 
 log = logging.getLogger(__name__)
 
@@ -35,9 +36,7 @@ def get_engine() -> Engine:
     if _engine is None:
         _engine = create_engine(
             config.get_database_url(),
-            connect_args=_DQLITE_WRITE_ARGS
-            if config.is_ha()
-            else _SQLITE_CONNECT_ARGS,
+            connect_args=_DQLITE_WRITE_ARGS if config.is_ha() else _SQLITE_CONNECT_ARGS,
         )
     return _engine
 
@@ -59,9 +58,7 @@ def get_read_engine() -> Engine:
     if _read_engine is None:
         _read_engine = create_engine(
             config.get_database_url(),
-            connect_args=_DQLITE_READ_ARGS
-            if config.is_ha()
-            else _SQLITE_CONNECT_ARGS,
+            connect_args=_DQLITE_READ_ARGS if config.is_ha() else _SQLITE_CONNECT_ARGS,
         )
         if not config.is_ha():
             event.listen(_read_engine, "connect", _enforce_query_only)
@@ -114,6 +111,13 @@ def get_async_read_session_factory() -> async_sessionmaker:
             autocommit=False, autoflush=False, bind=get_async_read_engine()
         )
     return _AsyncReadSession
+
+
+async def build_engines() -> None:
+    if config.is_ha():
+        await resolve_node_name()
+    get_async_engine()
+    get_async_read_engine()
 
 
 class _LazySessionMaker:

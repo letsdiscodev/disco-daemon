@@ -6,24 +6,22 @@ import logging
 import os
 import socket
 import sqlite3
-import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
 
 from alembic import command
 from alembic.config import Config
 
 import disco
 from disco import config
-from disco.models.db import Session, get_engine
+from disco.models.db import AsyncSession, build_engines, get_async_engine
 from disco.models.meta import base_metadata
 from disco.utils import docker, keyvalues
-from disco.utils.apikeys import create_api_key_sync
+from disco.utils.apikeys import create_api_key
 from disco.utils.caddy import write_caddy_init_config
 from disco.utils.dqlite import DQLITE_OVERLAY_NETWORK, bootstrap_first_node
 from disco.utils.encryption import generate_key
-from disco.utils.randomname import generate_random_name_sync
-from disco.utils.subprocess import decode_text
+from disco.utils.randomname import generate_random_name
+from disco.utils.subprocess import check_call, check_call_streaming
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +31,15 @@ INIT_OPTIONS: dict[str, tuple[str, tuple[str, ...]]] = {
 
 
 def main() -> None:
+    asyncio.run(_main())
+
+
+async def run_and_print(args: list[str]) -> None:
+    async for line in check_call_streaming(args):
+        print(line, end="", flush=True)
+
+
+async def _main() -> None:
     logging.basicConfig(level=logging.INFO)
     options = parse_init_options(os.environ.get("DISCO_INIT_OPTIONS"))
     disco_host = os.environ.get("DISCO_HOST")
@@ -45,79 +52,60 @@ def main() -> None:
     assert host_home is not None
     assert image is not None
     ha = options["ha"] == "true"
-    create_caddy_socket_dir(host_home)
-    create_projects_dir(host_home)
-    create_static_site_dir(host_home)
+    await create_caddy_socket_dir(host_home)
+    await create_projects_dir(host_home)
+    await create_static_site_dir(host_home)
     print("Initializing Docker Swarm")
-    create_docker_config(host_home)
-    docker_swarm_init(disco_advertise_addr)
-    node_id = get_this_swarm_node_id()
-    label_swarm_node(node_id, "disco-role=main")
-    asyncio.run(docker.create_network("disco-main"))
-    asyncio.run(docker.create_network("disco-logging"))
-    docker_swarm_create_disco_encryption_key()
+    await create_docker_config(host_home)
+    await docker_swarm_init(disco_advertise_addr)
+    node_id = await get_this_swarm_node_id()
+    await label_swarm_node(node_id, "disco-role=main")
+    await docker.create_network("disco-main")
+    await docker.create_network("disco-logging")
+    await docker_swarm_create_disco_encryption_key()
     if ha:
-        node_name = generate_random_name_sync()
-        label_swarm_node(node_id, f"disco-name={node_name}")
-        asyncio.run(docker.create_network(DQLITE_OVERLAY_NETWORK))
-        docker.add_network_to_container_sync(socket.gethostname(), DQLITE_OVERLAY_NETWORK)
+        node_name = await generate_random_name()
+        await label_swarm_node(node_id, f"disco-name={node_name}")
+        await docker.create_network(DQLITE_OVERLAY_NETWORK)
+        await docker.add_network_to_container(
+            socket.gethostname(), DQLITE_OVERLAY_NETWORK
+        )
         print("Starting dqlite")
-        asyncio.run(bootstrap_first_node(node_name))
-    create_database(ha)
+        await bootstrap_first_node(node_name)
+    await create_database(ha)
     print("Setting initial state in internal database")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value=disco.__version__
         )
-        keyvalues.set_value_sync(
+        await keyvalues.set_value(
             dbsession=dbsession,
             key="DISCO_ADVERTISE_ADDR",
             value=disco_advertise_addr,
         )
-        keyvalues.set_value_sync(
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_HOST", value=disco_host
         )
-        keyvalues.set_value_sync(dbsession=dbsession, key="HOST_HOME", value=host_home)
-        keyvalues.set_value_sync(dbsession=dbsession, key="REGISTRY", value=None)
+        await keyvalues.set_value(dbsession=dbsession, key="HOST_HOME", value=host_home)
+        await keyvalues.set_value(dbsession=dbsession, key="REGISTRY", value=None)
         if cloudflare_tunnel_token is not None:
-            keyvalues.set_value_sync(
+            await keyvalues.set_value(
                 dbsession=dbsession,
                 key="CLOUDFLARE_TUNNEL_TOKEN",
                 value=cloudflare_tunnel_token,
             )
-        api_key = create_api_key_sync(dbsession=dbsession, name="First API key")
+        api_key = await create_api_key(dbsession=dbsession, name="First API key")
         print("Created API key:", api_key.id)
     print("Setting up Caddy web server")
-    write_caddy_init_config(disco_host, tunnel=cloudflare_tunnel_token is not None)
-    start_caddy(host_home, tunnel=cloudflare_tunnel_token is not None)
+    await write_caddy_init_config(
+        disco_host, tunnel=cloudflare_tunnel_token is not None
+    )
+    await start_caddy(host_home, tunnel=cloudflare_tunnel_token is not None)
     print("Setting up Disco")
-    start_disco_daemon(host_home, image)
+    await start_disco_daemon(host_home, image)
     if cloudflare_tunnel_token is not None:
         print("Setting up Cloudflare tunnel")
-        setup_cloudflare_tunnel(cloudflare_tunnel_token)
-
-
-def _run_cmd(args: list[str], timeout=600) -> str:
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    timeout_dt = datetime.now(timezone.utc) + timedelta(seconds=timeout)
-    output = ""
-    for line in process.stdout:
-        decoded_line = decode_text(line)
-        output += decoded_line
-        print(decoded_line, end="", flush=True)
-        if datetime.now(timezone.utc) > timeout_dt:
-            process.terminate()
-            raise Exception(f"Running command failed, timeout after {timeout} seconds")
-    process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}:\n{output}")
-    print("", flush=True)
-    return output
+        await setup_cloudflare_tunnel(cloudflare_tunnel_token)
 
 
 def parse_init_options(raw: str | None) -> dict[str, str]:
@@ -141,18 +129,28 @@ def parse_init_options(raw: str | None) -> dict[str, str]:
     return options
 
 
-def create_database(ha: bool):
+async def create_database(ha: bool) -> None:
     print("Creating Disco internal database")
     if not ha:
-        # create file
-        sqlite3.connect(config.SQLITE_PATH).close()
-    base_metadata.create_all(get_engine())
+
+        def create_file() -> None:
+            sqlite3.connect(config.SQLITE_PATH).close()
+
+        await asyncio.get_event_loop().run_in_executor(None, create_file)
+    await build_engines()
+    async with get_async_engine().begin() as conn:
+        await conn.run_sync(base_metadata.create_all)
+        await conn.run_sync(_alembic_stamp_head)
+
+
+def _alembic_stamp_head(connection) -> None:
     alembic_config = Config("/disco/app/alembic.ini")
+    alembic_config.attributes["connection"] = connection
     command.stamp(alembic_config, "head")
 
 
-def docker_swarm_init(advertise_addr: str) -> None:
-    _run_cmd(
+async def docker_swarm_init(advertise_addr: str) -> None:
+    await run_and_print(
         [
             "docker",
             "swarm",
@@ -163,27 +161,22 @@ def docker_swarm_init(advertise_addr: str) -> None:
     )
 
 
-def docker_swarm_create_disco_encryption_key() -> None:
+async def docker_swarm_create_disco_encryption_key() -> None:
     print("Generating encryption key for encryption at rest")
-    process = subprocess.Popen(
-        args=[
+    await check_call(
+        [
             "docker",
             "secret",
             "create",
             "disco_encryption_key",
             "-",
         ],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        stdin=generate_key().decode("utf-8"),
     )
-    _, _ = process.communicate(generate_key())
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
 
 
-def get_this_swarm_node_id() -> str:
-    output = _run_cmd(
+async def get_this_swarm_node_id() -> str:
+    stdout, _, _ = await check_call(
         [
             "docker",
             "node",
@@ -193,12 +186,11 @@ def get_this_swarm_node_id() -> str:
             "self",
         ]
     )
-    node_id = output.replace("\n", "")
-    return node_id
+    return "".join(stdout).strip()
 
 
-def label_swarm_node(node_id: str, label: str) -> None:
-    _run_cmd(
+async def label_swarm_node(node_id: str, label: str) -> None:
+    await run_and_print(
         [
             "docker",
             "node",
@@ -210,11 +202,14 @@ def label_swarm_node(node_id: str, label: str) -> None:
     )
 
 
-def create_caddy_socket_dir(host_home: str) -> None:
-    os.makedirs(f"/host{host_home}/disco/caddy-socket")
+async def create_caddy_socket_dir(host_home: str) -> None:
+    def makedirs() -> None:
+        os.makedirs(f"/host{host_home}/disco/caddy-socket")
+
+    await asyncio.get_event_loop().run_in_executor(None, makedirs)
 
 
-def start_caddy(host_home: str, tunnel: bool) -> None:
+async def start_caddy(host_home: str, tunnel: bool) -> None:
     more_args = []
     if not tunnel:
         more_args += [
@@ -225,7 +220,7 @@ def start_caddy(host_home: str, tunnel: bool) -> None:
             "--publish",
             "published=443,target=443,protocol=udp",
         ]
-    _run_cmd(
+    await run_and_print(
         [
             "docker",
             "run",
@@ -263,28 +258,37 @@ def start_caddy(host_home: str, tunnel: bool) -> None:
     )
 
 
-def create_projects_dir(host_home: str) -> None:
-    os.makedirs(f"/host{host_home}/disco/projects")
+async def create_projects_dir(host_home: str) -> None:
+    def makedirs() -> None:
+        os.makedirs(f"/host{host_home}/disco/projects")
+
+    await asyncio.get_event_loop().run_in_executor(None, makedirs)
 
 
-def create_static_site_dir(host_home: str) -> None:
-    os.makedirs(f"/host{host_home}/disco/srv")
+async def create_static_site_dir(host_home: str) -> None:
+    def makedirs() -> None:
+        os.makedirs(f"/host{host_home}/disco/srv")
+
+    await asyncio.get_event_loop().run_in_executor(None, makedirs)
 
 
-def create_docker_config(host_home: str) -> None:
+async def create_docker_config(host_home: str) -> None:
     # If the file doesn't exist, we create it so that we can mount it.
     # It's needed when we authenticate to a Docker Registry.
-    path = f"/host{host_home}/.docker"
-    if not os.path.isdir(path):
-        os.makedirs(f"/host{host_home}/.docker")
+    def makedirs() -> None:
+        path = f"/host{host_home}/.docker"
+        if not os.path.isdir(path):
+            os.makedirs(path)
+
+    await asyncio.get_event_loop().run_in_executor(None, makedirs)
 
 
-def setup_cloudflare_tunnel(cloudflare_tunnel_token: str) -> None:
-    asyncio.run(docker.create_network("disco-cloudflare-tunnel"))
-    docker.add_network_to_container_sync(
+async def setup_cloudflare_tunnel(cloudflare_tunnel_token: str) -> None:
+    await docker.create_network("disco-cloudflare-tunnel")
+    await docker.add_network_to_container(
         "disco-caddy", "disco-cloudflare-tunnel", alias="disco-server"
     )
-    _run_cmd(
+    await run_and_print(
         [
             "docker",
             "run",
@@ -311,8 +315,8 @@ def setup_cloudflare_tunnel(cloudflare_tunnel_token: str) -> None:
     )
 
 
-def start_disco_daemon(host_home: str, image: str) -> None:
-    _run_cmd(
+async def start_disco_daemon(host_home: str, image: str) -> None:
+    await run_and_print(
         [
             "docker",
             "service",

@@ -290,7 +290,7 @@ async def update_disco_host(disco_host: str) -> None:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
 
-def write_caddy_init_config(disco_host: str, tunnel: bool) -> None:
+async def write_caddy_init_config(disco_host: str, tunnel: bool) -> None:
     # We write the initial config directly to the config file so that Caddy listens
     # to the unix socket instead of a regular port.
     # We use a unix socket because that's the only way at the moment to let only Disco
@@ -362,5 +362,9 @@ def write_caddy_init_config(disco_host: str, tunnel: bool) -> None:
             }
         },
     }
-    with open("/initconfig/config.json", "w", encoding="utf-8") as f:
-        json.dump(init_config, f)
+
+    def write() -> None:
+        with open("/initconfig/config.json", "w", encoding="utf-8") as f:
+            json.dump(init_config, f)
+
+    await asyncio.get_event_loop().run_in_executor(None, write)

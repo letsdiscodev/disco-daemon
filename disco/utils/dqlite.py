@@ -1,7 +1,5 @@
 import asyncio
-import functools
 import logging
-import subprocess
 import time
 
 from disco.utils.subprocess import call, check_call
@@ -21,9 +19,14 @@ def dqlite_bind_address(node_name: str) -> str:
     return f"tasks.{dqlite_service_name(node_name)}:{DQLITE_PORT}"
 
 
-@functools.cache
-def get_current_node_name_sync() -> str:
-    result = subprocess.run(
+_node_name: str | None = None
+
+
+async def resolve_node_name() -> None:
+    global _node_name
+    if _node_name is not None:
+        return
+    stdout, _, _ = await check_call(
         [
             "docker",
             "node",
@@ -31,20 +34,22 @@ def get_current_node_name_sync() -> str:
             "--format",
             '{{ index .Spec.Labels "disco-name" }}',
             "self",
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
+        ]
     )
-    name = result.stdout.strip()
+    name = "".join(stdout).strip()
     if not name:
         raise RuntimeError("self node has no disco-name label")
-    return name
+    _node_name = name
 
+
+def current_node_name() -> str:
+    if _node_name is None:
+        raise RuntimeError("node name not resolved, call resolve_node_name() first")
+    return _node_name
 
 
 def get_local_dqlite_address() -> str:
-    return dqlite_bind_address(get_current_node_name_sync())
+    return dqlite_bind_address(current_node_name())
 
 
 async def start_dqlite_service(
