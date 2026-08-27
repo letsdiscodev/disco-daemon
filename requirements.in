@@ -18,3 +18,7 @@ SQLAlchemy==2.0.52
 sse-starlette==3.4.8
 uvicorn==0.52.4
 websockets==17.0.1
+dqlite-wire==0.3.0
+dqlite-client==0.3.0
+dqlite-dbapi==0.3.0
+sqlalchemy-dqlite==0.3.0

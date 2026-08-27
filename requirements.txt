@@ -40,6 +40,21 @@ cryptography==50.0.0
     # via
     #   -r requirements.in
     #   pyjwt
+dqlite-client==0.3.0
+    # via
+    #   -r requirements.in
+    #   dqlite-dbapi
+    #   sqlalchemy-dqlite
+dqlite-dbapi==0.3.0
+    # via
+    #   -r requirements.in
+    #   sqlalchemy-dqlite
+dqlite-wire==0.3.0
+    # via
+    #   -r requirements.in
+    #   dqlite-client
+    #   dqlite-dbapi
+    #   sqlalchemy-dqlite
 fastapi==0.141.1
     # via -r requirements.in
 friendlywords==1.3.0
@@ -103,6 +118,9 @@ sqlalchemy==2.0.52
     # via
     #   -r requirements.in
     #   alembic
+    #   sqlalchemy-dqlite
+sqlalchemy-dqlite==0.3.0
+    # via -r requirements.in
 sse-starlette==3.4.8
     # via -r requirements.in
 starlette==1.0.0

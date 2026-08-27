@@ -4,8 +4,10 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm.session import Session as DBSession
 
+from disco import config
 from disco.models import ApiKey
 from disco.utils import caddy, docker, keyvalues
+from disco.utils.dqlite import DQLITE_OVERLAY_NETWORK
 from disco.utils.subprocess import decode_text
 
 log = logging.getLogger(__name__)
@@ -29,6 +31,7 @@ async def update_disco(
             "--detach",
             "--label",
             "disco.log.core=true",
+            *(["--network", DQLITE_OVERLAY_NETWORK] if config.is_ha() else []),
             "--env",
             f"DISCO_IMAGE={image}",
             "--mount",

@@ -275,9 +275,7 @@ async def get_installation_access_token(
     try:
         token = await get_access_token_for_installation_id(installation_id)
     except Exception as e:
-        log.exception(
-            "Failed to get access token for installation %d", installation_id
-        )
+        log.exception("Failed to get access token for installation %d", installation_id)
         raise HTTPException(
             status_code=502, detail="Failed to get access token from GitHub"
         ) from e

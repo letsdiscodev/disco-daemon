@@ -1,9 +1,13 @@
 """Script that runs when installing Disco on a server"""
 
 import asyncio
+import json
 import logging
 import os
+import socket
+import sqlite3
 import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 
 from alembic import command
@@ -11,19 +15,26 @@ from alembic.config import Config
 
 import disco
 from disco import config
-from disco.models.db import Session, engine
+from disco.models.db import Session, get_engine
 from disco.models.meta import base_metadata
 from disco.utils import docker, keyvalues
 from disco.utils.apikeys import create_api_key_sync
 from disco.utils.caddy import write_caddy_init_config
+from disco.utils.dqlite import DQLITE_OVERLAY_NETWORK, bootstrap_first_node
 from disco.utils.encryption import generate_key
+from disco.utils.randomname import generate_random_name_sync
 from disco.utils.subprocess import decode_text
 
 log = logging.getLogger(__name__)
 
+INIT_OPTIONS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "ha": ("false", ("false", "true")),
+}
+
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
+    options = parse_init_options(os.environ.get("DISCO_INIT_OPTIONS"))
     disco_host = os.environ.get("DISCO_HOST")
     disco_advertise_addr = os.environ.get("DISCO_ADVERTISE_ADDR")
     host_home = os.environ.get("HOST_HOME")
@@ -33,7 +44,26 @@ def main() -> None:
     assert disco_advertise_addr is not None
     assert host_home is not None
     assert image is not None
-    create_database()
+    ha = options["ha"] == "true"
+    create_caddy_socket_dir(host_home)
+    create_projects_dir(host_home)
+    create_static_site_dir(host_home)
+    print("Initializing Docker Swarm")
+    create_docker_config(host_home)
+    docker_swarm_init(disco_advertise_addr)
+    node_id = get_this_swarm_node_id()
+    label_swarm_node(node_id, "disco-role=main")
+    asyncio.run(docker.create_network("disco-main"))
+    asyncio.run(docker.create_network("disco-logging"))
+    docker_swarm_create_disco_encryption_key()
+    if ha:
+        node_name = generate_random_name_sync()
+        label_swarm_node(node_id, f"disco-name={node_name}")
+        asyncio.run(docker.create_network(DQLITE_OVERLAY_NETWORK))
+        docker.add_network_to_container_sync(socket.gethostname(), DQLITE_OVERLAY_NETWORK)
+        print("Starting dqlite")
+        asyncio.run(bootstrap_first_node(node_name))
+    create_database(ha)
     print("Setting initial state in internal database")
     with Session.begin() as dbsession:
         keyvalues.set_value_sync(
@@ -57,17 +87,6 @@ def main() -> None:
             )
         api_key = create_api_key_sync(dbsession=dbsession, name="First API key")
         print("Created API key:", api_key.id)
-    create_caddy_socket_dir(host_home)
-    create_projects_dir(host_home)
-    create_static_site_dir(host_home)
-    print("Initializing Docker Swarm")
-    create_docker_config(host_home)
-    docker_swarm_init(disco_advertise_addr)
-    node_id = get_this_swarm_node_id()
-    label_swarm_node(node_id, "disco-role=main")
-    asyncio.run(docker.create_network("disco-main"))
-    asyncio.run(docker.create_network("disco-logging"))
-    docker_swarm_create_disco_encryption_key()
     print("Setting up Caddy web server")
     write_caddy_init_config(disco_host, tunnel=cloudflare_tunnel_token is not None)
     start_caddy(host_home, tunnel=cloudflare_tunnel_token is not None)
@@ -101,11 +120,35 @@ def _run_cmd(args: list[str], timeout=600) -> str:
     return output
 
 
-def create_database():
+def parse_init_options(raw: str | None) -> dict[str, str]:
+    options = {name: default for name, (default, _) in INIT_OPTIONS.items()}
+    if raw is None:
+        return options
+    given = json.loads(raw)
+    for name, value in given.items():
+        if name not in INIT_OPTIONS:
+            print(f"Unknown option: {name}", file=sys.stderr)
+            sys.exit(2)
+        _, allowed = INIT_OPTIONS[name]
+        if value not in allowed:
+            print(
+                f"Invalid value for option {name}: {value} "
+                f"(expected one of: {', '.join(allowed)})",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        options[name] = value
+    return options
+
+
+def create_database(ha: bool):
     print("Creating Disco internal database")
-    base_metadata.create_all(engine)
-    config = Config("/disco/app/alembic.ini")
-    command.stamp(config, "head")
+    if not ha:
+        # create file
+        sqlite3.connect(config.SQLITE_PATH).close()
+    base_metadata.create_all(get_engine())
+    alembic_config = Config("/disco/app/alembic.ini")
+    command.stamp(alembic_config, "head")
 
 
 def docker_swarm_init(advertise_addr: str) -> None:
@@ -280,6 +323,7 @@ def start_disco_daemon(host_home: str, image: str) -> None:
             "disco-main",
             "--network",
             "disco-logging",
+            *(["--network", DQLITE_OVERLAY_NETWORK] if config.is_ha() else []),
             "--container-label",
             "disco.log.core=true",
             "--mount",
