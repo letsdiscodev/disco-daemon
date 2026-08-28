@@ -5,63 +5,70 @@ import json
 import logging
 import os
 import re
-import subprocess
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Callable
+from typing import Awaitable, Callable
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, select, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import create_async_engine
 
 import disco
-from disco.models.db import ReadSession, Session, build_engines
-from disco.scripts.init import start_disco_daemon
+from disco.models.db import (
+    AsyncReadSession,
+    AsyncSession,
+    build_engines,
+    get_async_engine,
+)
+from disco.scripts.init import run_and_print, start_disco_daemon
 from disco.utils import keyvalues
 from disco.utils.meta import save_done_updating
-from disco.utils.subprocess import decode_text
+from disco.utils.subprocess import check_call
 
 log = logging.getLogger(__name__)
 
 
 def main() -> None:
+    asyncio.run(_main())
+
+
+async def _main() -> None:
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(build_engines())
+    await build_engines()
     image = os.environ.get("DISCO_IMAGE")
     if image is None:  # backward compat for version <= 0.4.1
         image = "letsdiscodev/daemon:latest"
-    with ReadSession.begin() as dbsession:
-        installed_version = keyvalues.get_value_sync(
+    async with AsyncReadSession.begin() as dbsession:
+        installed_version = await keyvalues.get_value(
             dbsession=dbsession, key="DISCO_VERSION"
         )
         assert installed_version is not None
     if installed_version == disco.__version__:
         print(f"Current version is latest ({disco.__version__}), not updating.")
-        with Session.begin() as dbsession:
-            save_done_updating(dbsession)
+        async with AsyncSession.begin() as dbsession:
+            await save_done_updating(dbsession)
         return
     version_parts = installed_version.split(".")
     major = int(version_parts[0])
     minor = int(version_parts[1])
     if major == 0 and minor <= 4:
-        with Session.begin() as dbsession:
-            disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
-            disco_ip = keyvalues.get_value_sync(dbsession, "DISCO_IP")
+        async with AsyncSession.begin() as dbsession:
+            disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
+            disco_ip = await keyvalues.get_value(dbsession, "DISCO_IP")
             if disco_host == disco_ip:
                 print("Must set Disco host first, not updating.")
-                save_done_updating(dbsession)
+                await save_done_updating(dbsession)
                 return
     print(f"Installed version: {installed_version}")
     print(f"New version: {disco.__version__}")
     print("Stopping existing Disco processes")
     try:
-        stop_disco_daemon()
+        await stop_disco_daemon()
     except Exception:
         log.info("Failed to stop Disco")
     if re.match(r"^0\.(1|2|3)\..+$", installed_version):
         try:
-            stop_disco_worker()
+            await stop_disco_worker()
         except Exception:
             log.info("Failed to stop Disco Worker")
     print("Running upgrade tasks")
@@ -69,9 +76,9 @@ def main() -> None:
     while installed_version != disco.__version__:
         assert installed_version is not None
         task = get_update_function_for_version(installed_version)
-        task(image)
-        with ReadSession.begin() as dbsession:
-            installed_version = keyvalues.get_value_sync(
+        await task(image)
+        async with AsyncReadSession.begin() as dbsession:
+            installed_version = await keyvalues.get_value(
                 dbsession=dbsession, key="DISCO_VERSION"
             )
         ttl -= 1
@@ -82,39 +89,16 @@ def main() -> None:
             break
 
     print("Starting new version of Disco")
-    with ReadSession.begin() as dbsession:
-        host_home = keyvalues.get_value_sync(dbsession=dbsession, key="HOST_HOME")
+    async with AsyncReadSession.begin() as dbsession:
+        host_home = await keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
-    asyncio.run(start_disco_daemon(host_home, image))
-    with Session.begin() as dbsession:
-        save_done_updating(dbsession)
+    await start_disco_daemon(host_home, image)
+    async with AsyncSession.begin() as dbsession:
+        await save_done_updating(dbsession)
 
 
-def _run_cmd(args: list[str], timeout=600) -> str:
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    timeout_dt = datetime.now(timezone.utc) + timedelta(seconds=timeout)
-    output = ""
-    for line in process.stdout:
-        decoded_line = decode_text(line)
-        output += decoded_line
-        print(decoded_line, end="", flush=True)
-        if datetime.now(timezone.utc) > timeout_dt:
-            process.terminate()
-            raise Exception(f"Running command failed, timeout after {timeout} seconds")
-    process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}:\n{output}")
-    print("", flush=True)
-    return output
-
-
-def stop_disco_daemon() -> None:
-    _run_cmd(
+async def stop_disco_daemon() -> None:
+    await run_and_print(
         [
             "docker",
             "service",
@@ -124,8 +108,8 @@ def stop_disco_daemon() -> None:
     )
 
 
-def stop_disco_worker() -> None:
-    _run_cmd(
+async def stop_disco_worker() -> None:
+    await run_and_print(
         [
             "docker",
             "service",
@@ -135,50 +119,56 @@ def stop_disco_worker() -> None:
     )
 
 
-def alembic_upgrade(version_hash: str) -> None:
+async def alembic_upgrade(version_hash: str) -> None:
+    async with get_async_engine().begin() as conn:
+        await conn.run_sync(_alembic_upgrade, version_hash)
+
+
+def _alembic_upgrade(connection, version_hash: str) -> None:
     config = Config("/disco/app/alembic.ini")
+    config.attributes["connection"] = connection
     command.upgrade(config, version_hash)
 
 
-def task_0_31_x(image: str) -> None:
+async def task_0_31_x(image: str) -> None:
     print("Updating from 0.31.x to 0.32.0")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.32.0"
         )
 
 
-def task_0_30_x(image: str) -> None:
+async def task_0_30_x(image: str) -> None:
     print("Updating from 0.30.x to 0.31.0")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.31.0"
         )
 
 
-def task_0_29_x(image: str) -> None:
+async def task_0_29_x(image: str) -> None:
     print("Updating from 0.29.x to 0.30.0")
-    alembic_upgrade("d8adabff2804")
-    with Session.begin() as dbsession:
-        registry = keyvalues.get_value_sync(dbsession, "REGISTRY_HOST")
-        keyvalues.set_value_sync(dbsession=dbsession, key="REGISTRY", value=registry)
-        keyvalues.delete_value_sync(dbsession=dbsession, key="REGISTRY_HOST")
-        keyvalues.set_value_sync(
+    await alembic_upgrade("d8adabff2804")
+    async with AsyncSession.begin() as dbsession:
+        registry = await keyvalues.get_value(dbsession, "REGISTRY_HOST")
+        await keyvalues.set_value(dbsession=dbsession, key="REGISTRY", value=registry)
+        await keyvalues.delete_value(dbsession=dbsession, key="REGISTRY_HOST")
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.30.0"
         )
 
 
-def task_0_28_x(image: str) -> None:
+async def task_0_28_x(image: str) -> None:
     print("Updating from 0.28.x to 0.29.0")
-    with ReadSession.begin() as dbsession:
-        host_home = keyvalues.get_value_sync(dbsession=dbsession, key="HOST_HOME")
+    async with AsyncReadSession.begin() as dbsession:
+        host_home = await keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
     get_caddy_config_cmd = (
         "from disco.utils import caddy; "
         "import json; "
         "print(json.dumps(caddy.get_config()))"
     )
-    caddy_config_str = _run_cmd(
+    caddy_config_lines, _, _ = await check_call(
         [
             "docker",
             "run",
@@ -191,6 +181,7 @@ def task_0_28_x(image: str) -> None:
             get_caddy_config_cmd,
         ]
     )
+    caddy_config_str = "\n".join(caddy_config_lines)
     caddy_config = json.loads(caddy_config_str)
     assert caddy_config is not None
     encode_handler = {"handler": "encode", "encodings": {"gzip": {}, "zstd": {}}}
@@ -214,7 +205,7 @@ def task_0_28_x(image: str) -> None:
         "caddy_config = json.loads(caddy_config_str);"
         "caddy.set_config(caddy_config)"
     )
-    _run_cmd(
+    await run_and_print(
         [
             "docker",
             "run",
@@ -227,40 +218,40 @@ def task_0_28_x(image: str) -> None:
             set_caddy_config_cmd,
         ]
     )
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.29.0"
         )
 
 
-def task_0_27_x(image: str) -> None:
+async def task_0_27_x(image: str) -> None:
     print("Updating from 0.27.x to 0.28.0")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.28.0"
         )
 
 
-def task_0_26_x(image: str) -> None:
+async def task_0_26_x(image: str) -> None:
     print("Updating from 0.26.x to 0.27.0")
-    alembic_upgrade("b0b4edb3672a")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    await alembic_upgrade("b0b4edb3672a")
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.27.0"
         )
 
 
-def task_0_25_x(image: str) -> None:
+async def task_0_25_x(image: str) -> None:
     from disco.scripts.init import start_caddy
     from disco.utils import docker
 
     print("Updating from 0.25.x to 0.26.0")
-    with ReadSession.begin() as dbsession:
-        host_home = keyvalues.get_value_str_sync(dbsession=dbsession, key="HOST_HOME")
-        cloudflare_tunnel_token = keyvalues.get_value_sync(
+    async with AsyncReadSession.begin() as dbsession:
+        host_home = await keyvalues.get_value_str(dbsession=dbsession, key="HOST_HOME")
+        cloudflare_tunnel_token = await keyvalues.get_value(
             dbsession=dbsession, key="CLOUDFLARE_TUNNEL_TOKEN"
         )
-    _run_cmd(
+    await run_and_print(
         [
             "docker",
             "container",
@@ -268,7 +259,7 @@ def task_0_25_x(image: str) -> None:
             "disco-caddy",
         ]
     )
-    _run_cmd(
+    await run_and_print(
         [
             "docker",
             "container",
@@ -276,36 +267,34 @@ def task_0_25_x(image: str) -> None:
             "disco-caddy",
         ]
     )
-    asyncio.run(
-        start_caddy(host_home=host_home, tunnel=cloudflare_tunnel_token is not None)
-    )
+    await start_caddy(host_home=host_home, tunnel=cloudflare_tunnel_token is not None)
     if cloudflare_tunnel_token is not None:
-        docker.add_network_to_container_sync(
+        await docker.add_network_to_container(
             "disco-caddy", "disco-cloudflare-tunnel", alias="disco-server"
         )
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.26.0"
         )
 
 
-def task_0_24_x(image: str) -> None:
+async def task_0_24_x(image: str) -> None:
     print("Updating from 0.24.x to 0.25.0")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.25.0"
         )
 
 
-def task_0_23_x(image: str) -> None:
+async def task_0_23_x(image: str) -> None:
     from disco.utils import docker
     from disco.utils.syslog import SyslogUrl, set_syslog_services
 
     print("Updating from 0.23.x to 0.24.0")
-    with Session.begin() as dbsession:
-        disco_host = keyvalues.get_value_sync(dbsession, "DISCO_HOST")
+    async with AsyncSession.begin() as dbsession:
+        disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
         assert disco_host is not None
-        urls_str = keyvalues.get_value_sync(dbsession, "SYSLOG_URLS")
+        urls_str = await keyvalues.get_value(dbsession, "SYSLOG_URLS")
         if urls_str is not None:
             urls = json.loads(urls_str)
             syslog_urls: list[SyslogUrl] = [
@@ -316,33 +305,33 @@ def task_0_23_x(image: str) -> None:
                 for url in urls
             ]
             new_urls = json.dumps(syslog_urls)
-            keyvalues.set_value_sync(dbsession, "SYSLOG_URLS", new_urls)
+            await keyvalues.set_value(dbsession, "SYSLOG_URLS", new_urls)
     if urls_str is not None:
         assert syslog_urls is not None
-        asyncio.run(set_syslog_services(disco_host=disco_host, syslog_urls=syslog_urls))
-    old_syslog_is_running = asyncio.run(docker.service_exists("disco-syslog"))
+        await set_syslog_services(disco_host=disco_host, syslog_urls=syslog_urls)
+    old_syslog_is_running = await docker.service_exists("disco-syslog")
     if old_syslog_is_running:
-        asyncio.run(docker.rm_service("disco-syslog"))
+        await docker.rm_service("disco-syslog")
 
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.24.0"
         )
 
 
-def task_0_22_x(image: str) -> None:
+async def task_0_22_x(image: str) -> None:
     from disco import config
     from disco.scripts.init import start_caddy
     from disco.utils import docker
 
     print("Updating from 0.22.x to 0.23.0")
-    with ReadSession.begin() as dbsession:
-        host_home = keyvalues.get_value_str_sync(dbsession=dbsession, key="HOST_HOME")
-        cloudflare_tunnel_token = keyvalues.get_value_sync(
+    async with AsyncReadSession.begin() as dbsession:
+        host_home = await keyvalues.get_value_str(dbsession=dbsession, key="HOST_HOME")
+        cloudflare_tunnel_token = await keyvalues.get_value(
             dbsession=dbsession, key="CLOUDFLARE_TUNNEL_TOKEN"
         )
-    _run_cmd(["docker", "pull", f"caddy:{config.CADDY_VERSION}"])
-    _run_cmd(
+    await run_and_print(["docker", "pull", f"caddy:{config.CADDY_VERSION}"])
+    await run_and_print(
         [
             "docker",
             "container",
@@ -350,7 +339,7 @@ def task_0_22_x(image: str) -> None:
             "disco-caddy",
         ]
     )
-    _run_cmd(
+    await run_and_print(
         [
             "docker",
             "container",
@@ -358,71 +347,69 @@ def task_0_22_x(image: str) -> None:
             "disco-caddy",
         ]
     )
-    asyncio.run(
-        start_caddy(host_home=host_home, tunnel=cloudflare_tunnel_token is not None)
-    )
+    await start_caddy(host_home=host_home, tunnel=cloudflare_tunnel_token is not None)
     if cloudflare_tunnel_token is not None:
-        docker.add_network_to_container_sync(
+        await docker.add_network_to_container(
             "disco-caddy", "disco-cloudflare-tunnel", alias="disco-server"
         )
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.23.0"
         )
 
 
-def task_0_21_x(image: str) -> None:
+async def task_0_21_x(image: str) -> None:
     print("Updating from 0.21.x to 0.22.0")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.22.0"
         )
 
 
-def task_0_20_x(image: str) -> None:
+async def task_0_20_x(image: str) -> None:
     print("Updating from 0.20.x to 0.21.0")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.21.0"
         )
 
 
-def task_0_19_x(image: str) -> None:
+async def task_0_19_x(image: str) -> None:
     print("Updating from 0.19.x to 0.20.0")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.20.0"
         )
 
 
-def task_0_18_x(image: str) -> None:
+async def task_0_18_x(image: str) -> None:
     print("Updating from 0.18.x to 0.19.0")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.19.0"
         )
 
 
-def task_0_17_x(image: str) -> None:
+async def task_0_17_x(image: str) -> None:
     print("Updating from 0.17.x to 0.18.0")
-    alembic_upgrade("9087484963d4")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    await alembic_upgrade("9087484963d4")
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.18.0"
         )
 
 
-def task_0_16_x(image: str) -> None:
+async def task_0_16_x(image: str) -> None:
     print("Updating from 0.16.x to 0.17.0")
-    with ReadSession.begin() as dbsession:
-        host_home = keyvalues.get_value_sync(dbsession=dbsession, key="HOST_HOME")
+    async with AsyncReadSession.begin() as dbsession:
+        host_home = await keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
     get_caddy_config_cmd = (
         "from disco.utils import caddy; "
         "import json; "
         "print(json.dumps(caddy.get_config()))"
     )
-    caddy_config_str = _run_cmd(
+    caddy_config_lines, _, _ = await check_call(
         [
             "docker",
             "run",
@@ -435,6 +422,7 @@ def task_0_16_x(image: str) -> None:
             get_caddy_config_cmd,
         ]
     )
+    caddy_config_str = "\n".join(caddy_config_lines)
     caddy_config = json.loads(caddy_config_str)
     assert caddy_config is not None
     caddy_config["apps"]["http"]["servers"]["disco"]["logs"] = {}
@@ -462,7 +450,7 @@ def task_0_16_x(image: str) -> None:
         "caddy_config = json.loads(caddy_config_str);"
         "caddy.set_config(caddy_config)"
     )
-    _run_cmd(
+    await run_and_print(
         [
             "docker",
             "run",
@@ -475,73 +463,73 @@ def task_0_16_x(image: str) -> None:
             set_caddy_config_cmd,
         ]
     )
-    alembic_upgrade("26877eda6774")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    await alembic_upgrade("26877eda6774")
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.17.0"
         )
 
 
-def task_0_15_x(image: str) -> None:
+async def task_0_15_x(image: str) -> None:
     print("Updating from 0.15.x to 0.16.0")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.16.0"
         )
 
 
-def task_0_14_x(image: str) -> None:
+async def task_0_14_x(image: str) -> None:
     print("Updating from 0.14.x to 0.15.0")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.15.0"
         )
 
 
-def task_0_13_x(image: str) -> None:
+async def task_0_13_x(image: str) -> None:
     print("Updating from 0.13.x to 0.14.0")
-    alembic_upgrade("b2c4ac1469de")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    await alembic_upgrade("b2c4ac1469de")
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.14.0"
         )
 
 
-def task_0_12_x(image: str) -> None:
+async def task_0_12_x(image: str) -> None:
     from disco.scripts.init import start_caddy
 
     print("Updating from 0.12.x to 0.13.0")
-    with ReadSession.begin() as dbsession:
-        host_home = keyvalues.get_value_sync(dbsession=dbsession, key="HOST_HOME")
+    async with AsyncReadSession.begin() as dbsession:
+        host_home = await keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
-    _run_cmd(
+    await run_and_print(
         [
             "docker",
             "stop",
             "disco-caddy",
         ]
     )
-    _run_cmd(
+    await run_and_print(
         [
             "docker",
             "rm",
             "disco-caddy",
         ]
     )
-    asyncio.run(start_caddy(host_home=host_home, tunnel=False))
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    await start_caddy(host_home=host_home, tunnel=False)
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.13.0"
         )
 
 
-def task_0_11_x(image: str) -> None:
+async def task_0_11_x(image: str) -> None:
     from disco.utils import docker
 
     print("Updating from 0.11.x to 0.12.0")
-    alembic_upgrade("b570b8c2424d")
-    asyncio.run(docker.create_network("disco-main"))
-    services_output = _run_cmd(
+    await alembic_upgrade("b570b8c2424d")
+    await docker.create_network("disco-main")
+    services, _, _ = await check_call(
         [
             "docker",
             "service",
@@ -552,9 +540,8 @@ def task_0_11_x(image: str) -> None:
             "{{ .Name }}",
         ]
     )
-    services = services_output.split("\n")[:-1]
     for service in services:
-        _run_cmd(
+        await run_and_print(
             [
                 "docker",
                 "service",
@@ -564,7 +551,7 @@ def task_0_11_x(image: str) -> None:
                 service,
             ]
         )
-    networks_output = _run_cmd(
+    networks, _, _ = await check_call(
         [
             "docker",
             "network",
@@ -575,45 +562,48 @@ def task_0_11_x(image: str) -> None:
             "{{ .Name }}",
         ]
     )
-    networks = networks_output.split("\n")[:-1]
     for network in networks:
         if not network.endswith("-caddy"):
             continue
         try:
-            asyncio.run(docker.remove_network_from_container("disco-caddy", network))
+            await docker.remove_network_from_container("disco-caddy", network)
         except Exception:
             log.info("Couldn't remove network %s from disco-caddy", network)
-    docker.add_network_to_container_sync("disco-caddy", "disco-main")
-    asyncio.run(
-        docker.remove_network_from_container("disco-caddy", "disco-caddy-daemon")
-    )
-    docker.remove_network_sync("disco-caddy-daemon")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    await docker.add_network_to_container("disco-caddy", "disco-main")
+    await docker.remove_network_from_container("disco-caddy", "disco-caddy-daemon")
+    await docker.remove_network("disco-caddy-daemon")
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.12.0"
         )
 
 
-def task_0_10_x(image: str) -> None:
+async def task_0_10_x(image: str) -> None:
     print("Updating from 0.10.x to 0.11.0")
     directory = "/disco/data/commandoutputs"
-    if not os.path.isdir(directory):
-        os.makedirs(directory)
-    with ReadSession.begin() as dbsession:
+
+    def makedirs() -> None:
+        if not os.path.isdir(directory):
+            os.makedirs(directory)
+
+    await asyncio.get_event_loop().run_in_executor(None, makedirs)
+    async with AsyncReadSession.begin() as dbsession:
         sql = """
             SELECT source
                 FROM command_outputs
                 GROUP BY source;
         """
-        rows = dbsession.execute(text(sql)).all()
+        rows = (await dbsession.execute(text(sql))).all()
         sources = [row.source for row in rows]
     for source in sources:
-        with ReadSession.begin() as dbsession:
-            db_url = f"sqlite:////disco/data/commandoutputs/{source.lower()}.sqlite3"
-            engine = create_engine(db_url, connect_args={"check_same_thread": False})
-            session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-            with session.begin() as output_dbsession:
-                output_dbsession.execute(
+        async with AsyncReadSession.begin() as dbsession:
+            db_url = (
+                "sqlite+aiosqlite:////disco/data/commandoutputs/"
+                f"{source.lower()}.sqlite3"
+            )
+            engine = create_async_engine(db_url)
+            async with engine.begin() as output_conn:
+                await output_conn.execute(
                     text("""
                     CREATE TABLE "command_outputs" (
                         id VARCHAR(32) NOT NULL, 
@@ -623,49 +613,52 @@ def task_0_10_x(image: str) -> None:
                     );
                     """)
                 )
-                output_dbsession.execute(
+                await output_conn.execute(
                     text(
                         "CREATE INDEX ix_command_outputs_created "
                         "ON command_outputs (created);"
                     )
                 )
-                rows = dbsession.execute(
-                    text("""
+                rows = (
+                    await dbsession.execute(
+                        text("""
                     SELECT id, created, text
                         FROM command_outputs
                         WHERE source = :source"""),
-                    params={"source": source},
+                        params={"source": source},
+                    )
                 ).all()
                 for row in rows:
-                    output_dbsession.execute(
+                    await output_conn.execute(
                         text("""
                     INSERT INTO command_outputs
                     (id, created, text) VALUES (:id, :created, :text)"""),
-                        params={"id": row.id, "created": row.created, "text": row.text},
+                        {"id": row.id, "created": row.created, "text": row.text},
                     )
-    alembic_upgrade("41a2f999a3e9")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+            await engine.dispose()
+    await alembic_upgrade("41a2f999a3e9")
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.11.0"
         )
 
 
-def task_0_9_x(image: str) -> None:
+async def task_0_9_x(image: str) -> None:
     print("Updating from 0.9.x to 0.10.0")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.10.0"
         )
 
 
-def task_0_8_x(image: str) -> None:
+async def task_0_8_x(image: str) -> None:
     print("Updating from 0.8.x to 0.9.0")
     from disco.scripts.init import start_caddy
 
-    with ReadSession.begin() as dbsession:
-        host_home = keyvalues.get_value_sync(dbsession=dbsession, key="HOST_HOME")
+    async with AsyncReadSession.begin() as dbsession:
+        host_home = await keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
-    _run_cmd(
+    await run_and_print(
         [
             "docker",
             "run",
@@ -677,7 +670,7 @@ def task_0_8_x(image: str) -> None:
             "/host-home/disco/caddy-socket",
         ]
     )
-    _run_cmd(
+    await run_and_print(
         [
             "docker",
             "container",
@@ -685,7 +678,7 @@ def task_0_8_x(image: str) -> None:
             "disco-caddy",
         ]
     )
-    _run_cmd(
+    await run_and_print(
         [
             "docker",
             "container",
@@ -693,7 +686,7 @@ def task_0_8_x(image: str) -> None:
             "disco-caddy",
         ]
     )
-    _run_cmd(
+    await run_and_print(
         [
             "docker",
             "run",
@@ -707,48 +700,48 @@ def task_0_8_x(image: str) -> None:
             "/disco/caddy/config/caddy/autosave.json",
         ]
     )
-    asyncio.run(start_caddy(host_home=host_home, tunnel=False))
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    await start_caddy(host_home=host_home, tunnel=False)
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.9.0"
         )
 
 
-def task_0_7_x(image: str) -> None:
+async def task_0_7_x(image: str) -> None:
     from disco.models import ProjectGithubRepo
 
     print("Updating from 0.7.x to 0.8.0")
-    alembic_upgrade("3fe4af6efa33")
-    with Session.begin() as dbsession:
+    await alembic_upgrade("3fe4af6efa33")
+    async with AsyncSession.begin() as dbsession:
         sql = """
             SELECT pgr.id, gar.full_name 
                 FROM project_github_repos AS pgr 
                 JOIN github_app_repos AS gar ON pgr.github_app_repo_id = gar.id;
         """
-        rows = dbsession.execute(text(sql)).all()
+        rows = (await dbsession.execute(text(sql))).all()
         for row in rows:
-            repo = dbsession.get(ProjectGithubRepo, row.id)
+            repo = await dbsession.get(ProjectGithubRepo, row.id)
             assert repo is not None
             repo.full_name = row.full_name
-    with Session.begin() as dbsession:
-        dbsession.execute(
+    async with AsyncSession.begin() as dbsession:
+        await dbsession.execute(
             text("DELETE FROM project_github_repos WHERE full_name IS NULL")
         )
-    alembic_upgrade("7867432539d9")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    await alembic_upgrade("7867432539d9")
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.8.0"
         )
 
 
-def task_0_6_x(image: str) -> None:
+async def task_0_6_x(image: str) -> None:
     from disco.models import GithubApp, ProjectDomain
     from disco.utils.projectdomains import _get_apex_www_redirect_for_domain
 
     print("Updating from 0.6.x to 0.7.0")
-    alembic_upgrade("97e98737cba8")
-    with Session.begin() as dbsession:
-        rows = dbsession.execute(text("SELECT id, domain FROM projects;")).all()
+    await alembic_upgrade("97e98737cba8")
+    async with AsyncSession.begin() as dbsession:
+        rows = (await dbsession.execute(text("SELECT id, domain FROM projects;"))).all()
         all_domains = set([row.domain for row in rows if row.domain is not None])
         for row in rows:
             if row.domain is not None:
@@ -769,7 +762,7 @@ def task_0_6_x(image: str) -> None:
                         f"'{project_domain.id}', '{apex_www_redirect}', "
                         f"'{project_domain.name}')"
                     )
-                    _run_cmd(
+                    await run_and_print(
                         [
                             "docker",
                             "run",
@@ -785,39 +778,39 @@ def task_0_6_x(image: str) -> None:
                     )
 
         stmt = select(GithubApp).order_by(GithubApp.owner_login)
-        github_apps = dbsession.execute(stmt).scalars().all()
+        github_apps = (await dbsession.execute(stmt)).scalars().all()
         for github_app in github_apps:
             app_meta = json.loads(github_app.app_info)
             github_app.owner_id = app_meta["owner"]["id"]
             github_app.owner_login = app_meta["owner"]["login"]
             github_app.owner_type = app_meta["owner"]["type"]
-    alembic_upgrade("47da35039f6f")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    await alembic_upgrade("47da35039f6f")
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.7.0"
         )
 
 
-def task_0_5_x(image: str) -> None:
+async def task_0_5_x(image: str) -> None:
     print("Updating from 0.5.x to 0.6.0")
-    alembic_upgrade("5540c20f9acd")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    await alembic_upgrade("5540c20f9acd")
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.6.0"
         )
 
 
-def task_0_4_x(image: str) -> None:
+async def task_0_4_x(image: str) -> None:
     print("Updating from 0.4.x to 0.5.0")
-    alembic_upgrade("87c62632dfd1")
-    with Session.begin() as dbsession:
-        disco_ip = keyvalues.get_value_sync(dbsession=dbsession, key="DISCO_IP")
+    await alembic_upgrade("87c62632dfd1")
+    async with AsyncSession.begin() as dbsession:
+        disco_ip = await keyvalues.get_value(dbsession=dbsession, key="DISCO_IP")
         get_caddy_config_cmd = (
             "from disco.utils import caddy; "
             "import json; "
             "print(json.dumps(caddy.get_config()))"
         )
-        caddy_config_str = _run_cmd(
+        caddy_config_lines, _, _ = await check_call(
             [
                 "docker",
                 "run",
@@ -832,6 +825,7 @@ def task_0_4_x(image: str) -> None:
                 get_caddy_config_cmd,
             ]
         )
+        caddy_config_str = "\n".join(caddy_config_lines)
         caddy_config = json.loads(caddy_config_str)
         assert caddy_config is not None
         del caddy_config["apps"]["http"]["servers"]["disco"]["tls_connection_policies"]
@@ -849,7 +843,7 @@ def task_0_4_x(image: str) -> None:
             "caddy_config = json.loads(caddy_config_str);"
             "caddy.set_config(caddy_config)"
         )
-        _run_cmd(
+        await run_and_print(
             [
                 "docker",
                 "run",
@@ -864,52 +858,52 @@ def task_0_4_x(image: str) -> None:
                 set_caddy_config_cmd,
             ]
         )
-        keyvalues.set_value_sync(
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_ADVERTISE_ADDR", value=disco_ip
         )
-        keyvalues.delete_value_sync(dbsession=dbsession, key="DISCO_IP")
-        keyvalues.delete_value_sync(dbsession=dbsession, key="PUBLIC_CA_CERT")
-        keyvalues.set_value_sync(
+        await keyvalues.delete_value(dbsession=dbsession, key="DISCO_IP")
+        await keyvalues.delete_value(dbsession=dbsession, key="PUBLIC_CA_CERT")
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.5.0"
         )
 
 
-def task_0_3_x(image: str) -> None:
+async def task_0_3_x(image: str) -> None:
     print("Updating from 0.3.x to 0.4.0")
-    alembic_upgrade("3eb8871ccb85")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    await alembic_upgrade("3eb8871ccb85")
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.4.0"
         )
 
 
-def task_0_2_x(image: str) -> None:
+async def task_0_2_x(image: str) -> None:
     print("Updating from 0.2.x to 0.3.0")
-    alembic_upgrade("d0cba3cd3238")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    await alembic_upgrade("d0cba3cd3238")
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.3.0"
         )
 
 
-def task_0_1_x(image: str) -> None:
+async def task_0_1_x(image: str) -> None:
     print("Updating from 0.1.x to 0.2.0")
-    alembic_upgrade("eba27af20db2")
-    with Session.begin() as dbsession:
-        keyvalues.set_value_sync(
+    await alembic_upgrade("eba27af20db2")
+    async with AsyncSession.begin() as dbsession:
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.2.0"
         )
 
 
-def task_patch(image: str) -> None:
-    with Session.begin() as dbsession:
+async def task_patch(image: str) -> None:
+    async with AsyncSession.begin() as dbsession:
         print(f"Updating to {disco.__version__}")
-        keyvalues.set_value_sync(
+        await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value=disco.__version__
         )
 
 
-def get_update_function_for_version(version: str) -> Callable[[str], None]:
+def get_update_function_for_version(version: str) -> Callable[[str], Awaitable[None]]:
     if version.startswith("0.1."):
         return task_0_1_x
     if version.startswith("0.2."):

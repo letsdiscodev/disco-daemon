@@ -2,7 +2,6 @@ import asyncio
 import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
-from sqlalchemy.orm.session import Session as DBSession
 
 from disco import config
 from disco.models import ApiKey
@@ -69,8 +68,8 @@ async def save_is_updating(dbsession: AsyncDBSession) -> None:
     await keyvalues.set_value(dbsession, "DISCO_IS_UPDATING", "true")
 
 
-def save_done_updating(dbsession: DBSession) -> None:
-    keyvalues.delete_value_sync(dbsession, "DISCO_IS_UPDATING")
+async def save_done_updating(dbsession: AsyncDBSession) -> None:
+    await keyvalues.delete_value(dbsession, "DISCO_IS_UPDATING")
 
 
 async def set_disco_host(
