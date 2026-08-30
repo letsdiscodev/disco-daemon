@@ -5,13 +5,13 @@ from fastapi import APIRouter, BackgroundTasks, Depends
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_core import InitErrorDetails, PydanticCustomError
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
+from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 
 from disco.auth import get_api_key_wo_tx
 from disco.endpoints.dependencies import get_project_name_from_url_wo_tx
 from disco.endpoints.envvariables import EnvVariable
 from disco.models import Project, ProjectGithubRepo
-from disco.models.db import AsyncReadSession, AsyncSession
+from disco.models.db import ReadSession, Session
 from disco.utils import keyvalues
 from disco.utils.apikeys import get_api_key_by_id
 from disco.utils.deploymentflow import enqueue_deployment
@@ -87,7 +87,7 @@ class UpdateProjectRequestBody(BaseModel):
 
 
 async def validate_github_repo_available(
-    dbsession: AsyncDBSession, github_repo: str
+    dbsession: DBSession, github_repo: str
 ) -> None:
     repos = await get_all_repos(dbsession)
     if github_repo not in [
@@ -113,7 +113,7 @@ async def validate_github_repo_available(
 
 
 async def validate_create_project(
-    dbsession: AsyncDBSession, req_body: NewProjectRequestBody
+    dbsession: DBSession, req_body: NewProjectRequestBody
 ) -> None:
     project = await get_project_by_name(dbsession, req_body.name)
     if project is not None:
@@ -177,7 +177,7 @@ async def validate_create_project(
 
 
 async def validate_update_project(
-    dbsession: AsyncDBSession,
+    dbsession: DBSession,
     project: Project,
     req_body: UpdateProjectRequestBody,
 ) -> None:
@@ -218,7 +218,7 @@ async def projects_post(
     req_body: NewProjectRequestBody,
     background_tasks: BackgroundTasks,
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         api_key = await get_api_key_by_id(dbsession, api_key_id)
         assert api_key is not None
         if req_body.generate_suffix:
@@ -292,7 +292,7 @@ async def projects_post(
 
 @router.get("/api/projects")
 async def projects_get():
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         projects = await get_all_projects(dbsession)
         result = []
         for project in projects:
@@ -315,7 +315,7 @@ async def projects_get():
 async def project_get(
     project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
 ):
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
         github_repo = await project.awaitable_attrs.github_repo
@@ -338,7 +338,7 @@ async def projects_patch(
     api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
     req_body: UpdateProjectRequestBody,
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
         api_key = await get_api_key_by_id(dbsession, api_key_id)
@@ -384,7 +384,7 @@ async def projects_delete(
     project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
     api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
         api_key = await get_api_key_by_id(dbsession, api_key_id)
@@ -398,7 +398,7 @@ async def export_get(
     project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
     api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
 ):
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
         api_key = await get_api_key_by_id(dbsession, api_key_id)

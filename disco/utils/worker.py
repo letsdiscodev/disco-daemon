@@ -10,7 +10,7 @@ from typing import AsyncGenerator, Awaitable, Callable, Sequence
 from croniter import croniter
 
 from disco.models import Deployment, DeploymentEnvironmentVariable
-from disco.models.db import AsyncReadSession
+from disco.models.db import ReadSession
 from disco.utils import docker, keyvalues
 from disco.utils.discofile import DiscoFile, ServiceType, get_disco_file_from_str
 from disco.utils.encryption import decrypt
@@ -245,7 +245,7 @@ class TaskNotFoundError(KeyError):
     pass
 
 
-class AsyncWorker:
+class Worker:
     def __init__(self) -> None:
         self._stopped = False
         self._disco_crons: list[DiscoCron] = []
@@ -257,7 +257,7 @@ class AsyncWorker:
 
     async def enqueue(self, async_callable: Callable[[], Awaitable[None]]) -> str:
         queue_task = QueueTask(id=uuid.uuid4().hex, run=async_callable)
-        await async_worker.queue.put(queue_task)
+        await worker.queue.put(queue_task)
         return queue_task.id
 
     def cancel_task(self, task_id: str) -> None:
@@ -275,13 +275,13 @@ class AsyncWorker:
         return self._loop
 
     def stop(self) -> None:
-        log.info("AsyncWorker received stop command")
+        log.info("Worker received stop command")
         self._stopped = True
 
     async def work(self) -> None:
         from disco.utils.commands import clean_up_orphan_commands
 
-        log.info("Starting AsyncWorker")
+        log.info("Starting Worker")
         await clean_up_orphan_commands(remove_all=True)
         self._disco_crons = self._load_disco_crons()
         self._project_crons = await self._load_project_crons()
@@ -289,9 +289,9 @@ class AsyncWorker:
         async for task in self._get_tasks():
             tasks.add(task)
             task.add_done_callback(lambda t: tasks.remove(t))
-        log.info("Stopping AsyncWorker")
+        log.info("Stopping Worker")
         await asyncio.gather(*tasks)
-        log.info("Stopped AsyncWorker")
+        log.info("Stopped Worker")
 
     def pause_project_crons(self, project_name: str) -> None:
         for cron in self._project_crons:
@@ -315,7 +315,7 @@ class AsyncWorker:
         from disco.utils.projects import get_project_by_name
 
         log.info("Reloading project crons of %s", project_name)
-        async with AsyncReadSession.begin() as dbsession:
+        async with ReadSession.begin() as dbsession:
             disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
             project = await get_project_by_name(dbsession, project_name)
             assert project is not None
@@ -511,7 +511,7 @@ class AsyncWorker:
         from disco.utils.projects import get_all_projects
 
         crons: list[ProjectCron] = []
-        async with AsyncReadSession.begin() as dbsession:
+        async with ReadSession.begin() as dbsession:
             disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
             projects = await get_all_projects(dbsession)
             for project in projects:
@@ -540,4 +540,4 @@ class AsyncWorker:
         return crons
 
 
-async_worker = AsyncWorker()
+worker = Worker()

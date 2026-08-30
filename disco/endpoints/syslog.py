@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from disco.auth import get_api_key_wo_tx
-from disco.models.db import AsyncReadSession, AsyncSession
+from disco.models.db import ReadSession, Session
 from disco.utils import keyvalues
 from disco.utils.apikeys import get_valid_api_key_by_id
 from disco.utils.syslog import (
@@ -36,7 +36,7 @@ async def syslog_post(
     api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
     add_remove_syslog: AddRemoveSyslogReqBody,
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         api_key = await get_valid_api_key_by_id(dbsession, api_key_id)
         assert api_key is not None
         if add_remove_syslog.action == SyslogAction.add:
@@ -61,7 +61,7 @@ async def syslog_post(
 
 @router.get("/api/syslog")
 async def syslog_get():
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         syslog_urls = await get_syslog_urls(dbsession)
     return {
         "urls": [

@@ -10,7 +10,7 @@ from fastapi.security import (
 )
 
 from disco.models import ApiKey
-from disco.models.db import AsyncReadSession
+from disco.models.db import ReadSession
 from disco.utils import keyvalues
 from disco.utils.apikeys import (
     get_api_key_by_public_key,
@@ -29,7 +29,7 @@ async def get_api_key_wo_tx(
     ],
 ):
     api_key_id = None
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         api_key_str = None
         if basic_credentials is not None:
             api_key_str = basic_credentials.username
@@ -76,7 +76,7 @@ async def validate_token(token: str) -> ApiKey | None:
     Validate a token (either raw API key ID or JWT).
     Returns ApiKey if valid, None otherwise.
     """
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         # First, try as raw API key ID (like Basic auth does)
         api_key = await get_valid_api_key_by_id(dbsession, token)
         if api_key is not None:

@@ -1,7 +1,7 @@
 import logging
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
+from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 
 from disco.models import ApiKey, Project, ProjectKeyValue
 from disco.utils.encryption import decrypt, encrypt
@@ -9,9 +9,7 @@ from disco.utils.encryption import decrypt, encrypt
 log = logging.getLogger(__name__)
 
 
-async def get_value(
-    dbsession: AsyncDBSession, project: Project, key: str
-) -> str | None:
+async def get_value(dbsession: DBSession, project: Project, key: str) -> str | None:
     key_value = await dbsession.get(
         ProjectKeyValue, {"key": key, "project_id": project.id}
     )
@@ -21,7 +19,7 @@ async def get_value(
 
 
 async def get_all_key_values_for_project(
-    dbsession: AsyncDBSession, project: Project
+    dbsession: DBSession, project: Project
 ) -> list[ProjectKeyValue]:
     stmt = select(ProjectKeyValue).where(ProjectKeyValue.project == project)
     result = await dbsession.execute(stmt)
@@ -29,7 +27,7 @@ async def get_all_key_values_for_project(
 
 
 async def set_value(
-    dbsession: AsyncDBSession,
+    dbsession: DBSession,
     project: Project,
     key: str,
     value: str | None,
@@ -53,7 +51,7 @@ async def set_value(
 
 
 async def delete_value(
-    dbsession: AsyncDBSession, project: Project, key: str, by_api_key: ApiKey
+    dbsession: DBSession, project: Project, key: str, by_api_key: ApiKey
 ) -> None:
     key_value = await dbsession.get(
         ProjectKeyValue, {"key": key, "project_id": project.id}

@@ -3,7 +3,7 @@ import uuid
 from typing import Sequence
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
+from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 
 from disco.models import (
     ApiKey,
@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 
 
 def create_project(
-    dbsession: AsyncDBSession,
+    dbsession: DBSession,
     name: str,
     by_api_key: ApiKey,
 ) -> Project:
@@ -40,7 +40,7 @@ def create_project(
 
 
 async def set_project_github_repo(
-    dbsession: AsyncDBSession,
+    dbsession: DBSession,
     project: Project,
     github_repo: str | None,
     by_api_key: ApiKey,
@@ -91,21 +91,17 @@ async def _remove_project_repo_from_filesystem(project_name: str) -> None:
         log.info("Failed to remove Github repo for project %s", project_name)
 
 
-async def get_project_by_id(
-    dbsession: AsyncDBSession, project_id: str
-) -> Project | None:
+async def get_project_by_id(dbsession: DBSession, project_id: str) -> Project | None:
     return await dbsession.get(Project, project_id)
 
 
-async def get_project_by_name(dbsession: AsyncDBSession, name: str) -> Project | None:
+async def get_project_by_name(dbsession: DBSession, name: str) -> Project | None:
     stmt = select(Project).where(Project.name == name).limit(1)
     result = await dbsession.execute(stmt)
     return result.scalars().first()
 
 
-async def get_project_by_domain(
-    dbsession: AsyncDBSession, domain: str
-) -> Project | None:
+async def get_project_by_domain(dbsession: DBSession, domain: str) -> Project | None:
     stmt = (
         select(Project).join(ProjectDomain).where(ProjectDomain.name == domain).limit(1)
     )
@@ -114,7 +110,7 @@ async def get_project_by_domain(
 
 
 async def get_projects_by_github_app_repo(
-    dbsession: AsyncDBSession, full_name: str
+    dbsession: DBSession, full_name: str
 ) -> Sequence[Project]:
     stmt = (
         select(Project)
@@ -125,16 +121,16 @@ async def get_projects_by_github_app_repo(
     return result.scalars().all()
 
 
-async def get_all_projects(dbsession: AsyncDBSession) -> Sequence[Project]:
+async def get_all_projects(dbsession: DBSession) -> Sequence[Project]:
     stmt = select(Project).order_by(Project.name)
     result = await dbsession.execute(stmt)
     return result.scalars().all()
 
 
 async def delete_project(
-    dbsession: AsyncDBSession, project: Project, by_api_key: ApiKey
+    dbsession: DBSession, project: Project, by_api_key: ApiKey
 ) -> None:
-    from disco.utils.asyncworker import async_worker
+    from disco.utils.worker import worker
 
     log.info("%s is deleting project %s", by_api_key.log(), project.log())
     github_repo: ProjectGithubRepo | None = await project.awaitable_attrs.github_repo
@@ -162,7 +158,7 @@ async def delete_project(
             await docker.remove_network_from_container("disco-caddy", network)
         except Exception:
             pass
-    async_worker.remove_project_crons(project.name)
+    worker.remove_project_crons(project.name)
     if github_repo is not None:
         await dbsession.delete(github_repo)
     p_env_vars: Sequence[

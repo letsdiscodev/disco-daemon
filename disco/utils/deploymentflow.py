@@ -15,9 +15,8 @@ from disco.models import (
     Project,
     ProjectDomain,
 )
-from disco.models.db import AsyncReadSession, AsyncSession
+from disco.models.db import ReadSession, Session
 from disco.utils import caddy, commandoutputs, docker, github, keyvalues
-from disco.utils.asyncworker import async_worker
 from disco.utils.deployments import (
     DEPLOYMENT_STATUS,
     get_deployment_by_id,
@@ -42,6 +41,7 @@ from disco.utils.projects import (
     get_project_by_id,
     volume_name_for_project,
 )
+from disco.utils.worker import worker
 
 log = logging.getLogger(__name__)
 
@@ -110,8 +110,8 @@ async def enqueue_deployment(deployment_id: str) -> None:
     async def task() -> None:
         await process_deployment(deployment_id)
 
-    task_id = await async_worker.enqueue(task)
-    async with AsyncSession.begin() as dbsession:
+    task_id = await worker.enqueue(task)
+    async with Session.begin() as dbsession:
         deployment = await get_deployment_by_id(dbsession, deployment_id)
         assert deployment is not None
         set_deployment_task_id(deployment, task_id)
@@ -122,7 +122,7 @@ async def process_deployment_if_any(project_id: str) -> None:
     from disco.utils.deployments import get_oldest_queued_deployment
     from disco.utils.projects import get_project_by_id
 
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         project = await get_project_by_id(dbsession, project_id)
         if project is None:
             log.warning(
@@ -150,14 +150,14 @@ async def process_deployment(deployment_id: str) -> None:
         await commandoutputs.terminate(commandoutputs.deployment_source(deployment_id))
 
     async def set_current_deployment_status(status: DEPLOYMENT_STATUS) -> None:
-        async with AsyncSession.begin() as dbsession:
+        async with Session.begin() as dbsession:
             deployment = await get_deployment_by_id(dbsession, deployment_id)
             assert deployment is not None
             await set_deployment_status(deployment, status)
 
     async def maybe_keep_queued_or_skip() -> bool:
         process_deployment_of_project_id = None
-        async with AsyncSession.begin() as dbsession:
+        async with Session.begin() as dbsession:
             deployment = await get_deployment_by_id(dbsession, deployment_id)
             assert deployment is not None
             project: Project = await deployment.awaitable_attrs.project
@@ -195,7 +195,7 @@ async def process_deployment(deployment_id: str) -> None:
 
     try:
         await log_output("Starting deployment\n")
-        async with AsyncSession.begin() as dbsession:
+        async with Session.begin() as dbsession:
             log.info("Getting data from database for deployment %s", deployment_id)
             deployment = await get_deployment_by_id(dbsession, deployment_id)
             assert deployment is not None
@@ -287,7 +287,7 @@ async def process_deployment(deployment_id: str) -> None:
         log.info("Finished processing build %s", deployment_id)
         await log_output_terminate()
 
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         deployment = await get_deployment_by_id(dbsession, deployment_id)
         assert deployment is not None
         project_id = deployment.project_id
@@ -472,7 +472,7 @@ async def replace_deployment(
         scale=scale,
     )
     if prev_deployment_info is not None:
-        async_worker.pause_project_crons(prev_deployment_info.project_name)
+        worker.pause_project_crons(prev_deployment_info.project_name)
     if new_deployment_info is not None:
         assert new_deployment_info.disco_file is not None
         await create_network(new_deployment_info, recovery)
@@ -486,7 +486,7 @@ async def replace_deployment(
             log_output=log_output,
         )
         if "web" in new_deployment_info.disco_file.services:
-            async with AsyncReadSession.begin() as dbsession:
+            async with ReadSession.begin() as dbsession:
                 project = await get_project_by_id(
                     dbsession, new_deployment_info.project_id
                 )
@@ -495,7 +495,7 @@ async def replace_deployment(
                 has_domains = len(domains) > 0
             if has_domains:
                 await serve_new_deployment(new_deployment_info, recovery, log_output)
-        await async_worker.reload_and_resume_project_crons(
+        await worker.reload_and_resume_project_crons(
             prev_project_name=prev_deployment_info.project_name
             if prev_deployment_info is not None
             else None,
@@ -512,7 +512,7 @@ async def get_deployment_info(
     prev_deployment_id: str | None,
     scale=Mapping[str, int],
 ) -> tuple[DeploymentInfo | None, DeploymentInfo | None]:
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
         host_home = await keyvalues.get_value(dbsession, "HOST_HOME")
         assert disco_host is not None
@@ -590,7 +590,7 @@ async def checkout_commit(
     await log_output(f"Checked out commit {commit_hash}\n")
     if new_deployment_info.commit_hash != commit_hash:
         new_deployment_info.commit_hash = commit_hash
-        async with AsyncSession.begin() as dbsession:
+        async with Session.begin() as dbsession:
             deployment = await get_deployment_by_id(dbsession, new_deployment_info.id)
             assert deployment is not None
             set_deployment_commit_hash(deployment, commit_hash)
@@ -612,7 +612,7 @@ async def read_disco_file_for_deployment(
         else:
             exception_msg = f"disco.json ({disco_json_path}) not found"
         raise DiscoBuildException(exception_msg)
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         deployment = await get_deployment_by_id(dbsession, new_deployment_info.id)
         assert deployment is not None
         set_deployment_disco_file(deployment, disco_file_str)

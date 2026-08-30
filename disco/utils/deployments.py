@@ -3,7 +3,7 @@ import uuid
 from typing import Literal, Sequence
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
+from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 
 from disco.models import (
     ApiKey,
@@ -11,7 +11,7 @@ from disco.models import (
     DeploymentEnvironmentVariable,
     Project,
 )
-from disco.models.db import AsyncReadSession, AsyncSession
+from disco.models.db import ReadSession, Session
 from disco.utils import commandoutputs, events, keyvalues
 from disco.utils.discofile import DiscoFile
 
@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 
 
 async def maybe_create_deployment(
-    dbsession: AsyncDBSession,
+    dbsession: DBSession,
     project: Project,
     commit_hash: str | None,
     disco_file: DiscoFile | None,
@@ -38,7 +38,7 @@ async def maybe_create_deployment(
 
 
 async def create_deployment(
-    dbsession: AsyncDBSession,
+    dbsession: DBSession,
     project: Project,
     commit_hash: str | None,
     disco_file: DiscoFile | None,
@@ -95,9 +95,7 @@ async def create_deployment(
     return deployment
 
 
-async def get_next_deployment_number(
-    dbsession: AsyncDBSession, project: Project
-) -> int:
+async def get_next_deployment_number(dbsession: DBSession, project: Project) -> int:
     stmt = (
         select(Deployment)
         .where(Deployment.project == project)
@@ -114,13 +112,13 @@ async def get_next_deployment_number(
 
 
 async def get_deployment_by_id(
-    dbsession: AsyncDBSession, deployment_id: str
+    dbsession: DBSession, deployment_id: str
 ) -> Deployment | None:
     return await dbsession.get(Deployment, deployment_id)
 
 
 async def get_deployment_by_number(
-    dbsession: AsyncDBSession, project: Project, deployment_number: int
+    dbsession: DBSession, project: Project, deployment_number: int
 ) -> Deployment | None:
     stmt = (
         select(Deployment)
@@ -159,7 +157,7 @@ async def set_deployment_status(
 
 
 async def get_deployments_with_status(
-    dbsession: AsyncDBSession, project: Project, status: DEPLOYMENT_STATUS
+    dbsession: DBSession, project: Project, status: DEPLOYMENT_STATUS
 ) -> Sequence[Deployment]:
     stmt = (
         select(Deployment)
@@ -185,7 +183,7 @@ async def cancel_deployment(deployment: Deployment, by_api_key: ApiKey) -> bool:
     in case it would be stuck with a broken deployment forever.
 
     """
-    from disco.utils.asyncworker import async_worker
+    from disco.utils.worker import worker
 
     assert deployment.status in ["QUEUED", "PREPARING", "REPLACING", "CANCELLING"]
 
@@ -207,11 +205,11 @@ async def cancel_deployment(deployment: Deployment, by_api_key: ApiKey) -> bool:
         await set_deployment_status(deployment, "CANCELLED")
         return False
     elif deployment.status in ["PREPARING", "REPLACING", "CANCELLING"]:
-        from disco.utils.asyncworker import TaskNotFoundError
+        from disco.utils.worker import TaskNotFoundError
 
         assert deployment.task_id is not None
         try:
-            async_worker.cancel_task(deployment.task_id)
+            worker.cancel_task(deployment.task_id)
             return False
         except TaskNotFoundError:
             await commandoutputs.store_output(output_source, "Cancelled\n")
@@ -223,7 +221,7 @@ async def cancel_deployment(deployment: Deployment, by_api_key: ApiKey) -> bool:
 
 
 async def cleanup_deployments_on_disco_boot() -> None:
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         stmt = select(Deployment).where(
             Deployment.status.in_(["PREPARING", "REPLACING", "CANCELLING"])
         )
@@ -242,7 +240,7 @@ async def enqueue_deployments_on_disco_boot() -> None:
     from disco.utils.deploymentflow import process_deployment_if_any
     from disco.utils.projects import get_all_projects
 
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         projects = await get_all_projects(dbsession)
         project_ids = [project.id for project in projects]
     for project_id in project_ids:
@@ -260,7 +258,7 @@ def set_deployment_commit_hash(deployment: Deployment, commit_hash: str) -> None
 
 
 async def get_live_deployment(
-    dbsession: AsyncDBSession, project: Project
+    dbsession: DBSession, project: Project
 ) -> Deployment | None:
     stmt = (
         select(Deployment)
@@ -274,7 +272,7 @@ async def get_live_deployment(
 
 
 async def get_last_deployment(
-    dbsession: AsyncDBSession,
+    dbsession: DBSession,
     project: Project,
     statuses: list[DEPLOYMENT_STATUS] | None = None,
 ) -> Deployment | None:
@@ -287,7 +285,7 @@ async def get_last_deployment(
 
 
 async def get_deployment_in_progress(
-    dbsession: AsyncDBSession, project: Project
+    dbsession: DBSession, project: Project
 ) -> Deployment | None:
     stmt = (
         select(Deployment)
@@ -301,7 +299,7 @@ async def get_deployment_in_progress(
 
 
 async def get_oldest_queued_deployment(
-    dbsession: AsyncDBSession, project: Project
+    dbsession: DBSession, project: Project
 ) -> Deployment | None:
     stmt = (
         select(Deployment)

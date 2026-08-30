@@ -1,7 +1,7 @@
 import uuid
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
+from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 
 from disco.models import ApiKey, Project, ProjectEnvironmentVariable
 from disco.utils import events
@@ -9,7 +9,7 @@ from disco.utils.encryption import encrypt
 
 
 async def get_env_variable_by_name(
-    dbsession: AsyncDBSession,
+    dbsession: DBSession,
     project: Project,
     name: str,
 ) -> ProjectEnvironmentVariable | None:
@@ -24,7 +24,7 @@ async def get_env_variable_by_name(
 
 
 async def get_env_variables_for_project(
-    dbsession: AsyncDBSession, project: Project
+    dbsession: DBSession, project: Project
 ) -> list[ProjectEnvironmentVariable]:
     stmt = (
         select(ProjectEnvironmentVariable)
@@ -36,7 +36,7 @@ async def get_env_variables_for_project(
 
 
 async def set_env_variables(
-    dbsession: AsyncDBSession,
+    dbsession: DBSession,
     project: Project,
     env_variables: list[tuple[str, str]],
     by_api_key: ApiKey,
@@ -62,7 +62,7 @@ async def set_env_variables(
 
 
 async def delete_env_variable(
-    dbsession: AsyncDBSession,
+    dbsession: DBSession,
     env_variable: ProjectEnvironmentVariable,
 ) -> None:
     project: Project = await env_variable.awaitable_attrs.project
@@ -74,7 +74,7 @@ async def delete_env_variable(
 
 
 async def delete_env_variables_by_name(
-    dbsession: AsyncDBSession,
+    dbsession: DBSession,
     project: Project,
     names: list[str],
 ) -> int:

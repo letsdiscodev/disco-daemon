@@ -11,7 +11,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from disco.auth import get_api_key_wo_tx
 from disco.endpoints.dependencies import get_project_name_from_url_wo_tx
-from disco.models.db import AsyncReadSession, AsyncSession
+from disco.models.db import ReadSession, Session
 from disco.utils import commandoutputs
 from disco.utils.apikeys import get_api_key_by_id, get_valid_api_key_by_id
 from disco.utils.deploymentflow import enqueue_deployment, process_deployment_if_any
@@ -37,7 +37,7 @@ router = APIRouter()
 async def deployments_get(
     project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
 ):
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
         deployments = await project.awaitable_attrs.deployments
@@ -82,7 +82,7 @@ async def deployments_post(
     req_body: DeploymentRequestBody,
     background_tasks: BackgroundTasks,
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
         api_key = await get_api_key_by_id(dbsession, api_key_id)
@@ -110,7 +110,7 @@ async def deployment_delete(
     deployment_number: int,
     api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         api_key = await get_valid_api_key_by_id(dbsession, api_key_id)
         assert api_key is not None
         project = await get_project_by_name(dbsession, project_name)
@@ -178,7 +178,7 @@ async def deployment_output_get(
     deployment_number: int,
     last_event_id: Annotated[str | None, Header()] = None,
 ):
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         if project is None:
             raise HTTPException(status_code=404)

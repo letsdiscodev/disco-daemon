@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
+from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 
 from disco import config
 from disco.models import ApiKey
@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 
 
 async def update_disco(
-    dbsession: AsyncDBSession,
+    dbsession: DBSession,
     image: str = "letsdiscodev/daemon:latest",
     pull: bool = True,
 ) -> None:
@@ -59,22 +59,20 @@ async def _run_cmd(args: list[str]) -> str:
     return output
 
 
-async def is_updating(dbsession: AsyncDBSession) -> bool:
+async def is_updating(dbsession: DBSession) -> bool:
     updating = await keyvalues.get_value(dbsession, "DISCO_IS_UPDATING")
     return updating is not None
 
 
-async def save_is_updating(dbsession: AsyncDBSession) -> None:
+async def save_is_updating(dbsession: DBSession) -> None:
     await keyvalues.set_value(dbsession, "DISCO_IS_UPDATING", "true")
 
 
-async def save_done_updating(dbsession: AsyncDBSession) -> None:
+async def save_done_updating(dbsession: DBSession) -> None:
     await keyvalues.delete_value(dbsession, "DISCO_IS_UPDATING")
 
 
-async def set_disco_host(
-    dbsession: AsyncDBSession, host: str, by_api_key: ApiKey
-) -> None:
+async def set_disco_host(dbsession: DBSession, host: str, by_api_key: ApiKey) -> None:
     from disco.utils import docker
 
     prev_host = await keyvalues.get_value_str(dbsession=dbsession, key="DISCO_HOST")

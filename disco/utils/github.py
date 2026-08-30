@@ -14,7 +14,7 @@ from typing import Literal, Sequence
 import jwt
 import requests
 from sqlalchemy import delete, desc, select
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
+from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 
 from disco.models import (
     ApiKey,
@@ -24,7 +24,7 @@ from disco.models import (
     PendingGithubApp,
     ProjectGithubRepo,
 )
-from disco.models.db import AsyncReadSession, AsyncSession
+from disco.models.db import ReadSession, Session
 from disco.utils import events
 from disco.utils.filesystem import project_path, projects_root, rmtree
 from disco.utils.subprocess import decode_text
@@ -236,14 +236,14 @@ async def clone(
 
 async def get_access_token_for_github_app_repo(full_name: str) -> str | None:
     log.info("Getting Github access token for repo %s", full_name)
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         repos = await get_repos_by_full_name(dbsession, full_name)
         if len(repos) == 0:
             log.info("No Github app for repo %s, using anonymous access", full_name)
             return None
         repo_ids = [repo.id for repo in repos]
     for repo_id in repo_ids:
-        async with AsyncReadSession.begin() as dbsession:
+        async with ReadSession.begin() as dbsession:
             repo = await get_repo_by_id(dbsession, repo_id)
             if repo is None:  # in case it's been removed since fetching above
                 continue
@@ -300,7 +300,7 @@ def generate_jwt_token(app_id: int, pem: str) -> str:
 
 
 async def create_pending_github_app(
-    dbsession: AsyncDBSession,
+    dbsession: DBSession,
     organization: str | None,
     setup_url: str | None,
     by_api_key: ApiKey,
@@ -325,20 +325,20 @@ def generate_new_pending_app_state(pending_app: PendingGithubApp) -> None:
 
 
 async def get_github_pending_app_by_id(
-    dbsession: AsyncDBSession, pending_app_id: str
+    dbsession: DBSession, pending_app_id: str
 ) -> PendingGithubApp | None:
     return await dbsession.get(PendingGithubApp, pending_app_id)
 
 
 async def delete_pending_github_app(
-    dbsession: AsyncDBSession, pending_app: PendingGithubApp
+    dbsession: DBSession, pending_app: PendingGithubApp
 ) -> None:
     log.info("Deleting Github pending app %s", pending_app.id)
     await dbsession.delete(pending_app)
 
 
 def create_github_app(
-    dbsession: AsyncDBSession,
+    dbsession: DBSession,
     app_id: int,
     slug: str,
     name: str,
@@ -369,15 +369,13 @@ def create_github_app(
     return github_app
 
 
-async def get_all_github_apps(dbsession: AsyncDBSession) -> Sequence[GithubApp]:
+async def get_all_github_apps(dbsession: DBSession) -> Sequence[GithubApp]:
     stmt = select(GithubApp).order_by(GithubApp.owner_login)
     result = await dbsession.execute(stmt)
     return result.scalars().all()
 
 
-async def get_github_app_by_id(
-    dbsession: AsyncDBSession, app_id: int
-) -> GithubApp | None:
+async def get_github_app_by_id(dbsession: DBSession, app_id: int) -> GithubApp | None:
     return await dbsession.get(GithubApp, app_id)
 
 
@@ -410,7 +408,7 @@ async def process_github_app_webhook(
         log.warning("X-GitHub-Hook-Installation-Target-ID not provided, skipping")
         return
 
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         github_app = await get_github_app_by_id(
             dbsession, int(x_github_hook_installation_target_id)
         )
@@ -449,7 +447,7 @@ async def process_github_app_webhook(
                 )
                 return
             deployment_ids = []
-            async with AsyncSession.begin() as dbsession:
+            async with Session.begin() as dbsession:
                 projects = await get_projects_by_github_app_repo(dbsession, full_name)
                 for project in projects:
                     github_repo: ProjectGithubRepo = (
@@ -491,7 +489,7 @@ async def process_github_app_webhook(
         except KeyError:
             log.info("Not able to extract key info from Github webhook, skipping")
             return
-        async with AsyncSession.begin() as dbsession:
+        async with Session.begin() as dbsession:
             github_app = await get_github_app_by_id(dbsession, app_id)
             if github_app is None:
                 log.warning("Couldn't find Github app %d", app_id)
@@ -520,7 +518,7 @@ async def process_github_app_webhook(
         except KeyError:
             log.info("Not able to extract key info from Github webhook, skipping")
             return
-        async with AsyncSession.begin() as dbsession:
+        async with Session.begin() as dbsession:
             github_app = await get_github_app_by_id(dbsession, app_id)
             if github_app is None:
                 log.warning("Couldn't find Github app %d", app_id)
@@ -556,7 +554,7 @@ async def process_github_app_webhook(
 
 
 async def create_github_app_installation(
-    dbsession: AsyncDBSession, github_app: GithubApp, installation_id: int
+    dbsession: DBSession, github_app: GithubApp, installation_id: int
 ) -> GithubAppInstallation:
     log.info("Creating Github app installation %d", installation_id)
     installation = await dbsession.get(GithubAppInstallation, installation_id)
@@ -572,13 +570,13 @@ async def create_github_app_installation(
 
 
 async def get_github_app_installation_by_id(
-    dbsession: AsyncDBSession, installation_id: int
+    dbsession: DBSession, installation_id: int
 ) -> GithubAppInstallation | None:
     return await dbsession.get(GithubAppInstallation, installation_id)
 
 
 async def add_repository_to_installation(
-    dbsession: AsyncDBSession, installation: GithubAppInstallation, repo_full_name: str
+    dbsession: DBSession, installation: GithubAppInstallation, repo_full_name: str
 ) -> GithubAppRepo:
     log.info(
         "Adding Github repo %s to installation %d", repo_full_name, installation.id
@@ -608,7 +606,7 @@ async def add_repository_to_installation(
 
 
 async def remove_repository_from_installation(
-    dbsession: AsyncDBSession, installation: GithubAppInstallation, repo_full_name: str
+    dbsession: DBSession, installation: GithubAppInstallation, repo_full_name: str
 ) -> None:
     log.info(
         "Removing Github repo %s from installation %d", repo_full_name, installation.id
@@ -622,7 +620,7 @@ async def remove_repository_from_installation(
 
 
 async def delete_github_app_installation(
-    dbsession: AsyncDBSession, installation: GithubAppInstallation
+    dbsession: DBSession, installation: GithubAppInstallation
 ) -> None:
     github_repos = await installation.awaitable_attrs.github_app_repos
     for github_repo in github_repos:
@@ -640,14 +638,14 @@ async def delete_github_app_installation(
     await dbsession.delete(installation)
 
 
-async def get_all_repos(dbsession: AsyncDBSession) -> Sequence[GithubAppRepo]:
+async def get_all_repos(dbsession: DBSession) -> Sequence[GithubAppRepo]:
     stmt = select(GithubAppRepo).order_by(GithubAppRepo.full_name)
     result = await dbsession.execute(stmt)
     return result.scalars().all()
 
 
 async def get_repos_by_full_name(
-    dbsession: AsyncDBSession, full_name: str
+    dbsession: DBSession, full_name: str
 ) -> Sequence[GithubAppRepo]:
     stmt = (
         select(GithubAppRepo)
@@ -660,7 +658,7 @@ async def get_repos_by_full_name(
 
 
 async def get_repo_by_full_name(
-    dbsession: AsyncDBSession, full_name: str
+    dbsession: DBSession, full_name: str
 ) -> GithubAppRepo | None:
     stmt = select(GithubAppRepo).where(GithubAppRepo.full_name == full_name).limit(1)
     result = await dbsession.execute(stmt)
@@ -668,12 +666,12 @@ async def get_repo_by_full_name(
 
 
 async def get_repo_by_id(
-    dbsession: AsyncDBSession, github_repo_id: str
+    dbsession: DBSession, github_repo_id: str
 ) -> GithubAppRepo | None:
     return await dbsession.get(GithubAppRepo, github_repo_id)
 
 
-async def delete_github_app(dbsession: AsyncDBSession, app: GithubApp):
+async def delete_github_app(dbsession: DBSession, app: GithubApp):
     for installation in await app.awaitable_attrs.installations:
         await delete_github_app_installation(dbsession, installation)
     log.info(
@@ -684,12 +682,12 @@ async def delete_github_app(dbsession: AsyncDBSession, app: GithubApp):
 
 async def prune() -> None:
     log.info("Pruning Github apps")
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         apps = await get_all_github_apps(dbsession)
         app_ids = [app.id for app in apps]
     for app_id in app_ids:
         if await app_still_exists(app_id):
-            async with AsyncReadSession.begin() as dbsession:
+            async with ReadSession.begin() as dbsession:
                 app = await get_github_app_by_id(dbsession, app_id)
                 assert app is not None
                 installations = await app.awaitable_attrs.installations
@@ -705,7 +703,7 @@ async def prune() -> None:
                         )
                     )
                 except GithubException:
-                    async with AsyncSession.begin() as dbsession:
+                    async with Session.begin() as dbsession:
                         installation = await get_github_app_installation_by_id(
                             dbsession, installation_id
                         )
@@ -722,7 +720,7 @@ async def prune() -> None:
                         )
                         await delete_github_app_installation(dbsession, installation)
                     continue
-                async with AsyncSession.begin() as dbsession:
+                async with Session.begin() as dbsession:
                     installation = await get_github_app_installation_by_id(
                         dbsession, installation_id
                     )
@@ -753,7 +751,7 @@ async def prune() -> None:
                                 dbsession, installation, full_name
                             )
         else:
-            async with AsyncSession.begin() as dbsession:
+            async with Session.begin() as dbsession:
                 app = await get_github_app_by_id(dbsession, app_id)
                 assert app is not None
                 log.info(
@@ -770,7 +768,7 @@ async def prune() -> None:
 
 async def app_still_exists(app_id: int) -> bool:
     log.info("Verifying with Github if app %d still exists", app_id)
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         app = await get_github_app_by_id(dbsession, app_id)
         if app is None:
             return False
@@ -797,7 +795,7 @@ async def app_still_exists(app_id: int) -> bool:
 
 async def get_access_token_for_installation_id(installation_id: int) -> str:
     log.info("Getting Github access token for installation %d", installation_id)
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         installation = await get_github_app_installation_by_id(
             dbsession, installation_id
         )
@@ -822,7 +820,7 @@ async def get_access_token_for_installation_id(installation_id: int) -> str:
     access_token, expires = await fetch_access_token(
         app_id=app_id, installation_id=installation_id, pem=pem
     )
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         installation = await get_github_app_installation_by_id(
             dbsession, installation_id
         )
@@ -911,7 +909,7 @@ async def handle_app_created_on_github(pending_app_id: str, code: str) -> str:
 
     response = await asyncio.get_event_loop().run_in_executor(None, query)
     resp_body = response.json()
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         pending_app = await get_github_pending_app_by_id(dbsession, pending_app_id)
         assert pending_app is not None
         github_app = create_github_app(

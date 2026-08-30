@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
+from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.schema import MetaData
 
@@ -55,7 +55,7 @@ class Output:
 class OutputDbConnection:
     last_used: datetime
     engine: AsyncEngine
-    session: async_sessionmaker[AsyncDBSession]
+    session: async_sessionmaker[DBSession]
 
 
 _dbs_lock = asyncio.Lock()  # when adding/removing dbs
@@ -108,18 +108,18 @@ async def _dispose(source: str) -> None:
 
 
 async def store_output(source: str, text: str) -> None:
-    AsyncSession = (await _db_connection(source)).session
-    async with AsyncSession.begin() as dbsession:
+    Session = (await _db_connection(source)).session
+    async with Session.begin() as dbsession:
         _log(dbsession=dbsession, source=source, text=text)
 
 
 async def terminate(source: str) -> None:
-    AsyncSession = (await _db_connection(source)).session
-    async with AsyncSession.begin() as dbsession:
+    Session = (await _db_connection(source)).session
+    async with Session.begin() as dbsession:
         _log(dbsession=dbsession, source=source, text=None)
 
 
-def _log(dbsession: AsyncDBSession, source: str, text: str | None) -> None:
+def _log(dbsession: DBSession, source: str, text: str | None) -> None:
     cmd_output = CommandOutput(
         text=text,
     )
@@ -127,8 +127,8 @@ def _log(dbsession: AsyncDBSession, source: str, text: str | None) -> None:
 
 
 async def get_next(source: str, after: datetime | None = None) -> Output | None:
-    AsyncSession = (await _db_connection(source)).session
-    async with AsyncSession.begin() as dbsession:
+    Session = (await _db_connection(source)).session
+    async with Session.begin() as dbsession:
         stmt = select(CommandOutput)
         if after is not None:
             stmt = stmt.where(CommandOutput.created > after)
@@ -147,8 +147,8 @@ async def delete_output_for_source(source: str) -> None:
 
 
 async def get_by_id(source: str, output_id: str) -> Output | None:
-    AsyncSession = (await _db_connection(source)).session
-    async with AsyncSession.begin() as dbsession:
+    Session = (await _db_connection(source)).session
+    async with Session.begin() as dbsession:
         cmd_output = await dbsession.get(CommandOutput, output_id)
         if cmd_output is None:
             return None

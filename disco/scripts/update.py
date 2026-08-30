@@ -14,12 +14,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 import disco
-from disco.models.db import (
-    AsyncReadSession,
-    AsyncSession,
-    build_engines,
-    get_async_engine,
-)
+from disco.models.db import ReadSession, Session, build_engines, get_engine
 from disco.scripts.init import run_and_print, start_disco_daemon
 from disco.utils import keyvalues
 from disco.utils.meta import save_done_updating
@@ -38,21 +33,21 @@ async def _main() -> None:
     image = os.environ.get("DISCO_IMAGE")
     if image is None:  # backward compat for version <= 0.4.1
         image = "letsdiscodev/daemon:latest"
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         installed_version = await keyvalues.get_value(
             dbsession=dbsession, key="DISCO_VERSION"
         )
         assert installed_version is not None
     if installed_version == disco.__version__:
         print(f"Current version is latest ({disco.__version__}), not updating.")
-        async with AsyncSession.begin() as dbsession:
+        async with Session.begin() as dbsession:
             await save_done_updating(dbsession)
         return
     version_parts = installed_version.split(".")
     major = int(version_parts[0])
     minor = int(version_parts[1])
     if major == 0 and minor <= 4:
-        async with AsyncSession.begin() as dbsession:
+        async with Session.begin() as dbsession:
             disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
             disco_ip = await keyvalues.get_value(dbsession, "DISCO_IP")
             if disco_host == disco_ip:
@@ -77,7 +72,7 @@ async def _main() -> None:
         assert installed_version is not None
         task = get_update_function_for_version(installed_version)
         await task(image)
-        async with AsyncReadSession.begin() as dbsession:
+        async with ReadSession.begin() as dbsession:
             installed_version = await keyvalues.get_value(
                 dbsession=dbsession, key="DISCO_VERSION"
             )
@@ -89,11 +84,11 @@ async def _main() -> None:
             break
 
     print("Starting new version of Disco")
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         host_home = await keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
     await start_disco_daemon(host_home, image)
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await save_done_updating(dbsession)
 
 
@@ -120,7 +115,7 @@ async def stop_disco_worker() -> None:
 
 
 async def alembic_upgrade(version_hash: str) -> None:
-    async with get_async_engine().begin() as conn:
+    async with get_engine().begin() as conn:
         await conn.run_sync(_alembic_upgrade, version_hash)
 
 
@@ -132,7 +127,7 @@ def _alembic_upgrade(connection, version_hash: str) -> None:
 
 async def task_0_31_x(image: str) -> None:
     print("Updating from 0.31.x to 0.32.0")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.32.0"
         )
@@ -140,7 +135,7 @@ async def task_0_31_x(image: str) -> None:
 
 async def task_0_30_x(image: str) -> None:
     print("Updating from 0.30.x to 0.31.0")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.31.0"
         )
@@ -149,7 +144,7 @@ async def task_0_30_x(image: str) -> None:
 async def task_0_29_x(image: str) -> None:
     print("Updating from 0.29.x to 0.30.0")
     await alembic_upgrade("d8adabff2804")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         registry = await keyvalues.get_value(dbsession, "REGISTRY_HOST")
         await keyvalues.set_value(dbsession=dbsession, key="REGISTRY", value=registry)
         await keyvalues.delete_value(dbsession=dbsession, key="REGISTRY_HOST")
@@ -160,7 +155,7 @@ async def task_0_29_x(image: str) -> None:
 
 async def task_0_28_x(image: str) -> None:
     print("Updating from 0.28.x to 0.29.0")
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         host_home = await keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
     get_caddy_config_cmd = (
@@ -218,7 +213,7 @@ async def task_0_28_x(image: str) -> None:
             set_caddy_config_cmd,
         ]
     )
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.29.0"
         )
@@ -226,7 +221,7 @@ async def task_0_28_x(image: str) -> None:
 
 async def task_0_27_x(image: str) -> None:
     print("Updating from 0.27.x to 0.28.0")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.28.0"
         )
@@ -235,7 +230,7 @@ async def task_0_27_x(image: str) -> None:
 async def task_0_26_x(image: str) -> None:
     print("Updating from 0.26.x to 0.27.0")
     await alembic_upgrade("b0b4edb3672a")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.27.0"
         )
@@ -246,7 +241,7 @@ async def task_0_25_x(image: str) -> None:
     from disco.utils import docker
 
     print("Updating from 0.25.x to 0.26.0")
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         host_home = await keyvalues.get_value_str(dbsession=dbsession, key="HOST_HOME")
         cloudflare_tunnel_token = await keyvalues.get_value(
             dbsession=dbsession, key="CLOUDFLARE_TUNNEL_TOKEN"
@@ -272,7 +267,7 @@ async def task_0_25_x(image: str) -> None:
         await docker.add_network_to_container(
             "disco-caddy", "disco-cloudflare-tunnel", alias="disco-server"
         )
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.26.0"
         )
@@ -280,7 +275,7 @@ async def task_0_25_x(image: str) -> None:
 
 async def task_0_24_x(image: str) -> None:
     print("Updating from 0.24.x to 0.25.0")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.25.0"
         )
@@ -291,7 +286,7 @@ async def task_0_23_x(image: str) -> None:
     from disco.utils.syslog import SyslogUrl, set_syslog_services
 
     print("Updating from 0.23.x to 0.24.0")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
         assert disco_host is not None
         urls_str = await keyvalues.get_value(dbsession, "SYSLOG_URLS")
@@ -313,7 +308,7 @@ async def task_0_23_x(image: str) -> None:
     if old_syslog_is_running:
         await docker.rm_service("disco-syslog")
 
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.24.0"
         )
@@ -325,7 +320,7 @@ async def task_0_22_x(image: str) -> None:
     from disco.utils import docker
 
     print("Updating from 0.22.x to 0.23.0")
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         host_home = await keyvalues.get_value_str(dbsession=dbsession, key="HOST_HOME")
         cloudflare_tunnel_token = await keyvalues.get_value(
             dbsession=dbsession, key="CLOUDFLARE_TUNNEL_TOKEN"
@@ -352,7 +347,7 @@ async def task_0_22_x(image: str) -> None:
         await docker.add_network_to_container(
             "disco-caddy", "disco-cloudflare-tunnel", alias="disco-server"
         )
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.23.0"
         )
@@ -360,7 +355,7 @@ async def task_0_22_x(image: str) -> None:
 
 async def task_0_21_x(image: str) -> None:
     print("Updating from 0.21.x to 0.22.0")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.22.0"
         )
@@ -368,7 +363,7 @@ async def task_0_21_x(image: str) -> None:
 
 async def task_0_20_x(image: str) -> None:
     print("Updating from 0.20.x to 0.21.0")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.21.0"
         )
@@ -376,7 +371,7 @@ async def task_0_20_x(image: str) -> None:
 
 async def task_0_19_x(image: str) -> None:
     print("Updating from 0.19.x to 0.20.0")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.20.0"
         )
@@ -384,7 +379,7 @@ async def task_0_19_x(image: str) -> None:
 
 async def task_0_18_x(image: str) -> None:
     print("Updating from 0.18.x to 0.19.0")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.19.0"
         )
@@ -393,7 +388,7 @@ async def task_0_18_x(image: str) -> None:
 async def task_0_17_x(image: str) -> None:
     print("Updating from 0.17.x to 0.18.0")
     await alembic_upgrade("9087484963d4")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.18.0"
         )
@@ -401,7 +396,7 @@ async def task_0_17_x(image: str) -> None:
 
 async def task_0_16_x(image: str) -> None:
     print("Updating from 0.16.x to 0.17.0")
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         host_home = await keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
     get_caddy_config_cmd = (
@@ -464,7 +459,7 @@ async def task_0_16_x(image: str) -> None:
         ]
     )
     await alembic_upgrade("26877eda6774")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.17.0"
         )
@@ -472,7 +467,7 @@ async def task_0_16_x(image: str) -> None:
 
 async def task_0_15_x(image: str) -> None:
     print("Updating from 0.15.x to 0.16.0")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.16.0"
         )
@@ -480,7 +475,7 @@ async def task_0_15_x(image: str) -> None:
 
 async def task_0_14_x(image: str) -> None:
     print("Updating from 0.14.x to 0.15.0")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.15.0"
         )
@@ -489,7 +484,7 @@ async def task_0_14_x(image: str) -> None:
 async def task_0_13_x(image: str) -> None:
     print("Updating from 0.13.x to 0.14.0")
     await alembic_upgrade("b2c4ac1469de")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.14.0"
         )
@@ -499,7 +494,7 @@ async def task_0_12_x(image: str) -> None:
     from disco.scripts.init import start_caddy
 
     print("Updating from 0.12.x to 0.13.0")
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         host_home = await keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
     await run_and_print(
@@ -517,7 +512,7 @@ async def task_0_12_x(image: str) -> None:
         ]
     )
     await start_caddy(host_home=host_home, tunnel=False)
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.13.0"
         )
@@ -572,7 +567,7 @@ async def task_0_11_x(image: str) -> None:
     await docker.add_network_to_container("disco-caddy", "disco-main")
     await docker.remove_network_from_container("disco-caddy", "disco-caddy-daemon")
     await docker.remove_network("disco-caddy-daemon")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.12.0"
         )
@@ -587,7 +582,7 @@ async def task_0_10_x(image: str) -> None:
             os.makedirs(directory)
 
     await asyncio.get_event_loop().run_in_executor(None, makedirs)
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         sql = """
             SELECT source
                 FROM command_outputs
@@ -596,7 +591,7 @@ async def task_0_10_x(image: str) -> None:
         rows = (await dbsession.execute(text(sql))).all()
         sources = [row.source for row in rows]
     for source in sources:
-        async with AsyncReadSession.begin() as dbsession:
+        async with ReadSession.begin() as dbsession:
             db_url = (
                 "sqlite+aiosqlite:////disco/data/commandoutputs/"
                 f"{source.lower()}.sqlite3"
@@ -637,7 +632,7 @@ async def task_0_10_x(image: str) -> None:
                     )
             await engine.dispose()
     await alembic_upgrade("41a2f999a3e9")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.11.0"
         )
@@ -645,7 +640,7 @@ async def task_0_10_x(image: str) -> None:
 
 async def task_0_9_x(image: str) -> None:
     print("Updating from 0.9.x to 0.10.0")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.10.0"
         )
@@ -655,7 +650,7 @@ async def task_0_8_x(image: str) -> None:
     print("Updating from 0.8.x to 0.9.0")
     from disco.scripts.init import start_caddy
 
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         host_home = await keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
     await run_and_print(
@@ -701,7 +696,7 @@ async def task_0_8_x(image: str) -> None:
         ]
     )
     await start_caddy(host_home=host_home, tunnel=False)
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.9.0"
         )
@@ -712,7 +707,7 @@ async def task_0_7_x(image: str) -> None:
 
     print("Updating from 0.7.x to 0.8.0")
     await alembic_upgrade("3fe4af6efa33")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         sql = """
             SELECT pgr.id, gar.full_name 
                 FROM project_github_repos AS pgr 
@@ -723,12 +718,12 @@ async def task_0_7_x(image: str) -> None:
             repo = await dbsession.get(ProjectGithubRepo, row.id)
             assert repo is not None
             repo.full_name = row.full_name
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await dbsession.execute(
             text("DELETE FROM project_github_repos WHERE full_name IS NULL")
         )
     await alembic_upgrade("7867432539d9")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.8.0"
         )
@@ -740,7 +735,7 @@ async def task_0_6_x(image: str) -> None:
 
     print("Updating from 0.6.x to 0.7.0")
     await alembic_upgrade("97e98737cba8")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         rows = (await dbsession.execute(text("SELECT id, domain FROM projects;"))).all()
         all_domains = set([row.domain for row in rows if row.domain is not None])
         for row in rows:
@@ -785,7 +780,7 @@ async def task_0_6_x(image: str) -> None:
             github_app.owner_login = app_meta["owner"]["login"]
             github_app.owner_type = app_meta["owner"]["type"]
     await alembic_upgrade("47da35039f6f")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.7.0"
         )
@@ -794,7 +789,7 @@ async def task_0_6_x(image: str) -> None:
 async def task_0_5_x(image: str) -> None:
     print("Updating from 0.5.x to 0.6.0")
     await alembic_upgrade("5540c20f9acd")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.6.0"
         )
@@ -803,7 +798,7 @@ async def task_0_5_x(image: str) -> None:
 async def task_0_4_x(image: str) -> None:
     print("Updating from 0.4.x to 0.5.0")
     await alembic_upgrade("87c62632dfd1")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         disco_ip = await keyvalues.get_value(dbsession=dbsession, key="DISCO_IP")
         get_caddy_config_cmd = (
             "from disco.utils import caddy; "
@@ -871,7 +866,7 @@ async def task_0_4_x(image: str) -> None:
 async def task_0_3_x(image: str) -> None:
     print("Updating from 0.3.x to 0.4.0")
     await alembic_upgrade("3eb8871ccb85")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.4.0"
         )
@@ -880,7 +875,7 @@ async def task_0_3_x(image: str) -> None:
 async def task_0_2_x(image: str) -> None:
     print("Updating from 0.2.x to 0.3.0")
     await alembic_upgrade("d0cba3cd3238")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.3.0"
         )
@@ -889,14 +884,14 @@ async def task_0_2_x(image: str) -> None:
 async def task_0_1_x(image: str) -> None:
     print("Updating from 0.1.x to 0.2.0")
     await alembic_upgrade("eba27af20db2")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.2.0"
         )
 
 
 async def task_patch(image: str) -> None:
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         print(f"Updating to {disco.__version__}")
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value=disco.__version__

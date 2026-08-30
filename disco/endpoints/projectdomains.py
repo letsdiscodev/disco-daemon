@@ -8,7 +8,7 @@ from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from disco.auth import get_api_key_wo_tx
 from disco.endpoints.dependencies import get_project_name_from_url_wo_tx
-from disco.models.db import AsyncReadSession, AsyncSession
+from disco.models.db import ReadSession, Session
 from disco.utils import keyvalues
 from disco.utils.apikeys import get_api_key_by_id
 from disco.utils.projectdomains import (
@@ -29,7 +29,7 @@ router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 async def domains_get(
     project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
 ):
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
         domains = await project.awaitable_attrs.domains
@@ -54,7 +54,7 @@ async def domains_post(
     api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
     req_body: AddDomainReqBody,
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
         api_key = await get_api_key_by_id(dbsession, api_key_id)
@@ -110,7 +110,7 @@ async def get_domain_id_from_url(
     project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
     domain_id: Annotated[str, Path()],
 ):
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
         domain = await get_domain_by_id(
@@ -129,7 +129,7 @@ async def domain_delete(
     domain_id: Annotated[str, Depends(get_domain_id_from_url)],
     api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         domain = await get_domain_by_id(
             dbsession=dbsession,
             domain_id=domain_id,

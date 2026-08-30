@@ -12,13 +12,13 @@ from sse_starlette import EventSourceResponse, ServerSentEvent
 
 import disco
 from disco.auth import get_api_key_wo_tx
-from disco.models.db import AsyncReadSession, AsyncSession
+from disco.models.db import ReadSession, Session
 from disco.utils import docker, keyvalues
 from disco.utils.apikeys import get_valid_api_key_by_id
 from disco.utils.meta import set_disco_host, update_disco
 from disco.utils.projectdomains import DOMAIN_REGEX
 from disco.utils.projects import get_project_by_domain
-from disco.utils.stats import AsyncDockerStats
+from disco.utils.stats import DockerStats
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 async def meta_get(
     api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
 ):
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         api_key = await get_valid_api_key_by_id(dbsession, api_key_id)
         assert api_key is not None
         return {
@@ -50,7 +50,7 @@ class UpdateRequestBody(BaseModel):
 
 @router.post("/api/disco/upgrade")
 async def upgrade_post(req_body: UpdateRequestBody):
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await update_disco(
             dbsession=dbsession, image=req_body.image, pull=req_body.pull
         )
@@ -66,7 +66,7 @@ async def host_post(
     api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
     req_body: SetDiscoHostRequestBody,
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         api_key = await get_valid_api_key_by_id(dbsession, api_key_id)
         assert api_key is not None
         project = await get_project_by_domain(dbsession, req_body.host)
@@ -107,7 +107,7 @@ async def stats_experimental():
 
 async def read_stats():
     log.info("Starting stats")
-    async_docker_stats = AsyncDockerStats()
+    async_docker_stats = DockerStats()
     try:
         while True:
             containers_stats = await async_docker_stats.get_all_container_stats()

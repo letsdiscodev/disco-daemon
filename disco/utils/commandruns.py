@@ -3,7 +3,7 @@ import uuid
 from typing import Awaitable, Callable
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
+from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 
 from disco.models import ApiKey, CommandRun, Deployment, Project
 from disco.utils import commandoutputs, docker, keyvalues
@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 
 
 async def create_command_run(
-    dbsession: AsyncDBSession,
+    dbsession: DBSession,
     project: Project,
     deployment: Deployment,
     service: str,
@@ -109,7 +109,7 @@ async def create_command_run(
 
 
 async def get_command_run_by_number(
-    dbsession: AsyncDBSession, project: Project, number: int
+    dbsession: DBSession, project: Project, number: int
 ) -> CommandRun | None:
     stmt = (
         select(CommandRun)
@@ -121,7 +121,7 @@ async def get_command_run_by_number(
     return result.scalars().first()
 
 
-async def get_next_run_number(dbsession: AsyncDBSession, project: Project) -> int:
+async def get_next_run_number(dbsession: DBSession, project: Project) -> int:
     stmt = (
         select(CommandRun)
         .where(CommandRun.project == project)

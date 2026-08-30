@@ -29,7 +29,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from disco.auth import get_api_key_wo_tx, validate_token
 from disco.endpoints.dependencies import get_project_name_from_url_wo_tx
-from disco.models.db import AsyncReadSession, AsyncSession
+from disco.models.db import ReadSession, Session
 from disco.models.deploymentenvironmentvariable import DeploymentEnvironmentVariable
 from disco.utils import commandoutputs, keyvalues
 from disco.utils.apikeys import get_api_key_by_id
@@ -103,7 +103,7 @@ async def run_ws(
         return
 
     # ===== STEP 2: Get project and deployment info =====
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         if project is None:
             await websocket.close(code=4004, reason="Project not found")
@@ -468,7 +468,7 @@ async def run_post(
     req_body: RunReqBody,
     background_tasks: BackgroundTasks,
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
         api_key = await get_api_key_by_id(dbsession, api_key_id)
@@ -560,7 +560,7 @@ async def run_output_get(
     run_number: int,
     last_event_id: Annotated[str | None, Header()] = None,
 ):
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         if project is None:
             raise HTTPException(status_code=404)

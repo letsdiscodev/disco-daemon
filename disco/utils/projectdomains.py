@@ -2,7 +2,7 @@ import logging
 import uuid
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
+from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 
 from disco.models import ApiKey, Project, ProjectDomain
 from disco.utils import caddy, docker, events
@@ -17,7 +17,7 @@ DOMAIN_REGEX = (
 
 
 async def add_domain(
-    dbsession: AsyncDBSession,
+    dbsession: DBSession,
     project: Project,
     domain_name: str,
     by_api_key: ApiKey,
@@ -73,7 +73,7 @@ async def add_domain(
 
 
 async def remove_domain(
-    dbsession: AsyncDBSession, domain: ProjectDomain, by_api_key: ApiKey
+    dbsession: DBSession, domain: ProjectDomain, by_api_key: ApiKey
 ) -> None:
     project = await domain.awaitable_attrs.project
     domain_id = domain.id
@@ -130,20 +130,20 @@ def _get_apex_www_redirect_for_domain(domain_name: str) -> str | None:
 
 
 async def get_domain_by_id(
-    dbsession: AsyncDBSession, domain_id: str
+    dbsession: DBSession, domain_id: str
 ) -> ProjectDomain | None:
     return await dbsession.get(ProjectDomain, domain_id)
 
 
 async def get_domain_by_name(
-    dbsession: AsyncDBSession, domain_name: str
+    dbsession: DBSession, domain_name: str
 ) -> ProjectDomain | None:
     stmt = select(ProjectDomain).where(ProjectDomain.name == domain_name).limit(1)
     result = await dbsession.execute(stmt)
     return result.scalars().first()
 
 
-async def serve_live_deployment(dbsession: AsyncDBSession, project: Project) -> None:
+async def serve_live_deployment(dbsession: DBSession, project: Project) -> None:
     deployment = await get_live_deployment(dbsession, project)
     if deployment is None:
         return  # nothing to serve

@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from disco.models import Deployment
-from disco.models.db import AsyncReadSession
+from disco.models.db import ReadSession
 from disco.utils import docker
 from disco.utils.projects import get_all_projects
 
@@ -55,7 +55,7 @@ def should_remove_image(
 
 async def get_active_projects() -> list[ActiveProject]:
     active_projects = []
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         projects = await get_all_projects(dbsession)
         for project in projects:
             deployments: Sequence[

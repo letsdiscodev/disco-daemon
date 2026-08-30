@@ -3,7 +3,7 @@ import asyncio
 import aiohttp
 
 
-class AsyncDockerStats:
+class DockerStats:
     def __init__(self, docker_socket="/var/run/docker.sock"):
         self.docker_socket = docker_socket
 

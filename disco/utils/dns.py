@@ -1,12 +1,12 @@
 import asyncio
 import socket
 
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
+from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 
 from disco.utils import keyvalues
 
 
-async def domain_points_to_here(dbsession: AsyncDBSession, domain: str) -> bool:
+async def domain_points_to_here(dbsession: DBSession, domain: str) -> bool:
     disco_host = await keyvalues.get_value(dbsession=dbsession, key="DISCO_HOST")
     assert disco_host is not None
 

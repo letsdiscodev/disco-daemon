@@ -2,7 +2,7 @@ import json
 import logging
 from typing import Literal, TypedDict
 
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
+from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 
 from disco.models import ApiKey
 from disco.utils import docker, keyvalues
@@ -18,7 +18,7 @@ class SyslogUrl(TypedDict):
 
 
 async def add_syslog_url(
-    dbsession: AsyncDBSession, url: str, by_api_key: ApiKey
+    dbsession: DBSession, url: str, by_api_key: ApiKey
 ) -> list[SyslogUrl]:
     syslog_urls = await get_syslog_urls(dbsession)
     if url not in [syslog_url["url"] for syslog_url in syslog_urls]:
@@ -34,7 +34,7 @@ async def add_syslog_url(
 
 
 async def remove_syslog_url(
-    dbsession: AsyncDBSession, url: str, by_api_key: ApiKey
+    dbsession: DBSession, url: str, by_api_key: ApiKey
 ) -> list[SyslogUrl]:
     syslog_urls = await get_syslog_urls(dbsession)
     if url in [syslog_url["url"] for syslog_url in syslog_urls]:
@@ -49,7 +49,7 @@ async def remove_syslog_url(
     return syslog_urls
 
 
-async def get_syslog_urls(dbsession: AsyncDBSession) -> list[SyslogUrl]:
+async def get_syslog_urls(dbsession: DBSession) -> list[SyslogUrl]:
     urls_str = await keyvalues.get_value(dbsession, SYSLOG_URLS_KEY)
     if urls_str is None:
         urls_str = "[]"
@@ -57,9 +57,7 @@ async def get_syslog_urls(dbsession: AsyncDBSession) -> list[SyslogUrl]:
     return syslog_urls
 
 
-async def set_core_syslogs(
-    dbsession: AsyncDBSession, urls: list[str]
-) -> list[SyslogUrl]:
+async def set_core_syslogs(dbsession: DBSession, urls: list[str]) -> list[SyslogUrl]:
     log.info("Updating core Syslogs: %s", urls)
     syslog_urls = await get_syslog_urls(dbsession)
     other_syslog_urls = [
@@ -71,9 +69,7 @@ async def set_core_syslogs(
     return new_syslog_urls
 
 
-async def _save_syslog_urls(
-    dbsession: AsyncDBSession, syslog_urls: list[SyslogUrl]
-) -> None:
+async def _save_syslog_urls(dbsession: DBSession, syslog_urls: list[SyslogUrl]) -> None:
     await keyvalues.set_value(dbsession, SYSLOG_URLS_KEY, json.dumps(syslog_urls))
 
 

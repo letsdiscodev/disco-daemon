@@ -18,7 +18,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from disco.auth import get_api_key_wo_tx
-from disco.models.db import AsyncReadSession, AsyncSession
+from disco.models.db import ReadSession, Session
 from disco.utils import keyvalues
 from disco.utils.apikeys import get_api_key_by_id
 from disco.utils.github import (
@@ -43,7 +43,7 @@ router = APIRouter()
 async def get_pending_app_id_from_url(
     pending_app_id: Annotated[str, Path()],
 ):
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         pending_app = await get_github_pending_app_by_id(dbsession, pending_app_id)
         if pending_app is None:
             raise HTTPException(status_code=404)
@@ -56,7 +56,7 @@ async def get_pending_app_id_from_url_with_state(
     pending_app_id: Annotated[str, Path()],
     state: str,
 ):
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         pending_app = await get_github_pending_app_by_id(dbsession, pending_app_id)
         if pending_app is None:
             raise HTTPException(status_code=404)
@@ -82,7 +82,7 @@ async def github_app_prune_post(
     api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
     req_body: NewGithubAppRequestBody,
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         api_key = await get_api_key_by_id(dbsession, api_key_id)
         assert api_key is not None
         pending_app = await create_pending_github_app(
@@ -126,7 +126,7 @@ CREATE_APP_HTML = """<!DOCTYPE html>
 async def github_app_create_get(
     pending_app_id: Annotated[str, Depends(get_pending_app_id_from_url)],
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         pending_app = await get_github_pending_app_by_id(dbsession, pending_app_id)
         assert pending_app is not None
         disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
@@ -182,7 +182,7 @@ async def get_body(request: Request):
 
 @router.get("/api/github-apps", dependencies=[Depends(get_api_key_wo_tx)])
 async def list_github_apps():
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         github_apps = await get_all_github_apps(dbsession)
         return {
             "githubApps": [
@@ -246,7 +246,7 @@ async def github_webhook_service_post(
 
 @router.get("/api/github-app-repos", dependencies=[Depends(get_api_key_wo_tx)])
 async def list_github_repos():
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         repos = await get_all_repos(dbsession)
         return {
             "repos": [
@@ -266,7 +266,7 @@ async def list_github_repos():
 async def get_installation_access_token(
     installation_id: Annotated[int, Path()],
 ):
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         installation = await get_github_app_installation_by_id(
             dbsession, installation_id
         )
@@ -279,7 +279,7 @@ async def get_installation_access_token(
         raise HTTPException(
             status_code=502, detail="Failed to get access token from GitHub"
         ) from e
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         installation = await get_github_app_installation_by_id(
             dbsession, installation_id
         )

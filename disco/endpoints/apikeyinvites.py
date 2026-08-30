@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 import disco
 from disco.auth import get_api_key_wo_tx
-from disco.models.db import AsyncReadSession, AsyncSession
+from disco.models.db import ReadSession, Session
 from disco.utils import keyvalues
 from disco.utils.apikeyinvites import (
     create_api_key_invite,
@@ -31,7 +31,7 @@ async def api_keys_post(
     api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
     req_body: NewApiKeyRequestBody,
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         api_key = await get_api_key_by_id(dbsession, api_key_id)
         assert api_key is not None
         disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
@@ -51,7 +51,7 @@ async def api_keys_post(
 async def get_api_key_invite_id_from_url(
     invite_id: Annotated[str, Path()],
 ):
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         invite = await get_api_key_invite_by_id(dbsession, invite_id)
         if invite is None:
             raise HTTPException(status_code=404)
@@ -69,7 +69,7 @@ RESP_TXT = (
 async def api_key_invite_get(
     invite_id: Annotated[str, Depends(get_api_key_invite_id_from_url)],
 ):
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         invite = await get_api_key_invite_by_id(dbsession, invite_id)
         assert invite is not None
         disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
@@ -80,7 +80,7 @@ async def api_key_invite_get(
 async def api_key_invite_post(
     invite_id: Annotated[str, Depends(get_api_key_invite_id_from_url)],
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         invite = await get_api_key_invite_by_id(dbsession, invite_id)
         assert invite is not None
         if not invite_is_active(invite):

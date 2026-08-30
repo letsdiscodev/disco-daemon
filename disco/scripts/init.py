@@ -13,7 +13,7 @@ from alembic.config import Config
 
 import disco
 from disco import config
-from disco.models.db import AsyncSession, build_engines, get_async_engine
+from disco.models.db import Session, build_engines, get_engine
 from disco.models.meta import base_metadata
 from disco.utils import docker, keyvalues
 from disco.utils.apikeys import create_api_key
@@ -74,7 +74,7 @@ async def _main() -> None:
         await bootstrap_first_node(node_name)
     await create_database(ha)
     print("Setting initial state in internal database")
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value=disco.__version__
         )
@@ -138,7 +138,7 @@ async def create_database(ha: bool) -> None:
 
         await asyncio.get_event_loop().run_in_executor(None, create_file)
     await build_engines()
-    async with get_async_engine().begin() as conn:
+    async with get_engine().begin() as conn:
         await conn.run_sync(base_metadata.create_all)
         await conn.run_sync(_alembic_stamp_head)
 

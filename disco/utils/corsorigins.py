@@ -3,16 +3,14 @@ import uuid
 from typing import Sequence
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
+from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 
 from disco.models import ApiKey, CorsOrigin
 
 log = logging.getLogger(__name__)
 
 
-async def allow_origin(
-    dbsession: AsyncDBSession, origin: str, by_api_key: ApiKey
-) -> None:
+async def allow_origin(dbsession: DBSession, origin: str, by_api_key: ApiKey) -> None:
     from disco.middleware import update_cors
 
     cors_origin = await get_cors_origin(dbsession, origin)
@@ -36,13 +34,13 @@ async def allow_origin(
         )
 
 
-async def get_cors_origin(dbsession: AsyncDBSession, origin: str) -> CorsOrigin | None:
+async def get_cors_origin(dbsession: DBSession, origin: str) -> CorsOrigin | None:
     stmt = select(CorsOrigin).where(CorsOrigin.origin == origin)
     result = await dbsession.execute(stmt)
     return result.scalars().first()
 
 
-async def get_all_cors_origins(dbsession: AsyncDBSession) -> Sequence[CorsOrigin]:
+async def get_all_cors_origins(dbsession: DBSession) -> Sequence[CorsOrigin]:
     stmt = select(CorsOrigin)
     result = await dbsession.execute(stmt)
     return result.scalars().all()

@@ -8,7 +8,7 @@ from sse_starlette import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
 from disco.auth import get_api_key_wo_tx
-from disco.models.db import AsyncReadSession
+from disco.models.db import ReadSession
 from disco.utils import docker
 from disco.utils.logs import LOGSPOUT_CMD, JsonLogServer, monitor_syslog
 from disco.utils.projects import get_project_by_name
@@ -32,7 +32,7 @@ async def logs_project(
     project_name: str,
     background_tasks: BackgroundTasks,
 ):
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         if project is None:
             raise HTTPException(status_code=404)
@@ -51,7 +51,7 @@ async def logs_project_service(
     service_name: str,
     background_tasks: BackgroundTasks,
 ):
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         if project is None:
             raise HTTPException(status_code=404)

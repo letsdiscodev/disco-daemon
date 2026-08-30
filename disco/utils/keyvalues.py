@@ -1,5 +1,5 @@
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
+from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 
 from disco.models import KeyValue
 
@@ -8,7 +8,7 @@ class KeyNotFoundError(Exception):
     pass
 
 
-async def get_value_str(dbsession: AsyncDBSession, key: str) -> str:
+async def get_value_str(dbsession: DBSession, key: str) -> str:
     key_value = await dbsession.get(KeyValue, key)
     if key_value is None:
         raise KeyNotFoundError(f"Key {key} not found")
@@ -17,14 +17,14 @@ async def get_value_str(dbsession: AsyncDBSession, key: str) -> str:
     return key_value.value
 
 
-async def get_value(dbsession: AsyncDBSession, key: str) -> str | None:
+async def get_value(dbsession: DBSession, key: str) -> str | None:
     key_value = await dbsession.get(KeyValue, key)
     if key_value is None:
         return None
     return key_value.value
 
 
-async def set_value(dbsession: AsyncDBSession, key: str, value: str | None) -> None:
+async def set_value(dbsession: DBSession, key: str, value: str | None) -> None:
     key_value = await dbsession.get(KeyValue, key)
     if key_value is not None:
         key_value.value = value
@@ -36,14 +36,14 @@ async def set_value(dbsession: AsyncDBSession, key: str, value: str | None) -> N
         dbsession.add(key_value)
 
 
-async def delete_value(dbsession: AsyncDBSession, key: str) -> None:
+async def delete_value(dbsession: DBSession, key: str) -> None:
     key_value = await dbsession.get(KeyValue, key)
     if key_value is not None:
         await dbsession.delete(key_value)
 
 
 async def all_key_values_with_prefix(
-    dbsession: AsyncDBSession, prefix: str
+    dbsession: DBSession, prefix: str
 ) -> list[tuple[str, str | None]]:
     stmt = select(KeyValue).where(KeyValue.key.startswith(prefix))
     result = await dbsession.execute(stmt)

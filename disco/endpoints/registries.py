@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 import disco
 from disco.auth import get_api_key_wo_tx
-from disco.models.db import AsyncReadSession, AsyncSession
+from disco.models.db import ReadSession, Session
 from disco.utils import docker, keyvalues
 from disco.utils.apikeys import get_valid_api_key_by_id
 
@@ -19,7 +19,7 @@ router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
     "/api/disco/registries", status_code=200, dependencies=[Depends(get_api_key_wo_tx)]
 )
 async def registries_get():
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         disco_host_home = await keyvalues.get_value(dbsession, "HOST_HOME")
         assert disco_host_home is not None
 
@@ -45,7 +45,7 @@ async def registries_post(
     api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
     req_body: LoginRequestBody,
 ):
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         api_key = await get_valid_api_key_by_id(dbsession, api_key_id)
         assert api_key is not None
         log.info(
@@ -86,7 +86,7 @@ async def registries_logout(
     api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
     registry_address: str,
 ):
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         api_key = await get_valid_api_key_by_id(dbsession, api_key_id)
         assert api_key is not None
         log.info(
@@ -126,7 +126,7 @@ async def registry_post(
     api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
     req_body: SetRegistryRequestBody,
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         api_key = await get_valid_api_key_by_id(dbsession, api_key_id)
         assert api_key is not None
         log.info("%s is setting Docker Registry to %s", api_key.log(), req_body.address)
@@ -148,7 +148,7 @@ async def registry_post(
 async def registry_delete(
     api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
 ):
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         api_key = await get_valid_api_key_by_id(dbsession, api_key_id)
         assert api_key is not None
         disco_host_home = await keyvalues.get_value(dbsession, "HOST_HOME")

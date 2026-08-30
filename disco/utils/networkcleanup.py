@@ -23,7 +23,7 @@ We do that for project networks we create for each deployment.
 import logging
 from datetime import datetime, timedelta, timezone
 
-from disco.models.db import AsyncReadSession, AsyncSession
+from disco.models.db import ReadSession, Session
 from disco.utils import docker, keyvalues
 from disco.utils.imagecleanup import get_active_projects
 
@@ -39,7 +39,7 @@ async def remove_unused_networks() -> None:
     #   INSERT INTO key_values (key, value, created, updated)
     #   VALUES ('FEATURE_NETWORK_CLEANUP', 'enabled',
     #           datetime('now'), datetime('now'));
-    async with AsyncReadSession.begin() as dbsession:
+    async with ReadSession.begin() as dbsession:
         flag = await keyvalues.get_value(dbsession, "FEATURE_NETWORK_CLEANUP")
     if flag != "enabled":
         log.info("FEATURE_NETWORK_CLEANUP not enabled, skipping network clean-up")
@@ -54,7 +54,7 @@ async def remove_unused_networks() -> None:
     now = datetime.now(timezone.utc)
     for name in network_names:
         key = f"{EMPTY_SINCE_KEY_PREFIX}{name}"
-        async with AsyncSession.begin() as dbsession:
+        async with Session.begin() as dbsession:
             if name in active_network_names:
                 existing = await keyvalues.get_value(dbsession, key)
                 if existing is not None:
@@ -67,7 +67,7 @@ async def remove_unused_networks() -> None:
             continue
         if not _network_is_empty(info):
             continue
-        async with AsyncSession.begin() as dbsession:
+        async with Session.begin() as dbsession:
             empty_since_str = await keyvalues.get_value(dbsession, key)
             if empty_since_str is None:
                 await keyvalues.set_value(dbsession, key, now.isoformat())
@@ -82,7 +82,7 @@ async def remove_unused_networks() -> None:
         log.info("Removing unused network %s (empty since %s)", name, empty_since)
         try:
             await docker.remove_network(name)
-            async with AsyncSession.begin() as dbsession:
+            async with Session.begin() as dbsession:
                 await keyvalues.delete_value(dbsession, key)
         except Exception:
             log.warning("Failed to remove network %s", name)
@@ -91,7 +91,7 @@ async def remove_unused_networks() -> None:
 
 
 async def _remove_orphan_empty_since_entries(now: datetime) -> None:
-    async with AsyncSession.begin() as dbsession:
+    async with Session.begin() as dbsession:
         entries = await keyvalues.all_key_values_with_prefix(
             dbsession, EMPTY_SINCE_KEY_PREFIX
         )
