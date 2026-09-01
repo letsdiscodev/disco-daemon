@@ -148,20 +148,6 @@ async def _update_project_domains(project_name: str, domains: list[str]) -> None
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
 
-def serve_service_sync(project_name: str, container_name: str, port: int) -> None:
-    url = f"{BASE_URL}/id/disco-project-handler-{project_name}"
-    req_body = {
-        "@id": f"disco-project-handler-{project_name}",
-        "handler": "reverse_proxy",
-        "upstreams": [{"dial": f"{container_name}:{port}"}],
-    }
-    session = _get_session()
-    response = session.patch(url, json=req_body, headers=HEADERS, timeout=10)
-    # TODO also accept 404? (when deploying project that has a web service and no domains set)
-    if response.status_code != 200:
-        raise Exception(f"Caddy returned {response.status_code}: {response.text}")
-
-
 async def serve_service(project_name: str, container_name: str, port: int) -> None:
     url = f"{BASE_URL}/id/disco-project-handler-{project_name}"
     req_body = {
@@ -245,19 +231,6 @@ async def get_served_service_for_project(project_name: str) -> str | None:
         return response.json().split(":")[0]
     except Exception:
         return None
-
-
-def serve_static_site_sync(project_name: str, deployment_number: int) -> None:
-    url = f"{BASE_URL}/id/disco-project-handler-{project_name}"
-    req_body = {
-        "@id": f"disco-project-handler-{project_name}",
-        "handler": "file_server",
-        "root": static_site_deployment_path(project_name, deployment_number),
-    }
-    session = _get_session()
-    response = session.patch(url, json=req_body, headers=HEADERS, timeout=10)
-    if response.status_code != 200:
-        raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
 
 async def serve_static_site(project_name: str, deployment_number: int) -> None:

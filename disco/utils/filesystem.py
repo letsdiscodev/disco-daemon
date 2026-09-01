@@ -71,16 +71,6 @@ def static_site_deployment_path_host_machine(
     return f"{host_home}{path}"
 
 
-def create_static_site_deployment_directory_sync(
-    host_home: str, project_name: str, deployment_number: int
-) -> str:
-    path = static_site_deployment_path(project_name, deployment_number)
-    os.makedirs(path)
-    return static_site_deployment_path_host_machine(
-        host_home, project_name, deployment_number
-    )
-
-
 async def create_static_site_deployment_directory(
     host_home: str, project_name: str, deployment_number: int
 ) -> str:

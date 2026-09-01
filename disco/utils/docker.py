@@ -120,105 +120,6 @@ async def build_image(
         raise
 
 
-def start_service_sync(
-    image: str,
-    name: str,
-    project_name: str,
-    project_service_name: str,
-    deployment_number: int,
-    env_variables: list[tuple[str, str]],
-    volumes: list[tuple[str, str, str]],
-    published_ports: list[tuple[int, int, str]],
-    networks: list[tuple[str, str]],
-    replicas: int,
-    command: str | None,
-) -> None:
-    log.info("Starting Docker service %s", name)
-    more_args = []
-    for var_name, var_value in env_variables:
-        more_args.append("--env")
-        more_args.append(f"{var_name}={var_value}")
-    for volume_type, source, destination in volumes:
-        assert volume_type == "volume"
-        more_args.append("--mount")
-        more_args.append(
-            f"type={volume_type},source={source},destination={destination}"
-        )
-    if len(volumes) > 0:
-        # volumes are on the main node
-        more_args.append("--constraint")
-        more_args.append("node.labels.disco-role==main")
-    for host_port, container_port, protocol in published_ports:
-        more_args.append("--publish")
-        more_args.append(
-            f"published={host_port},target={container_port},protocol={protocol}"
-        )
-    for network, alias in networks:
-        more_args.append("--network")
-        more_args.append(f"name={network},alias={alias}")
-    args = [
-        "docker",
-        "service",
-        "create",
-        "--name",
-        name,
-        "--with-registry-auth",
-        "--replicas",
-        str(replicas),
-        "--label",
-        f"disco.project.name={project_name}",
-        "--label",
-        f"disco.service.name={project_service_name}",
-        "--label",
-        f"disco.deployment.number={deployment_number}",
-        "--container-label",
-        f"disco.project.name={project_name}",
-        "--container-label",
-        f"disco.service.name={project_service_name}",
-        "--container-label",
-        f"disco.deployment.number={deployment_number}",
-        "--log-driver",
-        "json-file",
-        "--log-opt",
-        "max-size=20m",
-        "--log-opt",
-        "max-file=5",
-        *more_args,
-        image,
-        *(shlex.split(command) if command is not None else []),
-    ]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    timeout_seconds = 900  # 15 minutes, safety net
-    timeout = datetime.now(timezone.utc) + timedelta(seconds=timeout_seconds)
-    next_check = datetime.now(timezone.utc) + timedelta(seconds=3)
-    for line in process.stdout:
-        line_text = decode_text(line)
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-        if datetime.now(timezone.utc) > next_check:
-            states = get_service_nodes_desired_state_sync(name)
-            if len([state for state in states if state == "Shutdown"]) >= 3 * replicas:
-                # 3 attempts to start the service failed
-                process.terminate()
-                raise Exception("Starting task failed, too many failed attempts")
-            next_check += timedelta(seconds=3)
-        if datetime.now(timezone.utc) > timeout:
-            process.terminate()
-            raise Exception(
-                f"Starting task failed, timeout after {timeout_seconds} seconds"
-            )
-
-    process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-
-
 async def start_project_service(
     image: str,
     name: str,
@@ -328,29 +229,6 @@ async def start_project_service(
     await process.wait()
     if process.returncode != 0:
         raise Exception(f"Docker returned status {process.returncode}")
-
-
-def get_service_nodes_desired_state_sync(service_name: str) -> list[str]:
-    log.info("Getting Docker service nodes desired states: %s", service_name)
-    args = [
-        "docker",
-        "service",
-        "ps",
-        service_name,
-        "--format",
-        "{{ .DesiredState }}",
-    ]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    states = [decode_text(line)[:-1] for line in process.stdout.readlines()]
-    process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-    return states
 
 
 async def get_service_nodes_desired_state(service_name: str) -> list[str]:
@@ -490,23 +368,6 @@ async def container_exists(container_name: str) -> bool:
         stderr=subprocess.DEVNULL,
     )
     await process.wait()
-    return process.returncode == 0
-
-
-def service_exists_sync(service_name: str) -> bool:
-    log.info("Checking if Docker service exists: %s", service_name)
-    args = [
-        "docker",
-        "service",
-        "inspect",
-        service_name,
-    ]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    process.wait()
     return process.returncode == 0
 
 
@@ -956,65 +817,6 @@ async def pull(image: str) -> None:
         image,
     ]
     await check_call(args)
-
-
-def remove_network_sync(name: str) -> None:
-    # XXX Do not remove networks, as Docker Swarm fails to free IP addresses
-    # https://github.com/moby/moby/issues/37338
-    log.info("Removing network %s", name)
-    args = [
-        "docker",
-        "network",
-        "rm",
-        name,
-    ]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    for line in process.stdout:
-        line_text = decode_text(line)
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-
-    process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
-
-
-def add_network_to_container_sync(
-    container: str, network: str, alias: str | None = None
-) -> None:
-    log.info("Adding network to container: %s to %s", network, container)
-    more_args = []
-    if alias is not None:
-        more_args += ["--alias", alias]
-    args = [
-        "docker",
-        "network",
-        "connect",
-        *more_args,
-        network,
-        container,
-    ]
-    process = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    assert process.stdout is not None
-    for line in process.stdout:
-        line_text = decode_text(line)
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-
-    process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Docker returned status {process.returncode}")
 
 
 async def add_network_to_container(
