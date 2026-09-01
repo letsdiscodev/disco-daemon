@@ -40,17 +40,7 @@ def run_migrations_offline() -> None:
 def run_migrations_online():
     logging.basicConfig(level=logging.INFO)
 
-    connection = config.attributes.get("connection")
-    if connection is None:
-        from disco.models.db import get_engine
-
-        with get_engine().connect() as connection:
-            _run_migrations(connection)
-    else:
-        _run_migrations(connection)
-
-
-def _run_migrations(connection) -> None:
+    connection = config.attributes["connection"]
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
