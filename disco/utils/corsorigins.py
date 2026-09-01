@@ -4,7 +4,6 @@ from typing import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
-from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import ApiKey, CorsOrigin
 
@@ -46,10 +45,4 @@ async def get_cors_origin(dbsession: AsyncDBSession, origin: str) -> CorsOrigin 
 async def get_all_cors_origins(dbsession: AsyncDBSession) -> Sequence[CorsOrigin]:
     stmt = select(CorsOrigin)
     result = await dbsession.execute(stmt)
-    return result.scalars().all()
-
-
-def get_all_cors_origins_sync(dbsession: DBSession) -> Sequence[CorsOrigin]:
-    stmt = select(CorsOrigin)
-    result = dbsession.execute(stmt)
     return result.scalars().all()

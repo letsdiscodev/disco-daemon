@@ -3,7 +3,6 @@ import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
-from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import ApiKey, Project, ProjectDomain
 from disco.utils import caddy, docker, events
@@ -141,14 +140,6 @@ async def get_domain_by_name(
 ) -> ProjectDomain | None:
     stmt = select(ProjectDomain).where(ProjectDomain.name == domain_name).limit(1)
     result = await dbsession.execute(stmt)
-    return result.scalars().first()
-
-
-def get_domain_by_name_sync(
-    dbsession: DBSession, domain_name: str
-) -> ProjectDomain | None:
-    stmt = select(ProjectDomain).where(ProjectDomain.name == domain_name).limit(1)
-    result = dbsession.execute(stmt)
     return result.scalars().first()
 
 

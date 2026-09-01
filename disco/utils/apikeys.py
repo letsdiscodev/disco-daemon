@@ -5,24 +5,11 @@ from secrets import token_hex
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as AsyncDBSession
 from sqlalchemy.orm import selectinload
-from sqlalchemy.orm.session import Session as DBSession
 
 from disco.models import ApiKey, ApiKeyUsage
 from disco.utils import events
 
 log = logging.getLogger(__name__)
-
-
-def create_api_key_sync(dbsession: DBSession, name: str) -> ApiKey:
-    api_key = ApiKey(
-        id=token_hex(16),
-        name=name,
-        public_key=token_hex(16),
-    )
-    dbsession.add(api_key)
-    log.info("Created API key %s", api_key.log())
-    events.api_key_created(public_key=api_key.public_key, name=name)
-    return api_key
 
 
 async def create_api_key(dbsession: AsyncDBSession, name: str) -> ApiKey:
