@@ -92,8 +92,12 @@ async def _db_connection(source: str) -> OutputDbConnection:
 
 async def init(source: str) -> None:
     directory = "/disco/data/commandoutputs"
-    if not os.path.isdir(directory):
-        os.makedirs(directory)
+
+    def makedirs() -> None:
+        if not os.path.isdir(directory):
+            os.makedirs(directory)
+
+    await asyncio.get_event_loop().run_in_executor(None, makedirs)
     engine = (await _db_connection(source)).engine
     async with engine.begin() as conn:
         await conn.run_sync(base_metadata.create_all)
