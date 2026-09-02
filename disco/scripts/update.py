@@ -4,13 +4,11 @@ import asyncio
 import json
 import logging
 import os
-import re
-import uuid
 from typing import Awaitable, Callable
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 import disco
@@ -31,8 +29,7 @@ async def _main() -> None:
     logging.basicConfig(level=logging.INFO)
     await build_engines()
     image = os.environ.get("DISCO_IMAGE")
-    if image is None:  # backward compat for version <= 0.4.1
-        image = "letsdiscodev/daemon:latest"
+    assert image is not None
     async with ReadSession.begin() as dbsession:
         installed_version = await keyvalues.get_value(
             dbsession=dbsession, key="DISCO_VERSION"
@@ -43,17 +40,13 @@ async def _main() -> None:
         async with Session.begin() as dbsession:
             await save_done_updating(dbsession)
         return
-    version_parts = installed_version.split(".")
-    major = int(version_parts[0])
-    minor = int(version_parts[1])
-    if major == 0 and minor <= 4:
+    try:
+        get_update_function_for_version(installed_version)
+    except NotImplementedError:
+        print(f"Updating from version {installed_version} is not supported.")
         async with Session.begin() as dbsession:
-            disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
-            disco_ip = await keyvalues.get_value(dbsession, "DISCO_IP")
-            if disco_host == disco_ip:
-                print("Must set Disco host first, not updating.")
-                await save_done_updating(dbsession)
-                return
+            await save_done_updating(dbsession)
+        return
     print(f"Installed version: {installed_version}")
     print(f"New version: {disco.__version__}")
     print("Stopping existing Disco processes")
@@ -61,11 +54,6 @@ async def _main() -> None:
         await stop_disco_daemon()
     except Exception:
         log.info("Failed to stop Disco")
-    if re.match(r"^0\.(1|2|3)\..+$", installed_version):
-        try:
-            await stop_disco_worker()
-        except Exception:
-            log.info("Failed to stop Disco Worker")
     print("Running upgrade tasks")
     ttl = 9999
     while installed_version != disco.__version__:
@@ -99,17 +87,6 @@ async def stop_disco_daemon() -> None:
             "service",
             "rm",
             "disco",
-        ]
-    )
-
-
-async def stop_disco_worker() -> None:
-    await run_and_print(
-        [
-            "docker",
-            "service",
-            "rm",
-            "disco-worker",
         ]
     )
 
@@ -729,167 +706,6 @@ async def task_0_7_x(image: str) -> None:
         )
 
 
-async def task_0_6_x(image: str) -> None:
-    from disco.models import GithubApp, ProjectDomain
-    from disco.utils.projectdomains import _get_apex_www_redirect_for_domain
-
-    print("Updating from 0.6.x to 0.7.0")
-    await alembic_upgrade("97e98737cba8")
-    async with Session.begin() as dbsession:
-        rows = (await dbsession.execute(text("SELECT id, domain FROM projects;"))).all()
-        all_domains = set([row.domain for row in rows if row.domain is not None])
-        for row in rows:
-            if row.domain is not None:
-                project_domain = ProjectDomain(
-                    id=uuid.uuid4().hex,
-                    project_id=row.id,
-                    name=row.domain,
-                )
-                dbsession.add(project_domain)
-                apex_www_redirect = _get_apex_www_redirect_for_domain(row.domain)
-                if (
-                    apex_www_redirect is not None
-                    and apex_www_redirect not in all_domains
-                ):
-                    add_redirect_cmd = (
-                        "from disco.scripts.update import _add_apex_www_redirects; "
-                        "_add_apex_www_redirects("
-                        f"'{project_domain.id}', '{apex_www_redirect}', "
-                        f"'{project_domain.name}')"
-                    )
-                    await run_and_print(
-                        [
-                            "docker",
-                            "run",
-                            "--rm",
-                            "--mount",
-                            "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
-                            "type=bind,source=/var/run/caddy,target=/var/run/caddy",
-                            image,
-                            "python",
-                            "-c",
-                            add_redirect_cmd,
-                        ]
-                    )
-
-        stmt = select(GithubApp).order_by(GithubApp.owner_login)
-        github_apps = (await dbsession.execute(stmt)).scalars().all()
-        for github_app in github_apps:
-            app_meta = json.loads(github_app.app_info)
-            github_app.owner_id = app_meta["owner"]["id"]
-            github_app.owner_login = app_meta["owner"]["login"]
-            github_app.owner_type = app_meta["owner"]["type"]
-    await alembic_upgrade("47da35039f6f")
-    async with Session.begin() as dbsession:
-        await keyvalues.set_value(
-            dbsession=dbsession, key="DISCO_VERSION", value="0.7.0"
-        )
-
-
-async def task_0_5_x(image: str) -> None:
-    print("Updating from 0.5.x to 0.6.0")
-    await alembic_upgrade("5540c20f9acd")
-    async with Session.begin() as dbsession:
-        await keyvalues.set_value(
-            dbsession=dbsession, key="DISCO_VERSION", value="0.6.0"
-        )
-
-
-async def task_0_4_x(image: str) -> None:
-    print("Updating from 0.4.x to 0.5.0")
-    await alembic_upgrade("87c62632dfd1")
-    async with Session.begin() as dbsession:
-        disco_ip = await keyvalues.get_value(dbsession=dbsession, key="DISCO_IP")
-        get_caddy_config_cmd = (
-            "from disco.utils import caddy; "
-            "import json; "
-            "print(json.dumps(caddy.get_config()))"
-        )
-        caddy_config_lines, _, _ = await check_call(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "--mount",
-                "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
-                "--mount",
-                "type=bind,source=/var/run/caddy,target=/var/run/caddy",
-                image,
-                "python",
-                "-c",
-                get_caddy_config_cmd,
-            ]
-        )
-        caddy_config_str = "\n".join(caddy_config_lines)
-        caddy_config = json.loads(caddy_config_str)
-        assert caddy_config is not None
-        del caddy_config["apps"]["http"]["servers"]["disco"]["tls_connection_policies"]
-        del caddy_config["apps"]["tls"]
-        caddy_config["apps"]["http"]["servers"]["disco"]["routes"] = [
-            route
-            for route in caddy_config["apps"]["http"]["servers"]["disco"]["routes"]
-            if route.get("@id") != "ip-handle"
-        ]
-        caddy_config_str = json.dumps(caddy_config)
-        set_caddy_config_cmd = (
-            "from disco.utils import caddy; "
-            "import json; "
-            f"caddy_config_str = '''{caddy_config_str}''';"
-            "caddy_config = json.loads(caddy_config_str);"
-            "caddy.set_config(caddy_config)"
-        )
-        await run_and_print(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "--mount",
-                "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
-                "--mount",
-                "type=bind,source=/var/run/caddy,target=/var/run/caddy",
-                image,
-                "python",
-                "-c",
-                set_caddy_config_cmd,
-            ]
-        )
-        await keyvalues.set_value(
-            dbsession=dbsession, key="DISCO_ADVERTISE_ADDR", value=disco_ip
-        )
-        await keyvalues.delete_value(dbsession=dbsession, key="DISCO_IP")
-        await keyvalues.delete_value(dbsession=dbsession, key="PUBLIC_CA_CERT")
-        await keyvalues.set_value(
-            dbsession=dbsession, key="DISCO_VERSION", value="0.5.0"
-        )
-
-
-async def task_0_3_x(image: str) -> None:
-    print("Updating from 0.3.x to 0.4.0")
-    await alembic_upgrade("3eb8871ccb85")
-    async with Session.begin() as dbsession:
-        await keyvalues.set_value(
-            dbsession=dbsession, key="DISCO_VERSION", value="0.4.0"
-        )
-
-
-async def task_0_2_x(image: str) -> None:
-    print("Updating from 0.2.x to 0.3.0")
-    await alembic_upgrade("d0cba3cd3238")
-    async with Session.begin() as dbsession:
-        await keyvalues.set_value(
-            dbsession=dbsession, key="DISCO_VERSION", value="0.3.0"
-        )
-
-
-async def task_0_1_x(image: str) -> None:
-    print("Updating from 0.1.x to 0.2.0")
-    await alembic_upgrade("eba27af20db2")
-    async with Session.begin() as dbsession:
-        await keyvalues.set_value(
-            dbsession=dbsession, key="DISCO_VERSION", value="0.2.0"
-        )
-
-
 async def task_patch(image: str) -> None:
     async with Session.begin() as dbsession:
         print(f"Updating to {disco.__version__}")
@@ -899,18 +715,6 @@ async def task_patch(image: str) -> None:
 
 
 def get_update_function_for_version(version: str) -> Callable[[str], Awaitable[None]]:
-    if version.startswith("0.1."):
-        return task_0_1_x
-    if version.startswith("0.2."):
-        return task_0_2_x
-    if version.startswith("0.3."):
-        return task_0_3_x
-    if version.startswith("0.4."):
-        return task_0_4_x
-    if version.startswith("0.5."):
-        return task_0_5_x
-    if version.startswith("0.6."):
-        return task_0_6_x
     if version.startswith("0.7."):
         return task_0_7_x
     if version.startswith("0.8."):
@@ -964,4 +768,4 @@ def get_update_function_for_version(version: str) -> Callable[[str], Awaitable[N
     if version.startswith("0.32."):
         assert disco.__version__.startswith("0.32.")
         return task_patch
-    raise NotImplementedError(f"Update missing for version {version}")
+    raise NotImplementedError(f"Updating from version {version} is not supported")
