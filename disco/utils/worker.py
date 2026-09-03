@@ -41,13 +41,17 @@ class DiscoCron(Cron):
 
 
 async def cron_minute() -> None:
+    from disco.utils.dqlite import create_missing_dqlite_services
     from disco.utils.nodes import name_unnamed_nodes
     from disco.utils.tunnels import stop_expired_tunnels
 
     log.info("Disco minute cron")
     await stop_expired_tunnels()
     if config.is_ha():
-        await name_unnamed_nodes()
+        nodes = await name_unnamed_nodes()
+        await create_missing_dqlite_services(
+            [node.labels["disco-name"] for node in nodes]
+        )
 
 
 async def cron_hour() -> None:
