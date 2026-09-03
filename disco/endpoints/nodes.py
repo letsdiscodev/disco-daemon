@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from disco.auth import get_api_key_wo_tx
 from disco.models.db import ReadSession
 from disco.utils import docker, keyvalues
-from disco.utils.randomname import generate_random_name
+from disco.utils.nodes import name_unnamed_nodes
 
 log = logging.getLogger(__name__)
 
@@ -29,14 +29,7 @@ async def join_token_get():
 
 @router.get("/api/disco/swarm/nodes")
 async def get_node_list():
-    node_ids = await docker.get_node_list()
-    nodes = await docker.get_node_details(node_ids)
-    for node in nodes:
-        if "disco-name" not in node.labels:
-            node.labels["disco-name"] = await generate_random_name()
-            await docker.set_node_label(
-                node_id=node.id, key="disco-name", value=node.labels["disco-name"]
-            )
+    nodes = await name_unnamed_nodes()
     return {
         "nodes": [
             {
