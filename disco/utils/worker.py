@@ -9,6 +9,7 @@ from typing import AsyncGenerator, Awaitable, Callable, Sequence
 
 from croniter import croniter
 
+from disco import config
 from disco.models import Deployment, DeploymentEnvironmentVariable
 from disco.models.db import ReadSession
 from disco.utils import docker, keyvalues
@@ -40,10 +41,13 @@ class DiscoCron(Cron):
 
 
 async def cron_minute() -> None:
+    from disco.utils.nodes import name_unnamed_nodes
     from disco.utils.tunnels import stop_expired_tunnels
 
     log.info("Disco minute cron")
     await stop_expired_tunnels()
+    if config.is_ha():
+        await name_unnamed_nodes()
 
 
 async def cron_hour() -> None:
