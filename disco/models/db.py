@@ -1,6 +1,8 @@
+import asyncio
 import logging
+import time
 
-from sqlalchemy import event
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
 from disco import config
@@ -69,6 +71,24 @@ async def build_engines() -> None:
         await resolve_node_name()
     get_engine()
     get_read_engine()
+
+
+async def wait_for_database(timeout_seconds: int = 600) -> None:
+    log.info("Waiting for the database")
+    start = time.monotonic()
+    while True:
+        try:
+            async with get_engine().connect() as conn:
+                await conn.execute(text("SELECT 1"))
+        except Exception as e:
+            if time.monotonic() - start > timeout_seconds:
+                raise Exception(
+                    f"Database not reachable after {timeout_seconds} seconds"
+                ) from e
+            await asyncio.sleep(2)
+            continue
+        log.info("Database reachable after %d seconds", time.monotonic() - start)
+        return
 
 
 class _LazySessionMaker:

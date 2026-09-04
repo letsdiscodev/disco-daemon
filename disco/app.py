@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from disco import config
 from disco.endpoints import (
     apikeyinvites,
     apikeys,
@@ -27,7 +28,7 @@ from disco.endpoints import (
     volumes,
 )
 from disco.middleware import load_cors, middleware
-from disco.models.db import build_engines
+from disco.models.db import build_engines, wait_for_database
 from disco.utils.deployments import (
     cleanup_deployments_on_disco_boot,
     enqueue_deployments_on_disco_boot,
@@ -44,6 +45,8 @@ log.info("Initializing Disco daemon")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await build_engines()
+    if config.is_ha():
+        await wait_for_database()
     loop = asyncio.get_running_loop()
     worker.set_loop(loop)
     worker_task = loop.create_task(worker.work())
