@@ -4,9 +4,11 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from disco import config
 from disco.auth import get_api_key_wo_tx
 from disco.models.db import ReadSession
 from disco.utils import docker, keyvalues
+from disco.utils.dqlite import remove_cluster_member, remove_dqlite_service
 from disco.utils.nodes import name_unnamed_nodes
 
 log = logging.getLogger(__name__)
@@ -60,8 +62,12 @@ async def node_delete(node_name: str):
         raise HTTPException(status_code=404)
     log.info("Starting swarm leaver job for node %s", node_name)
     service_name = await docker.leave_swarm(node_id=node_id)
+    if config.is_ha():
+        await remove_cluster_member(node_name)
     log.info("Draining node %s", node_name)
     await docker.drain_node(node_id=node_id)
+    if config.is_ha():
+        await remove_dqlite_service(node_name)
     log.info("Removing swarm leaver service for node %s", node_name)
     await docker.rm_service(service_name)
     timeout = datetime.now(timezone.utc) + timedelta(minutes=20)

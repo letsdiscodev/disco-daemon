@@ -1,7 +1,11 @@
 import asyncio
 import logging
 import time
+import uuid
 from dataclasses import dataclass
+
+from dqliteclient import ClusterClient
+from dqlitewire import NodeRole
 
 from disco.utils.subprocess import call, check_call
 
@@ -153,6 +157,66 @@ def get_local_dqlite_address() -> str:
     return dqlite_bind_address(current_node_name())
 
 
+def _cluster_client() -> ClusterClient:
+    return ClusterClient.from_addresses([get_local_dqlite_address()])
+
+
+async def _member_id(client: ClusterClient, address: str) -> int:
+    for member in await client.cluster_info():
+        if member.address == address:
+            return member.node_id
+    raise Exception(f"{address} is not a member of the dqlite cluster")
+
+
+async def remove_cluster_member(node_name: str) -> None:
+    address = dqlite_bind_address(node_name)
+    client = _cluster_client()
+    node_id = await _member_id(client, address)
+    leader = await client.leader_info()
+    if leader is not None and leader.address == address:
+        # A leader can't be removed, hand leadership to our own member first.
+        local_address = get_local_dqlite_address()
+        log.info("Transferring dqlite leadership from %s to %s", address, local_address)
+        await client.transfer_leadership(await _member_id(client, local_address))
+        for _ in range(30):
+            await asyncio.sleep(1)
+            leader = await client.leader_info()
+            if leader is not None and leader.address != address:
+                break
+        else:
+            raise Exception(f"dqlite leadership did not move away from {address}")
+    log.info("Removing %s from the dqlite cluster", address)
+    await client.remove_node(node_id)
+    for member in await client.cluster_info():
+        if member.address == address:
+            raise Exception(f"{address} is still a member of the dqlite cluster")
+
+
+async def ensure_dqlite_roles() -> None:
+    # dqlite manages roles itself from three members up. With two, the
+    # second one would be left as a spare, which is not even replicated to.
+    # make it a stand-by (replicated, no vote, so losing it costs nothing).
+    client = _cluster_client()
+    members = await client.cluster_info()
+    if len(members) != 2:
+        return
+    leader = await client.leader_info()
+    if leader is None:
+        return
+    for member in members:
+        if member.address == leader.address:
+            continue
+        if member.role != NodeRole.STANDBY:
+            log.info("Making dqlite member %s a stand-by", member.address)
+            await client.assign_role(member.node_id, NodeRole.STANDBY)
+
+
+async def remove_dqlite_service(node_name: str) -> None:
+    service_name = dqlite_service_name(node_name)
+    log.info("Removing dqlite service %s", service_name)
+    await check_call(["docker", "service", "rm", service_name])
+
+
 async def start_dqlite_service(
     *,
     node_name: str,
@@ -190,7 +254,7 @@ async def start_dqlite_service(
             "--constraint",
             f"node.labels.disco-name=={node_name}",
             "--mount",
-            f"source=dqlite-{node_name},target=/data",
+            f"source=dqlite-{node_name}-{uuid.uuid4().hex[:8]},target=/data",
             "--label",
             "disco.service=dqlite",
             "--label",
