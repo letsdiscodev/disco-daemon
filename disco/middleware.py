@@ -35,4 +35,5 @@ def update_cors(allowed_origins: list[str]) -> None:
 async def load_cors() -> None:
     async with ReadSession.begin() as dbsession:
         cors_origins = await get_all_cors_origins(dbsession)
-    update_cors([o.origin for o in cors_origins])
+        allowed_origins = [o.origin for o in cors_origins]
+    update_cors(allowed_origins)
