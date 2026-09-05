@@ -12,7 +12,7 @@ from disco.endpoints.dependencies import get_project_name_from_url_wo_tx
 from disco.endpoints.envvariables import EnvVariable
 from disco.models import Project, ProjectGithubRepo
 from disco.models.db import ReadSession, Session
-from disco.utils import keyvalues
+from disco.utils import docker, keyvalues
 from disco.utils.apikeys import get_api_key_by_id
 from disco.utils.deploymentflow import enqueue_deployment
 from disco.utils.deployments import (
@@ -29,6 +29,7 @@ from disco.utils.filesystem import (
     get_caddy_key_crt,
     get_caddy_key_key,
     get_caddy_key_meta,
+    set_caddy_certificate,
 )
 from disco.utils.github import get_all_repos, repo_is_public
 from disco.utils.projectdomains import DOMAIN_REGEX, add_domain
@@ -53,7 +54,8 @@ class Ssh(BaseModel):
     private_key: str = Field(..., alias="privateKey")
 
 
-class CaddyKey(BaseModel):
+class CaddyCertificate(BaseModel):
+    name: str = Field(..., pattern=DOMAIN_REGEX)
     crt: str
     key: str
     meta: str
@@ -68,11 +70,11 @@ class NewProjectRequestBody(BaseModel):
     )
     branch: str | None = None
     domain: str | None = Field(None, pattern=DOMAIN_REGEX)
+    domains: list[Annotated[str, Field(pattern=DOMAIN_REGEX)]] = []
     env_variables: list[EnvVariable] = Field([], alias="envVariables")
-    caddy: CaddyKey | None = None
+    caddy: list[CaddyCertificate] = []
     generate_suffix: bool = Field(False, alias="generateSuffix")
     commit: str = "_DEPLOY_LATEST_"
-    deployment_number: int | None = Field(None, alias="deploymentNumber")
 
 
 class UpdateProjectRequestBody(BaseModel):
@@ -225,13 +227,35 @@ async def projects_post(
             suffix = await generate_random_name()
             req_body.name = f"{req_body.name}-{suffix}"
         await validate_create_project(dbsession=dbsession, req_body=req_body)
-        if req_body.caddy is not None and req_body.domain is not None:
-            # TODO rewrite with await
-            pass
-            # # TODO validation (raise exception if domain not set and caddy is set)
-            # set_caddy_key_crt(req_body.domain, req_body.caddy.crt)
-            # set_caddy_key_key(req_body.domain, req_body.caddy.key)
-            # set_caddy_key_meta(req_body.domain, req_body.caddy.meta)
+        domains = list(req_body.domains)
+        if req_body.domain is not None:
+            domains.append(req_body.domain)
+        for certificate in req_body.caddy:
+            if certificate.name not in domains:
+                raise RequestValidationError(
+                    errors=(
+                        ValidationError.from_exception_data(
+                            "ValueError",
+                            [
+                                InitErrorDetails(
+                                    type=PydanticCustomError(
+                                        "value_error",
+                                        "Certificate for a domain not in domains",
+                                    ),
+                                    loc=("body", "caddy"),
+                                    input=certificate.name,
+                                )
+                            ],
+                        )
+                    ).errors()
+                )
+        for certificate in req_body.caddy:
+            await set_caddy_certificate(
+                domain=certificate.name,
+                crt=certificate.crt,
+                key=certificate.key,
+                meta=certificate.meta,
+            )
         project = create_project(
             dbsession=dbsession,
             name=req_body.name,
@@ -258,11 +282,11 @@ async def projects_post(
             ],
             by_api_key=api_key,
         )
-        if req_body.domain is not None:
+        for domain in domains:
             await add_domain(
                 dbsession=dbsession,
                 project=project,
-                domain_name=req_body.domain,
+                domain_name=domain,
                 by_api_key=api_key,
             )
 
@@ -272,7 +296,6 @@ async def projects_post(
                 project=project,
                 commit_hash=req_body.commit,
                 disco_file=None,
-                number=req_body.deployment_number,
                 by_api_key=api_key,
             )
             background_tasks.add_task(enqueue_deployment, deployment.id)
@@ -407,14 +430,22 @@ async def export_get(
         env_variables = await get_env_variables_for_project(dbsession, project)
         deployment = await get_live_deployment(dbsession, project)
         volume_names = []
+        scale = {}
         if deployment is not None:
             disco_file = get_disco_file_from_str(deployment.disco_file)
             for service in disco_file.services.values():
                 for volume in service.volumes:
                     volume_names.append(volume.name)
+            for swarm_service in await docker.list_services_for_deployment(
+                project_name=project.name, deployment_number=deployment.number
+            ):
+                scale[swarm_service.name] = swarm_service.replicas
         domains = await project.awaitable_attrs.domains
+        github_repo = await project.awaitable_attrs.github_repo
         return {
             "name": project.name,
+            "githubRepo": github_repo.full_name if github_repo is not None else None,
+            "branch": github_repo.branch if github_repo is not None else None,
             "domains": [domain.name for domain in domains],
             "envVariables": [
                 {
@@ -438,5 +469,6 @@ async def export_get(
             }
             if deployment is not None
             else None,
+            "scale": scale,
             "volumes": volume_names,
         }

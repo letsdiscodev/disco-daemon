@@ -118,28 +118,10 @@ async def get_caddy_key_crt(domain: str) -> str:
         return await f.read()
 
 
-def set_caddy_key_crt(domain: str, value: str) -> None:
-    directory = _certificate_directory(domain)
-    if not os.path.isdir(directory):
-        os.makedirs(directory)
-    path = f"{directory}/{domain}.crt"
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(value)
-
-
 async def get_caddy_key_key(domain: str) -> str:
     path = f"{_certificate_directory(domain)}/{domain}.key"
     async with aiofiles.open(path, "r", encoding="utf-8") as f:
         return await f.read()
-
-
-def set_caddy_key_key(domain: str, value: str) -> None:
-    directory = _certificate_directory(domain)
-    if not os.path.isdir(directory):
-        os.makedirs(directory)
-    path = f"{directory}/{domain}.key"
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(value)
 
 
 async def get_caddy_key_meta(domain: str) -> str:
@@ -148,10 +130,15 @@ async def get_caddy_key_meta(domain: str) -> str:
         return await f.read()
 
 
-def set_caddy_key_meta(domain: str, value: str) -> None:
+async def set_caddy_certificate(domain: str, crt: str, key: str, meta: str) -> None:
     directory = _certificate_directory(domain)
-    if not os.path.isdir(directory):
-        os.makedirs(directory)
-    path = f"{directory}/{domain}.json"
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(value)
+
+    def makedirs() -> None:
+        os.makedirs(directory, exist_ok=True)
+
+    await asyncio.get_event_loop().run_in_executor(None, makedirs)
+    for extension, value in (("crt", crt), ("key", key), ("json", meta)):
+        async with aiofiles.open(
+            f"{directory}/{domain}.{extension}", "w", encoding="utf-8"
+        ) as f:
+            await f.write(value)

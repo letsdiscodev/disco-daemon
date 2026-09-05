@@ -43,15 +43,8 @@ async def create_deployment(
     commit_hash: str | None,
     disco_file: DiscoFile | None,
     by_api_key: ApiKey | None,
-    number: int | None = None,
 ) -> Deployment:
-    if number is not None:
-        if len(await project.awaitable_attrs.deployments) > 0:
-            raise Exception(
-                "Cannot set deployment number if project already has deployments"
-            )
-    else:
-        number = await get_next_deployment_number(dbsession, project)
+    number = await get_next_deployment_number(dbsession, project)
     prev_deployment = await get_live_deployment(dbsession, project)
     project_github_repo = await project.awaitable_attrs.github_repo
     deployment = Deployment(
