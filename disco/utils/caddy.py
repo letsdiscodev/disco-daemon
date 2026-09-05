@@ -64,11 +64,6 @@ ZEROSSL_EMAIL = "zerossl@disco.cloud"
 
 
 def tls_app_config() -> dict[str, Any]:
-    # Caddy configured through JSON with no apps.tls uses Let's Encrypt only
-    # (DefaultIssuers("") in caddy's modules/caddytls/automation.go): when
-    # Let's Encrypt is down or rate limited, no certificate is ever issued.
-    # An explicit policy makes certmagic try Let's Encrypt first and fall
-    # back to ZeroSSL (which registers an account from the email).
     return {
         "automation": {
             "policies": [
@@ -84,7 +79,6 @@ def tls_app_config() -> dict[str, Any]:
 
 
 def set_tls_automation_policy() -> None:
-    # POST on /config/apps/tls sets it when null and replaces it otherwise.
     session = _get_session()
     url = f"{BASE_URL}/config/apps/tls"
     response = session.post(url, json=tls_app_config(), headers=HEADERS, timeout=10)
