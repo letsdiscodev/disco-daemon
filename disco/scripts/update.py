@@ -102,6 +102,31 @@ def _alembic_upgrade(connection, version_hash: str) -> None:
     command.upgrade(config, version_hash)
 
 
+async def task_0_32_x(image: str) -> None:
+    print("Updating from 0.32.x to 0.33.0")
+    async with ReadSession.begin() as dbsession:
+        host_home = await keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
+    assert host_home is not None
+    await run_and_print(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--mount",
+            f"type=bind,source={host_home}/disco/caddy-socket,target=/disco/caddy-socket",
+            image,
+            "python",
+            "-c",
+            "from disco.utils import caddy; caddy.set_tls_automation_policy()",
+        ]
+    )
+    print("tls automation policy installed (let's encrypt + zerossl fallback)")
+    async with Session.begin() as dbsession:
+        await keyvalues.set_value(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.33.0"
+        )
+
+
 async def task_0_31_x(image: str) -> None:
     print("Updating from 0.31.x to 0.32.0")
     async with Session.begin() as dbsession:
@@ -766,6 +791,8 @@ def get_update_function_for_version(version: str) -> Callable[[str], Awaitable[N
     if version.startswith("0.31."):
         return task_0_31_x
     if version.startswith("0.32."):
-        assert disco.__version__.startswith("0.32.")
+        return task_0_32_x
+    if version.startswith("0.33."):
+        assert disco.__version__.startswith("0.33.")
         return task_patch
     raise NotImplementedError(f"Updating from version {version} is not supported")
