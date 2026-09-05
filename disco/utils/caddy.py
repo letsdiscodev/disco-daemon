@@ -59,6 +59,39 @@ def set_config(config: dict[str, Any]) -> None:
         raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
 
+ZEROSSL_CA = "https://acme.zerossl.com/v2/DV90"
+ZEROSSL_EMAIL = "zerossl@disco.cloud"
+
+
+def tls_app_config() -> dict[str, Any]:
+    # Caddy configured through JSON with no apps.tls uses Let's Encrypt only
+    # (DefaultIssuers("") in caddy's modules/caddytls/automation.go): when
+    # Let's Encrypt is down or rate limited, no certificate is ever issued.
+    # An explicit policy makes certmagic try Let's Encrypt first and fall
+    # back to ZeroSSL (which registers an account from the email).
+    return {
+        "automation": {
+            "policies": [
+                {
+                    "issuers": [
+                        {"module": "acme"},
+                        {"module": "acme", "ca": ZEROSSL_CA, "email": ZEROSSL_EMAIL},
+                    ]
+                }
+            ]
+        }
+    }
+
+
+def set_tls_automation_policy() -> None:
+    # POST on /config/apps/tls sets it when null and replaces it otherwise.
+    session = _get_session()
+    url = f"{BASE_URL}/config/apps/tls"
+    response = session.post(url, json=tls_app_config(), headers=HEADERS, timeout=10)
+    if response.status_code != 200:
+        raise Exception(f"Caddy returned {response.status_code}: {response.text}")
+
+
 async def _add_project_route(project_name: str, domains: list[str]) -> None:
     url = f"{BASE_URL}/config/apps/http/servers/disco/routes/0"
     req_body = {
@@ -276,6 +309,7 @@ async def write_caddy_init_config(disco_host: str, tunnel: bool) -> None:
             "origins": ["disco-caddy"],
         },
         "apps": {
+            "tls": tls_app_config(),
             "http": {
                 "servers": {
                     "disco": {
@@ -316,7 +350,7 @@ async def write_caddy_init_config(disco_host: str, tunnel: bool) -> None:
                         "logs": {},
                     }
                 }
-            }
+            },
         },
         "logging": {
             "logs": {
