@@ -1,6 +1,7 @@
 import asyncio
 import json
 import socket
+import time
 from typing import Any
 
 import requests
@@ -76,6 +77,19 @@ def tls_app_config() -> dict[str, Any]:
             ]
         }
     }
+
+
+def wait_for_admin_api(timeout_seconds: int = 120) -> None:
+    """Block until Caddy answers on its admin socket (used right after a restart)."""
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            get_config()
+            return
+        except Exception:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(2)
 
 
 def set_tls_automation_policy() -> None:

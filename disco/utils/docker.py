@@ -1247,13 +1247,29 @@ async def builder_prune() -> None:
     await check_call(args)
 
 
+async def get_caddy_container() -> str:
+    """The container of the disco-caddy service task on this node."""
+    args = [
+        "docker",
+        "ps",
+        "--quiet",
+        "--filter",
+        "label=com.docker.swarm.service.name=disco-caddy",
+    ]
+    stdout, _, process = await call(args)
+    if process.returncode != 0 or len(stdout) == 0:
+        raise RuntimeError("Caddy container not found")
+    return stdout[0].strip()
+
+
 async def caddy_nc(service_name: str, port: int) -> bool:
     """Run netcat in Caddy's container."""
     log.info("Running nc in Caddy's container for %s:%d", service_name, port)
+    container = await get_caddy_container()
     args = [
         "docker",
         "exec",
-        "disco-caddy",
+        container,
         "nc",
         "-zv",
         service_name,

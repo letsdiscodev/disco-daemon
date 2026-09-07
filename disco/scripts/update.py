@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 import disco
+from disco import config
 from disco.models.db import ReadSession, Session, build_engines, get_engine
 from disco.scripts.init import run_and_print, start_disco_daemon
 from disco.utils import keyvalues
@@ -103,10 +104,19 @@ def _alembic_upgrade(connection, version_hash: str) -> None:
 
 
 async def task_0_32_x(image: str) -> None:
+    from disco.scripts.init import start_caddy
+    from disco.utils import docker
+
     print("Updating from 0.32.x to 0.33.0")
     async with ReadSession.begin() as dbsession:
         host_home = await keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
+        cloudflare_tunnel_token = await keyvalues.get_value(
+            dbsession=dbsession, key="CLOUDFLARE_TUNNEL_TOKEN"
+        )
     assert host_home is not None
+    print("Replacing the Caddy container with a Swarm service")
+    await docker.remove_container("disco-caddy")
+    await start_caddy(host_home=host_home, tunnel=cloudflare_tunnel_token is not None)
     await run_and_print(
         [
             "docker",
@@ -117,7 +127,9 @@ async def task_0_32_x(image: str) -> None:
             image,
             "python",
             "-c",
-            "from disco.utils import caddy; caddy.set_tls_automation_policy()",
+            "from disco.utils import caddy; "
+            "caddy.wait_for_admin_api(); "
+            "caddy.set_tls_automation_policy()",
         ]
     )
     print("tls automation policy installed (let's encrypt + zerossl fallback)")
@@ -238,8 +250,57 @@ async def task_0_26_x(image: str) -> None:
         )
 
 
+async def start_caddy_container(host_home: str, tunnel: bool) -> None:
+    """Caddy as a plain container, how it ran before 0.33.0."""
+    more_args = []
+    if not tunnel:
+        more_args += [
+            "--publish",
+            "published=80,target=80,protocol=tcp",
+            "--publish",
+            "published=443,target=443,protocol=tcp",
+            "--publish",
+            "published=443,target=443,protocol=udp",
+        ]
+    await run_and_print(
+        [
+            "docker",
+            "run",
+            "--name",
+            "disco-caddy",
+            "--detach",
+            "--restart",
+            "always",
+            "--mount",
+            "source=disco-caddy-data,target=/data",
+            "--mount",
+            "source=disco-caddy-config,target=/config",
+            "--network",
+            "disco-main",
+            "--mount",
+            f"type=bind,source={host_home}/disco/caddy-socket,target=/disco/caddy-socket",
+            "--mount",
+            "source=disco-caddy-init-config,target=/initconfig",
+            "--mount",
+            f"type=bind,source={host_home}/disco/srv,target=/disco/srv",
+            "--log-driver",
+            "json-file",
+            "--log-opt",
+            "max-size=20m",
+            "--log-opt",
+            "max-file=5",
+            *more_args,
+            f"caddy:{config.CADDY_VERSION}",
+            "caddy",
+            "run",
+            "--resume",
+            "--config",
+            "/initconfig/config.json",
+        ]
+    )
+
+
 async def task_0_25_x(image: str) -> None:
-    from disco.scripts.init import start_caddy
     from disco.utils import docker
 
     print("Updating from 0.25.x to 0.26.0")
@@ -264,7 +325,9 @@ async def task_0_25_x(image: str) -> None:
             "disco-caddy",
         ]
     )
-    await start_caddy(host_home=host_home, tunnel=cloudflare_tunnel_token is not None)
+    await start_caddy_container(
+        host_home=host_home, tunnel=cloudflare_tunnel_token is not None
+    )
     if cloudflare_tunnel_token is not None:
         await docker.add_network_to_container(
             "disco-caddy", "disco-cloudflare-tunnel", alias="disco-server"
@@ -317,8 +380,6 @@ async def task_0_23_x(image: str) -> None:
 
 
 async def task_0_22_x(image: str) -> None:
-    from disco import config
-    from disco.scripts.init import start_caddy
     from disco.utils import docker
 
     print("Updating from 0.22.x to 0.23.0")
@@ -344,7 +405,9 @@ async def task_0_22_x(image: str) -> None:
             "disco-caddy",
         ]
     )
-    await start_caddy(host_home=host_home, tunnel=cloudflare_tunnel_token is not None)
+    await start_caddy_container(
+        host_home=host_home, tunnel=cloudflare_tunnel_token is not None
+    )
     if cloudflare_tunnel_token is not None:
         await docker.add_network_to_container(
             "disco-caddy", "disco-cloudflare-tunnel", alias="disco-server"
@@ -493,7 +556,6 @@ async def task_0_13_x(image: str) -> None:
 
 
 async def task_0_12_x(image: str) -> None:
-    from disco.scripts.init import start_caddy
 
     print("Updating from 0.12.x to 0.13.0")
     async with ReadSession.begin() as dbsession:
@@ -513,7 +575,7 @@ async def task_0_12_x(image: str) -> None:
             "disco-caddy",
         ]
     )
-    await start_caddy(host_home=host_home, tunnel=False)
+    await start_caddy_container(host_home=host_home, tunnel=False)
     async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.13.0"
@@ -650,7 +712,6 @@ async def task_0_9_x(image: str) -> None:
 
 async def task_0_8_x(image: str) -> None:
     print("Updating from 0.8.x to 0.9.0")
-    from disco.scripts.init import start_caddy
 
     async with ReadSession.begin() as dbsession:
         host_home = await keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
@@ -697,7 +758,7 @@ async def task_0_8_x(image: str) -> None:
             "/disco/caddy/config/caddy/autosave.json",
         ]
     )
-    await start_caddy(host_home=host_home, tunnel=False)
+    await start_caddy_container(host_home=host_home, tunnel=False)
     async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.9.0"

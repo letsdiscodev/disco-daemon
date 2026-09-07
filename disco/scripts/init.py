@@ -100,6 +100,8 @@ async def _main() -> None:
     await write_caddy_init_config(
         disco_host, tunnel=cloudflare_tunnel_token is not None
     )
+    if cloudflare_tunnel_token is not None:
+        await docker.create_network("disco-cloudflare-tunnel")
     await start_caddy(host_home, tunnel=cloudflare_tunnel_token is not None)
     print("Setting up Disco")
     await start_disco_daemon(host_home, image)
@@ -211,34 +213,39 @@ async def create_caddy_socket_dir(host_home: str) -> None:
 
 async def start_caddy(host_home: str, tunnel: bool) -> None:
     more_args = []
-    if not tunnel:
+    if tunnel:
+        more_args += [
+            "--network",
+            "name=disco-cloudflare-tunnel,alias=disco-server",
+        ]
+    else:
         more_args += [
             "--publish",
-            "published=80,target=80,protocol=tcp",
+            "mode=host,published=80,target=80,protocol=tcp",
             "--publish",
-            "published=443,target=443,protocol=tcp",
+            "mode=host,published=443,target=443,protocol=tcp",
             "--publish",
-            "published=443,target=443,protocol=udp",
+            "mode=host,published=443,target=443,protocol=udp",
         ]
     await run_and_print(
         [
             "docker",
-            "run",
+            "service",
+            "create",
             "--name",
             "disco-caddy",
-            "--detach",
-            "--restart",
-            "always",
-            "--mount",
-            "source=disco-caddy-data,target=/data",
-            "--mount",
-            "source=disco-caddy-config,target=/config",
+            "--constraint",
+            "node.labels.disco-role==main",
             "--network",
             "disco-main",
             "--mount",
-            f"type=bind,source={host_home}/disco/caddy-socket,target=/disco/caddy-socket",
+            "type=volume,source=disco-caddy-data,target=/data",
             "--mount",
-            "source=disco-caddy-init-config,target=/initconfig",
+            "type=volume,source=disco-caddy-config,target=/config",
+            "--mount",
+            "type=volume,source=disco-caddy-init-config,target=/initconfig",
+            "--mount",
+            f"type=bind,source={host_home}/disco/caddy-socket,target=/disco/caddy-socket",
             "--mount",
             f"type=bind,source={host_home}/disco/srv,target=/disco/srv",
             "--log-driver",
@@ -284,10 +291,6 @@ async def create_docker_config(host_home: str) -> None:
 
 
 async def setup_cloudflare_tunnel(cloudflare_tunnel_token: str) -> None:
-    await docker.create_network("disco-cloudflare-tunnel")
-    await docker.add_network_to_container(
-        "disco-caddy", "disco-cloudflare-tunnel", alias="disco-server"
-    )
     await run_and_print(
         [
             "docker",
