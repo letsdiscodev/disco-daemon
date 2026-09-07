@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import shlex
 from typing import Awaitable, Callable
 
 from alembic import command
@@ -117,20 +118,32 @@ async def task_0_32_x(image: str) -> None:
     print("Replacing the Caddy container with a Swarm service")
     await docker.remove_container("disco-caddy")
     await start_caddy(host_home=host_home, tunnel=cloudflare_tunnel_token is not None)
-    await run_and_print(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--mount",
-            f"type=bind,source={host_home}/disco/caddy-socket,target=/disco/caddy-socket",
-            image,
-            "python",
-            "-c",
-            "from disco.utils import caddy; "
-            "caddy.wait_for_admin_api(); "
-            "caddy.set_tls_automation_policy()",
-        ]
+    await _caddy_curl(
+        host_home,
+        image,
+        "--request",
+        "POST",
+        "--header",
+        "Content-Type: application/json",
+        "http://disco-caddy/config/apps/tls",
+        body=json.dumps(
+            {
+                "automation": {
+                    "policies": [
+                        {
+                            "issuers": [
+                                {"module": "acme"},
+                                {
+                                    "module": "acme",
+                                    "ca": "https://acme.zerossl.com/v2/DV90",
+                                    "email": "zerossl@disco.cloud",
+                                },
+                            ]
+                        }
+                    ]
+                }
+            }
+        ),
     )
     print("tls automation policy installed (let's encrypt + zerossl fallback)")
     async with Session.begin() as dbsession:
@@ -172,26 +185,7 @@ async def task_0_28_x(image: str) -> None:
     async with ReadSession.begin() as dbsession:
         host_home = await keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
-    get_caddy_config_cmd = (
-        "from disco.utils import caddy; "
-        "import json; "
-        "print(json.dumps(caddy.get_config()))"
-    )
-    caddy_config_lines, _, _ = await check_call(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--mount",
-            f"type=bind,source={host_home}/disco/caddy-socket,target=/disco/caddy-socket",
-            image,
-            "python",
-            "-c",
-            get_caddy_config_cmd,
-        ]
-    )
-    caddy_config_str = "\n".join(caddy_config_lines)
-    caddy_config = json.loads(caddy_config_str)
+    caddy_config = await get_caddy_config(host_home, image)
     assert caddy_config is not None
     encode_handler = {"handler": "encode", "encodings": {"gzip": {}, "zstd": {}}}
     routes = caddy_config["apps"]["http"]["servers"]["disco"]["routes"]
@@ -206,27 +200,7 @@ async def task_0_28_x(image: str) -> None:
                 has_encode = any(h.get("handler") == "encode" for h in handles)
                 if not has_encode and len(handles) > 0:
                     handles.insert(0, encode_handler)
-    caddy_config_str = json.dumps(caddy_config)
-    set_caddy_config_cmd = (
-        "from disco.utils import caddy; "
-        "import json; "
-        f"caddy_config_str = '''{caddy_config_str}''';"
-        "caddy_config = json.loads(caddy_config_str);"
-        "caddy.set_config(caddy_config)"
-    )
-    await run_and_print(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--mount",
-            f"type=bind,source={host_home}/disco/caddy-socket,target=/disco/caddy-socket",
-            image,
-            "python",
-            "-c",
-            set_caddy_config_cmd,
-        ]
-    )
+    await set_caddy_config(host_home, image, caddy_config)
     async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.29.0"
@@ -464,26 +438,7 @@ async def task_0_16_x(image: str) -> None:
     async with ReadSession.begin() as dbsession:
         host_home = await keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
     assert host_home is not None
-    get_caddy_config_cmd = (
-        "from disco.utils import caddy; "
-        "import json; "
-        "print(json.dumps(caddy.get_config()))"
-    )
-    caddy_config_lines, _, _ = await check_call(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--mount",
-            f"type=bind,source={host_home}/disco/caddy-socket,target=/disco/caddy-socket",
-            image,
-            "python",
-            "-c",
-            get_caddy_config_cmd,
-        ]
-    )
-    caddy_config_str = "\n".join(caddy_config_lines)
-    caddy_config = json.loads(caddy_config_str)
+    caddy_config = await get_caddy_config(host_home, image)
     assert caddy_config is not None
     caddy_config["apps"]["http"]["servers"]["disco"]["logs"] = {}
     caddy_config["logging"] = {
@@ -502,27 +457,7 @@ async def task_0_16_x(image: str) -> None:
             }
         }
     }
-    caddy_config_str = json.dumps(caddy_config)
-    set_caddy_config_cmd = (
-        "from disco.utils import caddy; "
-        "import json; "
-        f"caddy_config_str = '''{caddy_config_str}''';"
-        "caddy_config = json.loads(caddy_config_str);"
-        "caddy.set_config(caddy_config)"
-    )
-    await run_and_print(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--mount",
-            f"type=bind,source={host_home}/disco/caddy-socket,target=/disco/caddy-socket",
-            image,
-            "python",
-            "-c",
-            set_caddy_config_cmd,
-        ]
-    )
+    await set_caddy_config(host_home, image, caddy_config)
     await alembic_upgrade("26877eda6774")
     async with Session.begin() as dbsession:
         await keyvalues.set_value(
@@ -857,3 +792,69 @@ def get_update_function_for_version(version: str) -> Callable[[str], Awaitable[N
         assert disco.__version__.startswith("0.33.")
         return task_patch
     raise NotImplementedError(f"Updating from version {version} is not supported")
+
+
+CADDY_SOCKET = "/disco/caddy-socket/caddy.sock"
+
+
+async def _caddy_curl(
+    host_home: str,
+    image: str,
+    *curl_args: str,
+    body: str | None = None,
+) -> str:
+    """Call Caddy's admin API from a throwaway container of the new image.
+
+    Because Caddy's socket is not mounted in the update script call.
+
+    """
+    curl = [
+        "curl",
+        "--silent",
+        "--show-error",
+        "--fail",
+        "--retry",
+        "30",
+        "--retry-delay",
+        "2",
+        "--retry-all-errors",
+        "--unix-socket",
+        CADDY_SOCKET,
+        *curl_args,
+    ]
+    if body is None:
+        command = curl
+    else:
+        curl += ["--data-binary", "@/tmp/body.json"]
+        command = ["sh", "-c", f"cat > /tmp/body.json && exec {shlex.join(curl)}"]
+    stdout, _, _ = await check_call(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--interactive",
+            "--mount",
+            f"type=bind,source={host_home}/disco/caddy-socket,target=/disco/caddy-socket",
+            image,
+            *command,
+        ],
+        stdin=body,
+    )
+    return "\n".join(stdout)
+
+
+async def get_caddy_config(host_home: str, image: str) -> dict:
+    return json.loads(await _caddy_curl(host_home, image, "http://disco-caddy/config/"))
+
+
+async def set_caddy_config(host_home: str, image: str, config: dict) -> None:
+    await _caddy_curl(
+        host_home,
+        image,
+        "--request",
+        "POST",
+        "--header",
+        "Content-Type: application/json",
+        "http://disco-caddy/config/",
+        body=json.dumps(config),
+    )

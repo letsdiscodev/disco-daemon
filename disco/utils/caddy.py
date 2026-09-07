@@ -1,8 +1,6 @@
 import asyncio
 import json
 import socket
-import time
-from typing import Any
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -41,63 +39,6 @@ def _get_session():
     session = requests.Session()
     session.mount("http://disco-caddy", CaddyAdapter())
     return session
-
-
-def get_config() -> dict[str, Any] | None:
-    session = _get_session()
-    url = f"{BASE_URL}/config/"
-    response = session.get(url, headers=HEADERS, timeout=10)
-    if response.status_code != 200:
-        raise Exception(f"Caddy returned {response.status_code}: {response.text}")
-    return response.json()
-
-
-def set_config(config: dict[str, Any]) -> None:
-    session = _get_session()
-    url = f"{BASE_URL}/config/"
-    response = session.post(url, json=config, headers=HEADERS, timeout=10)
-    if response.status_code != 200:
-        raise Exception(f"Caddy returned {response.status_code}: {response.text}")
-
-
-ZEROSSL_CA = "https://acme.zerossl.com/v2/DV90"
-ZEROSSL_EMAIL = "zerossl@disco.cloud"
-
-
-def tls_app_config() -> dict[str, Any]:
-    return {
-        "automation": {
-            "policies": [
-                {
-                    "issuers": [
-                        {"module": "acme"},
-                        {"module": "acme", "ca": ZEROSSL_CA, "email": ZEROSSL_EMAIL},
-                    ]
-                }
-            ]
-        }
-    }
-
-
-def wait_for_admin_api(timeout_seconds: int = 120) -> None:
-    """Block until Caddy answers on its admin socket (used right after a restart)."""
-    deadline = time.monotonic() + timeout_seconds
-    while True:
-        try:
-            get_config()
-            return
-        except Exception:
-            if time.monotonic() > deadline:
-                raise
-            time.sleep(2)
-
-
-def set_tls_automation_policy() -> None:
-    session = _get_session()
-    url = f"{BASE_URL}/config/apps/tls"
-    response = session.post(url, json=tls_app_config(), headers=HEADERS, timeout=10)
-    if response.status_code != 200:
-        raise Exception(f"Caddy returned {response.status_code}: {response.text}")
 
 
 async def _add_project_route(project_name: str, domains: list[str]) -> None:
@@ -317,7 +258,22 @@ async def write_caddy_init_config(disco_host: str, tunnel: bool) -> None:
             "origins": ["disco-caddy"],
         },
         "apps": {
-            "tls": tls_app_config(),
+            "tls": {
+                "automation": {
+                    "policies": [
+                        {
+                            "issuers": [
+                                {"module": "acme"},
+                                {
+                                    "module": "acme",
+                                    "ca": "https://acme.zerossl.com/v2/DV90",
+                                    "email": "zerossl@disco.cloud",
+                                },
+                            ]
+                        }
+                    ]
+                }
+            },
             "http": {
                 "servers": {
                     "disco": {
