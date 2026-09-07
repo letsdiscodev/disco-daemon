@@ -259,6 +259,8 @@ async def start_dqlite_service(
             "disco.service=dqlite",
             "--label",
             f"disco.dqlite.disco-name={node_name}",
+            "--sysctl",
+            "net.ipv4.tcp_retries2=6",
             *env_args,
             "--health-cmd",
             # /app/healthcheck.sh is too strict
