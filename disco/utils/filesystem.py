@@ -108,30 +108,51 @@ async def copy_static_site_src_to_deployment_folder(
     await loop.run_in_executor(None, copytree_sync)
 
 
-def _certificate_directory(domain: str) -> str:
-    return f"/disco/caddy/data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/{domain}"
+CADDY_CERTIFICATES_DIR = "/disco/caddy/data/caddy/certificates"
+ISSUER_REGEX = r"^[A-Za-z0-9_\-][A-Za-z0-9._\-]*$"
 
 
-async def get_caddy_key_crt(domain: str) -> str:
-    path = f"{_certificate_directory(domain)}/{domain}.crt"
+def _certificate_directory(issuer: str, domain: str) -> str:
+    return f"{CADDY_CERTIFICATES_DIR}/{issuer}/{domain}"
+
+
+async def get_caddy_certificate_issuer(domain: str) -> str:
+    def find_issuer() -> str:
+        candidates: list[tuple[float, str]] = []
+        for issuer in os.listdir(CADDY_CERTIFICATES_DIR):
+            crt_path = f"{_certificate_directory(issuer, domain)}/{domain}.crt"
+            if os.path.isfile(crt_path):
+                candidates.append((os.path.getmtime(crt_path), issuer))
+        if len(candidates) == 0:
+            raise FileNotFoundError(f"No certificate found for {domain}")
+        candidates.sort()
+        return candidates[-1][1]
+
+    return await asyncio.get_running_loop().run_in_executor(None, find_issuer)
+
+
+async def get_caddy_key_crt(issuer: str, domain: str) -> str:
+    path = f"{_certificate_directory(issuer, domain)}/{domain}.crt"
     async with aiofiles.open(path, "r", encoding="utf-8") as f:
         return await f.read()
 
 
-async def get_caddy_key_key(domain: str) -> str:
-    path = f"{_certificate_directory(domain)}/{domain}.key"
+async def get_caddy_key_key(issuer: str, domain: str) -> str:
+    path = f"{_certificate_directory(issuer, domain)}/{domain}.key"
     async with aiofiles.open(path, "r", encoding="utf-8") as f:
         return await f.read()
 
 
-async def get_caddy_key_meta(domain: str) -> str:
-    path = f"{_certificate_directory(domain)}/{domain}.json"
+async def get_caddy_key_meta(issuer: str, domain: str) -> str:
+    path = f"{_certificate_directory(issuer, domain)}/{domain}.json"
     async with aiofiles.open(path, "r", encoding="utf-8") as f:
         return await f.read()
 
 
-async def set_caddy_certificate(domain: str, crt: str, key: str, meta: str) -> None:
-    directory = _certificate_directory(domain)
+async def set_caddy_certificate(
+    issuer: str, domain: str, crt: str, key: str, meta: str
+) -> None:
+    directory = _certificate_directory(issuer, domain)
 
     def makedirs() -> None:
         os.makedirs(directory, exist_ok=True)

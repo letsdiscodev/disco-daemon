@@ -26,6 +26,8 @@ from disco.utils.envvariables import (
     set_env_variables,
 )
 from disco.utils.filesystem import (
+    ISSUER_REGEX,
+    get_caddy_certificate_issuer,
     get_caddy_key_crt,
     get_caddy_key_key,
     get_caddy_key_meta,
@@ -56,6 +58,7 @@ class Ssh(BaseModel):
 
 class CaddyCertificate(BaseModel):
     name: str = Field(..., pattern=DOMAIN_REGEX)
+    issuer: str = Field(..., pattern=ISSUER_REGEX)
     crt: str
     key: str
     meta: str
@@ -251,6 +254,7 @@ async def projects_post(
                 )
         for certificate in req_body.caddy:
             await set_caddy_certificate(
+                issuer=certificate.issuer,
                 domain=certificate.name,
                 crt=certificate.crt,
                 key=certificate.key,
@@ -441,6 +445,18 @@ async def export_get(
             ):
                 scale[swarm_service.name] = swarm_service.replicas
         domains = await project.awaitable_attrs.domains
+        caddy_certificates = []
+        for domain in domains:
+            issuer = await get_caddy_certificate_issuer(domain.name)
+            caddy_certificates.append(
+                {
+                    "name": domain.name,
+                    "issuer": issuer,
+                    "crt": await get_caddy_key_crt(issuer, domain.name),
+                    "key": await get_caddy_key_key(issuer, domain.name),
+                    "meta": await get_caddy_key_meta(issuer, domain.name),
+                }
+            )
         github_repo = await project.awaitable_attrs.github_repo
         return {
             "name": project.name,
@@ -454,15 +470,7 @@ async def export_get(
                 }
                 for env_variable in env_variables
             ],
-            "caddy": [
-                {
-                    "name": domain.name,
-                    "crt": await get_caddy_key_crt(domain.name),
-                    "key": await get_caddy_key_key(domain.name),
-                    "meta": await get_caddy_key_meta(domain.name),
-                }
-                for domain in domains
-            ],
+            "caddy": caddy_certificates,
             "deployment": {
                 "number": deployment.number,
                 "commit": deployment.commit_hash,
