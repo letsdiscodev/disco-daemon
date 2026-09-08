@@ -16,7 +16,7 @@ from disco.models import (
     ProjectDomain,
 )
 from disco.models.db import ReadSession, Session
-from disco.utils import caddy, commandoutputs, docker, github, keyvalues
+from disco.utils import caddy, commandoutputs, docker, github, keyvalues, pendingfiles
 from disco.utils.deployments import (
     DEPLOYMENT_STATUS,
     get_deployment_by_id,
@@ -56,6 +56,7 @@ class DeploymentInfo:
     number: int
     status: str
     commit_hash: str | None
+    deployment_type: str
     disco_file: DiscoFile | None
     project_id: str
     project_name: str
@@ -82,6 +83,7 @@ class DeploymentInfo:
             number=deployment.number,
             status=deployment.status,
             commit_hash=deployment.commit_hash,
+            deployment_type=deployment.deployment_type,
             project_id=deployment.project_id,
             project_name=deployment.project_name,
             github_repo_full_name=deployment.github_repo_full_name,
@@ -180,6 +182,8 @@ async def process_deployment(deployment_id: str) -> None:
                     f"skipping deployment {deployment.number}.\n"
                 )
                 await set_deployment_status(deployment, "SKIPPED")
+                if deployment.deployment_type == "FILES":
+                    await pendingfiles.remove(project.name, deployment.number)
                 await log_output_terminate()
                 process_deployment_of_project_id = deployment.project_id
             else:
@@ -210,7 +214,7 @@ async def process_deployment(deployment_id: str) -> None:
                 prev_deployment.number if prev_deployment is not None else None
             )
             if (
-                deployment.commit_hash is None
+                deployment.deployment_type == "ENV_VAR"
                 and prev_deployment is not None
                 and prev_deployment.commit_hash is not None
             ):
@@ -291,6 +295,17 @@ async def process_deployment(deployment_id: str) -> None:
         deployment = await get_deployment_by_id(dbsession, deployment_id)
         assert deployment is not None
         project_id = deployment.project_id
+        if deployment.status == "COMPLETE":
+            if prev_deployment_number is not None:
+                await pendingfiles.remove(project_name, prev_deployment_number)
+        else:
+            if prev_deployment_number is not None:
+                try:
+                    await pendingfiles.set_current(project_name, prev_deployment_number)
+                except pendingfiles.PendingFilesNotFound:
+                    pass
+            if deployment.deployment_type == "FILES":
+                await pendingfiles.remove(project_name, deployment.number)
     await process_deployment_if_any(project_id)
 
 
@@ -301,17 +316,38 @@ async def prepare_deployment(
     log_output: Callable[[str], Awaitable[None]],
 ):
     log.info("Preparing deployment %s", new_deployment_id)
-    new_deployment_info, _ = await get_deployment_info(
+    new_deployment_info, prev_deployment_info = await get_deployment_info(
         new_deployment_id=new_deployment_id,
         prev_deployment_id=prev_deployment_id,
         scale=scale,
     )
     assert new_deployment_info is not None
-    if new_deployment_info.commit_hash is not None:
-        await checkout_commit(new_deployment_info, log_output)
-    elif new_deployment_info.github_repo_full_name is not None:
-        new_deployment_info.commit_hash = await github.get_head_commit_hash(
-            new_deployment_info.project_name
+    live_deployment_number = (
+        prev_deployment_info.number if prev_deployment_info is not None else None
+    )
+    if new_deployment_info.deployment_type == "GITHUB":
+        await checkout_commit(new_deployment_info, live_deployment_number, log_output)
+    elif new_deployment_info.deployment_type == "FILES":
+        await set_pending_files_as_current(
+            new_deployment_info, live_deployment_number, log_output
+        )
+    elif new_deployment_info.deployment_type == "ENV_VAR":
+        if new_deployment_info.commit_hash is not None:
+            if new_deployment_info.github_repo_full_name is None:
+                raise DiscoBuildException(
+                    f"Can't check out commit {new_deployment_info.commit_hash}: "
+                    "the project has no GitHub repository anymore"
+                )
+            await checkout_commit(
+                new_deployment_info, live_deployment_number, log_output
+            )
+        elif not await project_folder_exists(new_deployment_info.project_name):
+            raise DiscoBuildException(
+                "Nothing to build: no files were deployed for this project"
+            )
+    else:
+        raise NotImplementedError(
+            f"Deployment type {new_deployment_info.deployment_type}"
         )
     if new_deployment_info.disco_file is None:
         new_deployment_info.disco_file = await read_disco_file_for_deployment(
@@ -544,10 +580,18 @@ async def get_deployment_info(
 
 async def checkout_commit(
     new_deployment_info: DeploymentInfo,
+    live_deployment_number: int | None,
     log_output: Callable[[str], Awaitable[None]],
 ) -> None:
     assert new_deployment_info.commit_hash is not None
     assert new_deployment_info.github_repo_full_name is not None
+    if await project_folder_exists(
+        new_deployment_info.project_name
+    ) and not await github.is_repo(new_deployment_info.project_name):
+        await log_output("Replacing the deployed files (not a git repo)\n")
+        await pendingfiles.set_current_as_pending(
+            new_deployment_info.project_name, live_deployment_number
+        )
     if not await project_folder_exists(new_deployment_info.project_name):
         await log_output(
             f"Cloning github.com/{new_deployment_info.github_repo_full_name}\n"
@@ -594,6 +638,22 @@ async def checkout_commit(
             deployment = await get_deployment_by_id(dbsession, new_deployment_info.id)
             assert deployment is not None
             set_deployment_commit_hash(deployment, commit_hash)
+
+
+async def set_pending_files_as_current(
+    new_deployment_info: DeploymentInfo,
+    live_deployment_number: int | None,
+    log_output: Callable[[str], Awaitable[None]],
+) -> None:
+    """The pending files of a FILES deployment become the project directory."""
+    project_name = new_deployment_info.project_name
+    number = new_deployment_info.number
+    await pendingfiles.set_current_as_pending(project_name, live_deployment_number)
+    try:
+        await pendingfiles.set_current(project_name, number)
+    except pendingfiles.PendingFilesNotFound:
+        raise DiscoBuildException("Couldn't find pending files")
+    await log_output(f"Using the files received for deployment {number}\n")
 
 
 async def read_disco_file_for_deployment(

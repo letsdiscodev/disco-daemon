@@ -296,6 +296,7 @@ async def projects_post(
 
         if req_body.github_repo is not None:
             deployment = await create_deployment(
+                deployment_type="GITHUB",
                 dbsession=dbsession,
                 project=project,
                 commit_hash=req_body.commit,

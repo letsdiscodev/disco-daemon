@@ -4,7 +4,9 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shlex
+from dataclasses import dataclass
 from typing import Awaitable, Callable
 
 from alembic import command
@@ -18,7 +20,7 @@ from disco.models.db import ReadSession, Session, build_engines, get_engine
 from disco.scripts.init import run_and_print, start_disco_daemon
 from disco.utils import keyvalues
 from disco.utils.meta import save_done_updating
-from disco.utils.subprocess import check_call
+from disco.utils.subprocess import call, check_call
 
 log = logging.getLogger(__name__)
 
@@ -109,12 +111,14 @@ async def task_0_32_x(image: str) -> None:
     from disco.utils import docker
 
     print("Updating from 0.32.x to 0.33.0")
+    await alembic_upgrade("4c1f2a9e7b30")
     async with ReadSession.begin() as dbsession:
         host_home = await keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
         cloudflare_tunnel_token = await keyvalues.get_value(
             dbsession=dbsession, key="CLOUDFLARE_TUNNEL_TOKEN"
         )
     assert host_home is not None
+    await _write_disco_files_of_live_deployments(host_home, image)
     print("Replacing the Caddy container with a Swarm service")
     await docker.remove_container("disco-caddy")
     await start_caddy(host_home=host_home, tunnel=cloudflare_tunnel_token is not None)
@@ -150,6 +154,156 @@ async def task_0_32_x(image: str) -> None:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.33.0"
         )
+
+
+@dataclass
+class LiveDiscoFile:
+    """The disco file of a project's live deployment, to write in the project
+    directory if it is not what is there."""
+
+    project_name: str
+    deployment_id: str
+    disco_file: str
+    # the deployed commit when the project has a repository: the disco file
+    # is compared with the one of that commit rather than the working tree
+    commit_hash: str | None
+
+
+async def _write_disco_files_of_live_deployments(host_home: str, image: str) -> None:
+    from disco.utils.deployments import get_live_deployment
+    from disco.utils.projects import get_all_projects
+
+    to_check: list[LiveDiscoFile] = []
+    async with ReadSession.begin() as dbsession:
+        for project in await get_all_projects(dbsession):
+            deployment = await get_live_deployment(dbsession, project)
+            if deployment is None or deployment.disco_file is None:
+                continue
+            has_repo = await project.awaitable_attrs.github_repo is not None
+            commit_hash = deployment.commit_hash if has_repo else None
+            if commit_hash is not None and not re.fullmatch(
+                r"[0-9a-f]{40}", commit_hash
+            ):
+                print(
+                    f"Not checking the disco file of {project.name}: its live "
+                    f"deployment has an unexpected commit {commit_hash}"
+                )
+                continue
+            env_var_names = [
+                env_var.name
+                for env_var in await deployment.awaitable_attrs.env_variables
+            ]
+            if "DISCO_JSON_PATH" in env_var_names:
+                # would need Docker Swarm secret to decrypt env variable
+                print(
+                    f"Not checking the disco file of {project.name}: DISCO_JSON_PATH "
+                    "is set and cannot be read during the update"
+                )
+                continue
+            to_check.append(
+                LiveDiscoFile(
+                    project_name=project.name,
+                    deployment_id=deployment.id,
+                    disco_file=deployment.disco_file,
+                    commit_hash=commit_hash,
+                )
+            )
+    for live in to_check:
+        try:
+            await _write_disco_file_of_live_deployment(host_home, image, live)
+        except Exception as ex:
+            print(
+                f"Could not set up the project directory of {live.project_name}: {ex}"
+            )
+
+
+async def _write_disco_file_of_live_deployment(
+    host_home: str, image: str, live: LiveDiscoFile
+) -> None:
+    from disco.utils.deployments import get_deployment_by_id
+
+    project_name = live.project_name
+    disco_file = live.disco_file
+    commit_hash = live.commit_hash
+    if commit_hash is None:
+        # no repository: the file in the project directory, if any
+        deployed = await _read_project_file(
+            host_home, image, project_name, "disco.json"
+        )
+    else:
+        # a clone: the file at the live deployment's commit (the working tree
+        # may be at the commit of a later deployment that did not complete)
+        deployed = await _read_project_file(
+            host_home, image, project_name, "disco.json", commit_hash
+        )
+        if deployed is None:
+            print(
+                f"Not checking the disco file of {project_name}: not found at "
+                f"commit {commit_hash[:12]}"
+            )
+            return
+    if deployed is not None and json.loads(deployed) == json.loads(disco_file):
+        return
+    print(
+        f"The project directory of {project_name} becomes its live deployment's disco file"
+    )
+    # the update container does not mount the projects directory
+    await check_call(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--interactive",
+            "--mount",
+            f"type=bind,source={host_home}/disco/projects,target=/disco/projects",
+            image,
+            "sh",
+            "-c",
+            f"rm -rf /disco/projects/{project_name} "
+            f"&& mkdir /disco/projects/{project_name} "
+            f"&& cat > /disco/projects/{project_name}/disco.json",
+        ],
+        stdin=disco_file,
+    )
+    if commit_hash is not None:
+        # deployed with a disco file posted to the API rather than from the
+        # repository: a FILES deployment; without a commit, an env variable
+        # change builds the project directory instead of checking it out
+        async with Session.begin() as dbsession:
+            deployment = await get_deployment_by_id(dbsession, live.deployment_id)
+            assert deployment is not None
+            deployment.deployment_type = "FILES"
+            deployment.commit_hash = None
+
+
+async def _read_project_file(
+    host_home: str,
+    image: str,
+    project_name: str,
+    path: str,
+    commit_hash: str | None = None,
+) -> str | None:
+    """A file of the project directory, or of a commit of the clone there."""
+    if commit_hash is None:
+        command = f"cat /disco/projects/{project_name}/{path}"
+    else:
+        command = f"cd /disco/projects/{project_name} && git show {commit_hash}:{path}"
+    stdout, _, process = await call(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--mount",
+            f"type=bind,source={host_home}/disco/projects,target=/disco/projects",
+            image,
+            "sh",
+            "-c",
+            command,
+        ]
+    )
+    if process.returncode != 0:
+        return None
+    return "\n".join(stdout)
 
 
 async def task_0_31_x(image: str) -> None:

@@ -9,7 +9,7 @@ from disco.endpoints.dependencies import get_project_name_from_url_wo_tx
 from disco.models.db import ReadSession, Session
 from disco.utils.apikeys import get_api_key_by_id
 from disco.utils.deploymentflow import enqueue_deployment
-from disco.utils.deployments import maybe_create_deployment
+from disco.utils.deployments import maybe_create_env_var_deployment
 from disco.utils.encryption import decrypt
 from disco.utils.envvariables import (
     delete_env_variable,
@@ -106,11 +106,9 @@ async def env_variables_post(
 
         deployment = None
         if sets or actually_deleted > 0:
-            deployment = await maybe_create_deployment(
+            deployment = await maybe_create_env_var_deployment(
                 dbsession=dbsession,
                 project=project,
-                commit_hash=None,
-                disco_file=None,
                 by_api_key=api_key,
             )
             if deployment is not None:
@@ -185,11 +183,9 @@ async def env_variable_delete(
             dbsession=dbsession,
             env_variable=env_variable,
         )
-        deployment = await maybe_create_deployment(
+        deployment = await maybe_create_env_var_deployment(
             dbsession=dbsession,
             project=project,
-            commit_hash=None,
-            disco_file=None,
             by_api_key=api_key,
         )
 

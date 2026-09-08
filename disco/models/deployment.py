@@ -37,6 +37,7 @@ class Deployment(Base):
     number: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     commit_hash: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    deployment_type: Mapped[str] = mapped_column(Unicode(255), nullable=False)
     disco_file: Mapped[str | None] = mapped_column(Unicode(5000), nullable=True)
     project_name: Mapped[str] = mapped_column(Unicode(255), nullable=False)
     github_repo_full_name: Mapped[str | None] = mapped_column(

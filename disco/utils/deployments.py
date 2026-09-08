@@ -12,27 +12,29 @@ from disco.models import (
     Project,
 )
 from disco.models.db import ReadSession, Session
-from disco.utils import commandoutputs, events, keyvalues
+from disco.utils import commandoutputs, events, keyvalues, pendingfiles
 from disco.utils.discofile import DiscoFile
 
 log = logging.getLogger(__name__)
 
 
-async def maybe_create_deployment(
+DEPLOYMENT_TYPE = Literal["GITHUB", "FILES", "ENV_VAR"]
+
+
+async def maybe_create_env_var_deployment(
     dbsession: DBSession,
     project: Project,
-    commit_hash: str | None,
-    disco_file: DiscoFile | None,
     by_api_key: ApiKey | None,
 ) -> Deployment | None:
     number = await get_next_deployment_number(dbsession, project)
-    if number == 1 and commit_hash is None and disco_file is None:
+    if number == 1:
         return None
     return await create_deployment(
         dbsession=dbsession,
         project=project,
-        commit_hash=commit_hash,
-        disco_file=disco_file,
+        deployment_type="ENV_VAR",
+        commit_hash=None,
+        disco_file=None,
         by_api_key=by_api_key,
     )
 
@@ -40,6 +42,7 @@ async def maybe_create_deployment(
 async def create_deployment(
     dbsession: DBSession,
     project: Project,
+    deployment_type: DEPLOYMENT_TYPE,
     commit_hash: str | None,
     disco_file: DiscoFile | None,
     by_api_key: ApiKey | None,
@@ -58,6 +61,7 @@ async def create_deployment(
         else None,
         branch=project_github_repo.branch if project_github_repo is not None else None,
         status="QUEUED",
+        deployment_type=deployment_type,
         commit_hash=commit_hash,
         disco_file=disco_file.model_dump_json(indent=2, by_alias=True)
         if disco_file is not None
@@ -196,6 +200,8 @@ async def cancel_deployment(deployment: Deployment, by_api_key: ApiKey) -> bool:
         await commandoutputs.store_output(output_source, "Cancelled\n")
         await commandoutputs.terminate(output_source)
         await set_deployment_status(deployment, "CANCELLED")
+        if deployment.deployment_type == "FILES":
+            await pendingfiles.remove(deployment.project_name, deployment.number)
         return False
     elif deployment.status in ["PREPARING", "REPLACING", "CANCELLING"]:
         from disco.utils.worker import TaskNotFoundError

@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from secrets import token_hex
 from typing import Literal, Sequence
 
+import aiofiles.os
 import jwt
 import requests
 from sqlalchemy import delete, desc, select
@@ -153,6 +154,10 @@ def _branch_from_refs(refs: str) -> str:
     if match is None:
         raise Exception(f"Couldn't find branch name in refs {refs}")
     return match.group("branch")
+
+
+async def is_repo(project_name: str) -> bool:
+    return await aiofiles.os.path.isdir(f"{project_path(project_name)}/.git")
 
 
 async def remove_repo_from_filesystem(project_name: str) -> None:
@@ -468,6 +473,7 @@ async def process_github_app_webhook(
                         )
                         continue
                     deployment = await create_deployment(
+                        deployment_type="GITHUB",
                         dbsession=dbsession,
                         project=project,
                         commit_hash=commit_hash,

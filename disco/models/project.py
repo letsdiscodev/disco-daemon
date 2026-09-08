@@ -37,7 +37,6 @@ class Project(Base):
         nullable=False,
     )
     name: Mapped[str] = mapped_column(Unicode(255), nullable=False)
-    deployment_type: Mapped[str | None] = mapped_column(Unicode(255), nullable=True)
 
     command_runs: Mapped[list[CommandRun]] = relationship(
         "CommandRun", back_populates="project", order_by="CommandRun.number.desc()"

@@ -16,7 +16,7 @@ from disco.models import (
     ProjectGithubRepo,
     ProjectKeyValue,
 )
-from disco.utils import docker, events, github
+from disco.utils import docker, events, github, pendingfiles
 from disco.utils.commandoutputs import delete_output_for_source, deployment_source
 from disco.utils.filesystem import remove_project_static_deployments_if_any
 from disco.utils.projectdomains import remove_domain
@@ -53,15 +53,13 @@ async def set_project_github_repo(
     )
     existing: ProjectGithubRepo | None = await project.awaitable_attrs.github_repo
     if existing is not None:
-        assert project.deployment_type == "GITHUB"
         await dbsession.delete(existing)
         project.github_repo = None
-        project.deployment_type = None
         await dbsession.flush()
-        await _remove_project_repo_from_filesystem(project.name)
+        if await github.is_repo(project.name):
+            await _remove_project_repo_from_filesystem(project.name)
 
     if github_repo is not None:
-        project.deployment_type = "GITHUB"
         project.github_repo = ProjectGithubRepo(
             id=uuid.uuid4().hex,
             full_name=github_repo,
@@ -134,11 +132,8 @@ async def delete_project(
 
     log.info("%s is deleting project %s", by_api_key.log(), project.log())
     github_repo: ProjectGithubRepo | None = await project.awaitable_attrs.github_repo
-    if github_repo is not None:
-        try:
-            await github.remove_repo_from_filesystem(project.name)
-        except Exception:
-            log.info("Failed to remove Github repo for project %s", project.name)
+    await _remove_project_repo_from_filesystem(project.name)
+    await pendingfiles.remove_all(project.name)
     await remove_project_static_deployments_if_any(project.name)
     p_domains: list[ProjectDomain] = list(await project.awaitable_attrs.domains)
     for domain in p_domains:

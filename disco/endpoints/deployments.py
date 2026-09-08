@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 from sse_starlette import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
@@ -12,7 +12,7 @@ from sse_starlette.sse import EventSourceResponse
 from disco.auth import get_api_key_wo_tx
 from disco.endpoints.dependencies import get_project_name_from_url_wo_tx
 from disco.models.db import ReadSession, Session
-from disco.utils import commandoutputs
+from disco.utils import commandoutputs, pendingfiles
 from disco.utils.apikeys import get_api_key_by_id, get_valid_api_key_by_id
 from disco.utils.deploymentflow import enqueue_deployment, process_deployment_if_any
 from disco.utils.deployments import (
@@ -23,6 +23,7 @@ from disco.utils.deployments import (
     get_last_deployment,
 )
 from disco.utils.discofile import DiscoFile
+from disco.utils.filesystem import rmtree
 from disco.utils.projects import get_project_by_name
 
 log = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ async def deployments_get(
                     "created": deployment.created.isoformat(),
                     "status": deployment.status,
                     "commitHash": deployment.commit_hash,
+                    "type": deployment.deployment_type,
                 }
                 for deployment in deployments
             ]
@@ -82,6 +84,59 @@ async def deployments_post(
     req_body: DeploymentRequestBody,
     background_tasks: BackgroundTasks,
 ):
+    if req_body.disco_file is not None:
+        await _require_no_github_repo(project_name)
+        received_path = await pendingfiles.write_disco_file(
+            project_name, req_body.disco_file
+        )
+        return await _create_files_deployment(
+            project_name, received_path, api_key_id, background_tasks
+        )
+    async with Session.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
+        assert project is not None
+        if await project.awaitable_attrs.github_repo is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Project has no GitHub repository to deploy from",
+            )
+        api_key = await get_api_key_by_id(dbsession, api_key_id)
+        assert api_key is not None
+        deployment = await create_deployment(
+            dbsession=dbsession,
+            project=project,
+            deployment_type="GITHUB",
+            commit_hash=req_body.commit,
+            disco_file=None,
+            by_api_key=api_key,
+        )
+        background_tasks.add_task(enqueue_deployment, deployment.id)
+        return {
+            "deployment": {
+                "number": deployment.number,
+            },
+        }
+
+
+async def _require_no_github_repo(project_name: str) -> None:
+    """A project is deployed either from its GitHub repository or from files."""
+    async with ReadSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
+        assert project is not None
+        if await project.awaitable_attrs.github_repo is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="Project has a GitHub repository: deploy a commit, "
+                "or remove the repository from the project to deploy files",
+            )
+
+
+async def _create_files_deployment(
+    project_name: str,
+    received_path: str,
+    api_key_id: str,
+    background_tasks: BackgroundTasks,
+) -> dict:
     async with Session.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
         assert project is not None
@@ -90,10 +145,12 @@ async def deployments_post(
         deployment = await create_deployment(
             dbsession=dbsession,
             project=project,
-            commit_hash=req_body.commit if req_body.disco_file is None else None,
-            disco_file=req_body.disco_file,
+            deployment_type="FILES",
+            commit_hash=None,
+            disco_file=None,
             by_api_key=api_key,
         )
+        await pendingfiles.set_pending(project_name, received_path, deployment.number)
         background_tasks.add_task(enqueue_deployment, deployment.id)
         return {
             "deployment": {
@@ -167,6 +224,34 @@ async def deployment_delete(
                 {"number": number} for number in sorted(cancelled_deployments)
             ]
         }
+
+
+@router.post(
+    "/api/projects/{project_name}/files",
+    status_code=201,
+    dependencies=[Depends(get_api_key_wo_tx)],
+)
+async def files_post(
+    request: Request,
+    project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
+    api_key_id: Annotated[str, Depends(get_api_key_wo_tx)],
+    background_tasks: BackgroundTasks,
+):
+    """Deploy the project from an uploaded gzipped tar of its files."""
+    try:
+        received_path = await pendingfiles.receive_tar_gz(
+            project_name, request.stream()
+        )
+    except pendingfiles.FilesArchiveError as ex:
+        raise HTTPException(status_code=422, detail=str(ex))
+    try:
+        await _require_no_github_repo(project_name)
+    except HTTPException:
+        await rmtree(received_path)
+        raise
+    return await _create_files_deployment(
+        project_name, received_path, api_key_id, background_tasks
+    )
 
 
 @router.get(
