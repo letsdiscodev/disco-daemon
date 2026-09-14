@@ -4,7 +4,7 @@ import time
 import uuid
 from dataclasses import dataclass
 
-from dqliteclient import ClusterClient
+from dqliteclient import ClusterClient, ClusterError, OperationalError
 from dqlitewire import NodeRole
 
 from disco.utils.subprocess import call, check_call
@@ -186,7 +186,19 @@ async def remove_cluster_member(node_name: str) -> None:
         else:
             raise Exception(f"dqlite leadership did not move away from {address}")
     log.info("Removing %s from the dqlite cluster", address)
-    await client.remove_node(node_id)
+    for attempt in range(10):
+        try:
+            await client.remove_node(node_id)
+            break
+        except (OperationalError, ClusterError) as ex:
+            # leadership just moved (possibly by us): the request went to a
+            # member that is not the leader anymore
+            if attempt == 9:
+                raise
+            log.info(
+                "Removing %s from the dqlite cluster failed, retrying: %s", address, ex
+            )
+            await asyncio.sleep(1)
     for member in await client.cluster_info():
         if member.address == address:
             raise Exception(f"{address} is still a member of the dqlite cluster")

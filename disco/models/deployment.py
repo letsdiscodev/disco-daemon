@@ -78,6 +78,7 @@ class Deployment(Base):
     )
     prev_deployment: Mapped[Deployment | None] = relationship(
         "Deployment",
+        remote_side="Deployment.id",
     )
     command_runs: Mapped[list[CommandRun]] = relationship(
         "CommandRun", back_populates="deployment", order_by="CommandRun.number.desc()"
