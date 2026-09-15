@@ -63,7 +63,18 @@ async def _main() -> None:
     while installed_version != disco.__version__:
         assert installed_version is not None
         task = get_update_function_for_version(installed_version)
-        await task(image)
+        try:
+            await task(image)
+        except Exception:
+            # the daemon is stopped and the update is not done: the tasks
+            # can be run again, they pick up where they left off
+            log.exception("Update task failed")
+            print(
+                f"Updating from {installed_version} failed, Disco is not running. "
+                "Run the update again from the server:\n"
+                f"  {_rerun_command(image)}"
+            )
+            raise
         async with ReadSession.begin() as dbsession:
             installed_version = await keyvalues.get_value(
                 dbsession=dbsession, key="DISCO_VERSION"
@@ -82,6 +93,19 @@ async def _main() -> None:
     await start_disco_daemon(host_home, image)
     async with Session.begin() as dbsession:
         await save_done_updating(dbsession)
+
+
+def _rerun_command(image: str) -> str:
+    """The command the daemon ran (see disco.utils.meta.update_disco)."""
+    from disco.utils.dqlite import DQLITE_OVERLAY_NETWORK
+
+    network = f" --network {DQLITE_OVERLAY_NETWORK}" if config.is_ha() else ""
+    return (
+        f"docker run --rm{network} --env DISCO_IMAGE={image} "
+        "--mount source=disco-data,target=/disco/data "
+        "--mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock "
+        f"{image} disco_update"
+    )
 
 
 async def stop_disco_daemon() -> None:
@@ -119,9 +143,14 @@ async def task_0_32_x(image: str) -> None:
         )
     assert host_home is not None
     await _write_disco_files_of_live_deployments(host_home, image)
-    print("Replacing the Caddy container with a Swarm service")
-    await docker.remove_container("disco-caddy")
-    await start_caddy(host_home=host_home, tunnel=cloudflare_tunnel_token is not None)
+    if await docker.container_exists("disco-caddy"):
+        print("Removing the Caddy container")
+        await docker.remove_container("disco-caddy")
+    if not await docker.service_exists("disco-caddy"):
+        print("Starting Caddy as a Swarm service")
+        await start_caddy(
+            host_home=host_home, tunnel=cloudflare_tunnel_token is not None
+        )
     await _caddy_curl(
         host_home,
         image,
