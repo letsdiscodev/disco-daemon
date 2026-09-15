@@ -26,6 +26,14 @@ def _enforce_query_only(dbapi_connection, connection_record):
     cursor.close()
 
 
+def _sqlite_disable_implicit_begin(dbapi_connection, connection_record):
+    dbapi_connection.isolation_level = None
+
+
+def _sqlite_begin_immediate(conn):
+    conn.exec_driver_sql("BEGIN IMMEDIATE")
+
+
 def get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
@@ -33,6 +41,12 @@ def get_engine() -> AsyncEngine:
             config.get_database_url(),
             connect_args=_DQLITE_WRITE_ARGS if config.is_ha() else _SQLITE_CONNECT_ARGS,
         )
+        if not config.is_ha():
+            # Don't rely on SQLite to start the transaction on an
+            # INSERT, UPDATE, DELETE. Start it immediately instead.
+            # For dqlite, we use "session_mode": "immediate"
+            event.listen(_engine.sync_engine, "connect", _sqlite_disable_implicit_begin)
+            event.listen(_engine.sync_engine, "begin", _sqlite_begin_immediate)
     return _engine
 
 
