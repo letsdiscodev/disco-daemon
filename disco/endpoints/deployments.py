@@ -23,6 +23,7 @@ from disco.utils.deployments import (
     get_last_deployment,
 )
 from disco.utils.discofile import DiscoFile
+from disco.utils.envvariables import get_env_variable_by_name
 from disco.utils.filesystem import rmtree
 from disco.utils.projects import get_project_by_name
 
@@ -74,6 +75,7 @@ async def deployments_post(
 ):
     if req_body.disco_file is not None:
         await _require_no_github_repo(project_name)
+        await _require_no_disco_json_path(project_name)
         received_path = await pendingfiles.write_disco_file(
             project_name, req_body.disco_file
         )
@@ -116,6 +118,17 @@ async def _require_no_github_repo(project_name: str) -> None:
                 status_code=422,
                 detail="Project has a GitHub repository: deploy a commit, "
                 "or remove the repository from the project to deploy files",
+            )
+
+
+async def _require_no_disco_json_path(project_name: str) -> None:
+    async with ReadSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
+        assert project is not None
+        if await get_env_variable_by_name(dbsession, project, "DISCO_JSON_PATH"):
+            raise HTTPException(
+                status_code=422,
+                detail="Can't deploy discoFile when DISCO_JSON_PATH is set",
             )
 
 
