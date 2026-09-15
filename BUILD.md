@@ -22,7 +22,8 @@ bin/mypy .
 
 ```
 docker compose build --no-cache web
-docker compose run --rm web rm data/disco.sqlite3
+docker compose run --rm web rm -f data/disco.sqlite3
+docker compose run --rm web touch data/disco.sqlite3
 docker compose run --rm web alembic upgrade head
 docker compose run --rm web alembic revision --autogenerate -m "0.1.0"
 ```
