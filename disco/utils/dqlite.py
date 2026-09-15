@@ -161,17 +161,25 @@ def _cluster_client() -> ClusterClient:
     return ClusterClient.from_addresses([get_local_dqlite_address()])
 
 
+class NotAClusterMember(Exception):
+    pass
+
+
 async def _member_id(client: ClusterClient, address: str) -> int:
     for member in await client.cluster_info():
         if member.address == address:
             return member.node_id
-    raise Exception(f"{address} is not a member of the dqlite cluster")
+    raise NotAClusterMember(f"{address} is not a member of the dqlite cluster")
 
 
 async def remove_cluster_member(node_name: str) -> None:
     address = dqlite_bind_address(node_name)
     client = _cluster_client()
-    node_id = await _member_id(client, address)
+    try:
+        node_id = await _member_id(client, address)
+    except NotAClusterMember:
+        log.info("%s is not a member of the dqlite cluster", address)
+        return
     leader = await client.leader_info()
     if leader is not None and leader.address == address:
         # A leader can't be removed, hand leadership to our own member first.
@@ -224,7 +232,12 @@ async def ensure_dqlite_roles() -> None:
 
 
 async def remove_dqlite_service(node_name: str) -> None:
+    from disco.utils.docker import service_exists
+
     service_name = dqlite_service_name(node_name)
+    if not await service_exists(service_name):
+        log.info("No dqlite service %s to remove", service_name)
+        return
     log.info("Removing dqlite service %s", service_name)
     await check_call(["docker", "service", "rm", service_name])
 
