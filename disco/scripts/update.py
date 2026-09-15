@@ -143,6 +143,7 @@ async def task_0_32_x(image: str) -> None:
         )
     assert host_home is not None
     await _write_disco_files_of_live_deployments(host_home, image)
+    await _write_pending_disco_files_of_queued_deployments(host_home, image)
     if await docker.container_exists("disco-caddy"):
         print("Removing the Caddy container")
         await docker.remove_container("disco-caddy")
@@ -303,6 +304,59 @@ async def _write_disco_file_of_live_deployment(
             assert deployment is not None
             deployment.deployment_type = "FILES"
             deployment.commit_hash = None
+
+
+async def _write_pending_disco_files_of_queued_deployments(
+    host_home: str, image: str
+) -> None:
+    from sqlalchemy import select
+
+    from disco.models import Deployment
+    from disco.utils.pendingfiles import pending_path
+
+    async with ReadSession.begin() as dbsession:
+        stmt = (
+            select(Deployment)
+            .where(Deployment.status == "QUEUED")
+            .where(Deployment.disco_file.is_not(None))
+        )
+        queued = [
+            (d.id, d.project_name, d.number, d.disco_file)
+            for d in (await dbsession.execute(stmt)).scalars().all()
+        ]
+    for deployment_id, project_name, number, disco_file in queued:
+        assert disco_file is not None
+        print(
+            f"Writing the disco file of the queued deployment {number} of "
+            f"{project_name} as its pending files"
+        )
+        try:
+            pending = pending_path(project_name, number)
+            await check_call(
+                [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "--interactive",
+                    "--mount",
+                    f"type=bind,source={host_home}/disco/projects,target=/disco/projects",
+                    image,
+                    "sh",
+                    "-c",
+                    f"rm -rf {pending} && mkdir {pending} && cat > {pending}/disco.json",
+                ],
+                stdin=disco_file,
+            )
+            async with Session.begin() as dbsession:
+                deployment = await dbsession.get(Deployment, deployment_id)
+                assert deployment is not None
+                deployment.deployment_type = "FILES"
+                deployment.commit_hash = None
+        except Exception as ex:
+            print(
+                f"Could not write the pending files of deployment {number} of "
+                f"{project_name}: {ex}"
+            )
 
 
 async def _read_project_file(

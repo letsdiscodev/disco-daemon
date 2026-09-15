@@ -23,8 +23,9 @@ def upgrade():
     # existing deployments: a repository means GITHUB, unless the commit is the
     # one of the previous deployment and the env variables changed (a rebuild
     # after an env variable change; the same commit with the same variables is
-    # a redeploy); without a repository, only disco files posted to the API
-    # existed: FILES
+    # a redeploy), or there is no commit at all (an env variable change that
+    # did not run: the commit was set when the deployment ran); without a
+    # repository, only disco files posted to the API existed: FILES
     op.execute(
         "UPDATE deployments SET deployment_type = "
         "CASE WHEN github_repo_full_name IS NULL THEN 'FILES' ELSE 'GITHUB' END"
@@ -47,6 +48,11 @@ def upgrade():
         + " EXCEPT "
         + env_vars_of.format("deployments.id")
         + "))"
+    )
+    op.execute(
+        "UPDATE deployments SET deployment_type = 'ENV_VAR' "
+        "WHERE github_repo_full_name IS NOT NULL AND commit_hash IS NULL "
+        "AND disco_file IS NULL"
     )
     with op.batch_alter_table("deployments", schema=None) as batch_op:
         batch_op.alter_column("deployment_type", nullable=False)
