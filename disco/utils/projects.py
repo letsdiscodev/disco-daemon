@@ -147,12 +147,6 @@ async def delete_project(
     containers = await docker.list_containers_for_project(project.name)
     for container in containers:
         await docker.remove_container(container)
-    networks = await docker.list_networks_for_project(project.name)
-    for network in networks:
-        try:
-            await docker.remove_network_from_container("disco-caddy", network)
-        except Exception:
-            pass
     worker.remove_project_crons(project.name)
     if github_repo is not None:
         await dbsession.delete(github_repo)

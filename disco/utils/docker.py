@@ -462,21 +462,6 @@ async def list_services_for_deployment(
     return services
 
 
-async def list_networks_for_project(project_name: str) -> list[str]:
-    log.info("Listing networks for project %s", project_name)
-    args = [
-        "docker",
-        "network",
-        "ls",
-        "--filter",
-        f"label=disco.project.name={project_name}",
-        "--format",
-        "{{ .Name }}",
-    ]
-    stdout, _, _ = await check_call(args)
-    return stdout
-
-
 async def list_networks_for_deployment(
     project_name: str, deployment_number: int
 ) -> list[str]:
