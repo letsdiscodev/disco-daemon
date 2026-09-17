@@ -168,9 +168,15 @@ async def task_0_33_x(image: str) -> None:
     existing = await docker.list_syslog_services()
     for syslog_url in syslog_urls:
         url, type = syslog_url["url"], syslog_url["type"]
-        config = docker.vectorconfig.render_syslog_config(
-            url, type, buffer_bytes, disco_host
-        )
+        try:
+            config = docker.vectorconfig.render_syslog_config(
+                url, type, buffer_bytes, disco_host
+            )
+        except docker.vectorconfig.InvalidSyslogUrl as e:
+            print(
+                f"SKIPPING {url} ({type}): {e}. Its logspout service is left running."
+            )
+            continue
         name = docker.syslog_service_name(url, type, config)
         if name not in {service.name for service in existing}:
             print(f"Starting the Vector collector for {url} ({type})")
@@ -185,6 +191,8 @@ async def task_0_33_x(image: str) -> None:
                 f"The Vector collector {name} for {url} is not running on every node"
             )
         await _emit_logging_migration_marker(url, type)
+        # the collector attaches to the containers a few seconds after its task runs
+        await asyncio.sleep(docker.COLLECTOR_SETTLE_SECONDS)
         for service in existing:
             if service.url == url and service.type == type and service.impl is None:
                 print(f"Removing the logspout service {service.name} for {url}")

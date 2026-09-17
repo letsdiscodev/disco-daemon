@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import random
+from collections import Counter
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sse_starlette import ServerSentEvent
@@ -9,6 +10,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from disco.auth import get_api_key_wo_tx
 from disco.models.db import ReadSession
+from disco.utils import docker
 from disco.utils.logs import (
     STREAM_QUEUE_MAX,
     LogObject,
@@ -97,23 +99,37 @@ async def read_logs(
     # listen before the collector exists: the first lines have somewhere to go
     await server.start()
     await monitor_syslog(collector_name)
+    config_name = docker.stream_config_name(config)
     try:
-        config_name = await start_log_collector(collector_name, config)
-    except Exception:
+        await start_log_collector(collector_name, config)
+    except BaseException:
+        # includes the client leaving during creation (CancelledError)
+        _cleanups.add(
+            asyncio.get_running_loop().create_task(
+                remove_log_collector(collector_name, config_name)
+            )
+        )
         await server.close()
         raise
     try:
-        # the last lines docker retained, then live; lines the collector already
-        # streamed while the history was read are not shown twice
+        # the last lines docker retained, then live. the history is read once the
+        # first collector task has connected (its docker source is up by then), so a
+        # line lands in the history or in the live stream; lines in both are shown once
+        try:
+            await asyncio.wait_for(server.connected.wait(), timeout=30)
+        except TimeoutError:
+            log.warning("No log collector connected within 30s on port %d", port)
         history = await read_history(project_name, service_name)
-        seen = {history_key(log_obj) for log_obj in history}
+        seen: Counter[tuple[str, str, str]] = Counter(
+            history_key(log_obj) for log_obj in history
+        )
         for log_obj in history:
             yield ServerSentEvent(event="output", data=json.dumps(for_client(log_obj)))
         while True:
             log_obj = await log_queue.get()
             key = history_key(log_obj)
-            if key in seen:
-                seen.discard(key)
+            if seen[key] > 0:
+                seen[key] -= 1
                 continue
             yield ServerSentEvent(
                 event="output",

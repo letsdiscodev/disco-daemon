@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, model_validator
 
 from disco.auth import get_api_key_wo_tx
 from disco.models.db import ReadSession, Session
@@ -32,14 +32,15 @@ class AddRemoveSyslogReqBody(BaseModel):
     action: SyslogAction
     url: str = Field(..., pattern=r"^syslog(\+tls)?://\S+:\d+$")
 
-    @field_validator("url")
-    @classmethod
-    def _valid_syslog_url(cls, value: str) -> str:
-        try:
-            parse_syslog_url(value)
-        except InvalidSyslogUrl as e:
-            raise ValueError(str(e))
-        return value
+    @model_validator(mode="after")
+    def _valid_syslog_url(self) -> "AddRemoveSyslogReqBody":
+        # strict on add; a url stored before 0.34.0 must always be removable
+        if self.action == SyslogAction.add:
+            try:
+                parse_syslog_url(self.url)
+            except InvalidSyslogUrl as e:
+                raise ValueError(str(e))
+        return self
 
 
 @router.post("/api/syslog")

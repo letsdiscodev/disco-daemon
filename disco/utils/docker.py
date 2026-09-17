@@ -791,10 +791,33 @@ async def _volume_removed(volume: str) -> bool:
 
 
 async def prune_logging_configs() -> None:
-    """configs of collectors that no longer exist (a crash between rm and cleanup)."""
+    """configs of collectors that no longer exist (a crash between rm and cleanup).
+
+    a config younger than a few minutes is left alone: it may belong to a collector
+    whose service is being created right now (config first, then the service).
+    """
     for prefix in (SYSLOG_CONFIG_PREFIX, STREAM_CONFIG_PREFIX):
         for name in await list_configs(prefix):
+            if await _config_age_seconds(name) < 600:
+                continue
             await rm_config_if_unused(name)
+
+
+async def _config_age_seconds(name: str) -> float:
+    stdout, _, process = await call(
+        ["docker", "config", "inspect", "--format", "{{ .CreatedAt }}", name]
+    )
+    if process.returncode != 0 or not stdout:
+        return 0
+    # 2026-09-17 16:27:55.684124307 +0000 UTC
+    raw = stdout[0].strip().split(" +")[0]
+    try:
+        created = datetime.strptime(raw[:26], "%Y-%m-%d %H:%M:%S.%f").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return 0
+    return (datetime.now(timezone.utc) - created).total_seconds()
 
 
 async def start_syslog_service(

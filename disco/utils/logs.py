@@ -20,11 +20,13 @@ class ActiveSyslog:
 syslog_list_lock = asyncio.Lock()
 _active_syslogs: list[ActiveSyslog] = []
 
-STREAM_QUEUE_MAX = 1000
-# a docker record is at most 16 KB, but vector merges partial records: one line without
-# a newline can be as long as the writer made it. above this the connection is dropped
-# (the collector reconnects and resends from its buffer, the line is logged and skipped).
-STREAM_LINE_LIMIT = 64 * 1024 * 1024
+# the daemon holds at most STREAM_QUEUE_MAX lines of at most STREAM_LINE_LIMIT bytes per
+# client (128 MB worst case); the rest waits in the collector's buffer (backpressure)
+STREAM_QUEUE_MAX = 500
+# a docker record is at most 16 KB; vector merges partial records, so one line without
+# a newline can be longer. above this the connection is dropped (the collector
+# reconnects and resends from its buffer, the line is logged and skipped).
+STREAM_LINE_LIMIT = 256 * 1024
 STREAM_TASK_MEMORY_LIMIT = "256m"
 
 
@@ -152,7 +154,7 @@ async def read_service_history(service_name: str, lines: int) -> list[LogObject]
         log_obj = parse_service_log_line(line, labels)
         if log_obj is not None:
             out.append(log_obj)
-    out.sort(key=lambda o: str(o["timestamp"]))
+    out.sort(key=lambda o: str(o.get("ts", o["timestamp"])))
     return out[-lines:]
 
 
@@ -168,7 +170,7 @@ async def read_history(
     history: list[LogObject] = []
     for service in services:
         history += await read_service_history(service.name, lines)
-    history.sort(key=lambda o: str(o["timestamp"]))
+    history.sort(key=lambda o: str(o.get("ts", o["timestamp"])))
     return history[-lines:]
 
 
@@ -205,6 +207,9 @@ class LogStreamServer:
         self.service_name = service_name
         self.server: asyncio.AbstractServer | None = None
         self._writers: set[asyncio.StreamWriter] = set()
+        self._handlers: set[asyncio.Task] = set()
+        # set when the first collector task connects: the source is running by then
+        self.connected = asyncio.Event()
 
     async def start(self) -> None:
         self.server = await asyncio.start_server(
@@ -217,6 +222,10 @@ class LogStreamServer:
         peer = writer.get_extra_info("peername")
         log.info("Log collector connected from %s on port %d", peer, self.port)
         self._writers.add(writer)
+        task = asyncio.current_task()
+        if task is not None:
+            self._handlers.add(task)
+        self.connected.set()
         try:
             while True:
                 line = await reader.readline()
@@ -230,6 +239,10 @@ class LogStreamServer:
                 await self.log_queue.put(log_obj)
         except (asyncio.IncompleteReadError, ConnectionResetError):
             pass
+        except asyncio.CancelledError:
+            # close(): the client is gone, a put() blocked on a full queue must not
+            # keep this handler and its lines alive
+            pass
         except ValueError:
             log.exception(
                 "Log line over %d bytes from %s, dropping the connection",
@@ -238,6 +251,8 @@ class LogStreamServer:
             )
         finally:
             self._writers.discard(writer)
+            if task is not None:
+                self._handlers.discard(task)
             writer.close()
             log.info("Log collector from %s disconnected", peer)
 
@@ -251,6 +266,8 @@ class LogStreamServer:
         self.server.close()
         for writer in list(self._writers):
             writer.close()
+        for handler in list(self._handlers):
+            handler.cancel()
         try:
             await asyncio.wait_for(self.server.wait_closed(), timeout=5)
         except TimeoutError:

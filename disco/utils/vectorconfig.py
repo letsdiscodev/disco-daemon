@@ -41,8 +41,12 @@ MIN_DISK_BUFFER_BYTES = 268_435_488
 
 SyslogType = Literal["CORE", "GLOBAL"]
 
+# host: a name (letters, digits, dots, dashes, underscores) or an ipv6 address in
+# brackets; the endpoint accepted any non-space host before 0.34.0, so nothing a server
+# already stores may be refused here (the migration renders every stored url)
 _SYSLOG_URL_RE = re.compile(
-    r"^syslog(?P<tls>\+tls)?://(?P<host>[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)"
+    r"^syslog(?P<tls>\+tls)?://"
+    r"(?P<host>\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9_](?:[A-Za-z0-9_.-]*[A-Za-z0-9_])?)"
     r":(?P<port>\d{1,5})\Z"
 )
 
@@ -103,7 +107,7 @@ SERVICE_SPEC_REVISION = 3
 # inside the destination's buffer volume, so a replacement never shares buffer files
 # with the collector it overlaps.
 _DOCKER_SOURCE = f"""\
-# disco collector, service spec revision {SERVICE_SPEC_REVISION}
+# disco collector, service spec revision {SERVICE_SPEC_REVISION}, image {VECTOR_IMAGE}
 data_dir: {{data_dir}}
 sources:
   docker:

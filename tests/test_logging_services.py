@@ -132,9 +132,11 @@ class FakeDocker:
     async def prune_logging_configs(self):
         self.pruned += 1
 
+    ready = True
+
     async def wait_for_global_service(self, name, timeout=180):
         self.order.append(f"wait {name}")
-        return True
+        return self.ready
 
     COLLECTOR_SETTLE_SECONDS = 0
 
@@ -270,6 +272,19 @@ def test_reconcile_replaces_on_hostname_change(fake):
     )
     assert fd.started == [("syslog://h:1", "GLOBAL")] and fd.removed == [old.name]
     assert fd.order[0].startswith("start ")
+
+
+def test_reconcile_keeps_the_old_collector_when_the_replacement_is_not_ready(fake):
+    from disco.utils.syslog import set_syslog_services
+
+    old = _vector_service("syslog://h:1", "GLOBAL", host="old.host")
+    fd = fake([old])
+    fd.ready = False
+    asyncio.run(
+        set_syslog_services("new.host", [{"url": "syslog://h:1", "type": "GLOBAL"}])
+    )
+    assert fd.started == [("syslog://h:1", "GLOBAL")]
+    assert fd.removed == []  # the destination never goes dark
 
 
 def test_reconcile_with_zero_destinations_removes_everything(fake):

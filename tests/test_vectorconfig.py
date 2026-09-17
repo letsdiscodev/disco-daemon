@@ -27,6 +27,10 @@ from disco.utils import vectorconfig as vc
         ),
         ("syslog://h:1", "h", 1, False),
         ("syslog://h:65535", "h", 65535, False),
+        # accepted by the endpoint before 0.34.0 (any non-space host): never refused
+        ("syslog://[2001:db8::1]:514", "[2001:db8::1]", 514, False),
+        ("syslog+tls://[::1]:6514", "[::1]", 6514, True),
+        ("syslog://my_host:514", "my_host", 514, False),
     ],
 )
 def test_parse_syslog_url_accepts(url, host, port, tls):
@@ -181,6 +185,8 @@ def test_newline_escape_is_literal_backslash_n():
 def test_spec_revision_in_config():
     cfg = vc.render_syslog_config("syslog://h:1", "GLOBAL")
     assert f"service spec revision {vc.SERVICE_SPEC_REVISION}" in cfg
+    # an image bump changes the hash, so the reconciler replaces the collectors
+    assert f"image {vc.VECTOR_IMAGE}" in cfg
     assert (
         f"service spec revision {vc.SERVICE_SPEC_REVISION}"
         in vc.render_streaming_config(1)

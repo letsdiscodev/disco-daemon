@@ -148,14 +148,25 @@ async def set_syslog_services(
                 )
             )
         to_remove = [service for service in existing if service.name not in desired]
+        not_ready: set[tuple[str, str]] = set()
         if created and to_remove:
             # the new collectors must be attached to the containers before the old
             # ones go: "task running" comes a few seconds before that (measured: a
             # 4s gap when removing right away), so wait for the tasks, then settle
             for name in created:
-                await docker.wait_for_global_service(name, timeout=180)
+                if not await docker.wait_for_global_service(name, timeout=180):
+                    syslog_url = desired[name]
+                    not_ready.add((syslog_url["url"], syslog_url["type"]))
             await asyncio.sleep(docker.COLLECTOR_SETTLE_SECONDS)
         for service in to_remove:
+            if (service.url, service.type) in not_ready:
+                # the replacement is not running everywhere: the old collector stays
+                # (the next reconcile tries again), no destination goes dark
+                log.warning(
+                    "Keeping %s: its replacement is not running on every node",
+                    service.name,
+                )
+                continue
             await docker.rm_syslog_service(service)
         await docker.prune_logging_configs()
 
