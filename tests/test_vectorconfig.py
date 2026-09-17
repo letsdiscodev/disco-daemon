@@ -89,7 +89,7 @@ def test_render_udp_global():
     assert "when_full: drop_newest" in cfg
     assert 'downcase(to_string(.label."disco.log.exclude") ?? "") != "true"' in cfg
     assert "disco.log.core" not in cfg
-    assert "${SYSLOG_HOSTNAME}" in cfg
+    assert 'get_env_var("SYSLOG_HOSTNAME") ?? "-"' in cfg
     assert "truncate(app, 48)" in cfg
     assert 'if .stream == "stderr" { 3 } else { 6 }' in cfg
     assert "codec: raw_message" in cfg

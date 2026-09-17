@@ -8,9 +8,10 @@ the local docker socket with vector's `docker_logs` source:
 - `disco logs` streaming (`render_streaming_config`): one service per connected client,
   json lines over tcp to the daemon on the `disco-logging` overlay.
 
-the hostname is not baked into the config: the vrl references `${SYSLOG_HOSTNAME}`,
-which vector interpolates from the task's environment at startup, so `disco meta:host`
-keeps working with a `docker service update --env-add`.
+the hostname is not baked into the config: the vrl reads the SYSLOG_HOSTNAME environment
+variable at runtime (`get_env_var`; vector 0.58.0 did not interpolate `${VAR}` inside a
+vrl block when we measured it), so `disco meta:host` keeps working with a
+`docker service update --env-add`, which restarts the tasks with the new value.
 """
 
 from __future__ import annotations
@@ -106,6 +107,8 @@ _CORE_CONDITION = 'downcase(to_string(.label."disco.log.core") ?? "") == "true"'
 # APP-NAME = container name, at most 48 chars. PROCID, MSGID, SD = "-".
 # a docker record with embedded newlines stays one frame with the newlines escaped.
 _SYSLOG_VRL = f"""\
+      hostname = get_env_var("{HOSTNAME_ENV}") ?? "-"
+      if hostname == "" {{ hostname = "-" }}
       severity = if .stream == "stderr" {{ 3 }} else {{ 6 }}
       pri = 8 + severity
       ts = format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%S%.3fZ") ?? "-"
@@ -114,7 +117,7 @@ _SYSLOG_VRL = f"""\
       if app == "" {{ app = "-" }}
       msg = to_string(.message) ?? ""
       msg = replace(msg, "\\n", "\\\\n")
-      . = {{ "message": "<" + to_string(pri) + ">1 " + ts + " ${{{HOSTNAME_ENV}}} " + app + " - - - " + msg }}
+      . = {{ "message": "<" + to_string(pri) + ">1 " + ts + " " + hostname + " " + app + " - - - " + msg }}
 """
 
 
