@@ -73,16 +73,20 @@ async def save_done_updating(dbsession: DBSession) -> None:
 
 
 async def set_disco_host(dbsession: DBSession, host: str, by_api_key: ApiKey) -> None:
-    from disco.utils import docker
-
     prev_host = await keyvalues.get_value_str(dbsession=dbsession, key="DISCO_HOST")
     log.info(
         "Setting Disco host from %s to %s by %s", prev_host, host, by_api_key.log()
     )
     await caddy.update_disco_host(host)
     await keyvalues.set_value(dbsession=dbsession, key="DISCO_HOST", value=host)
-    syslog_services = await docker.list_syslog_services()
-    for syslog_service in syslog_services:
-        await docker.update_syslog_hostname(
-            service_name=syslog_service.name, disco_host=host
-        )
+    # the hostname is part of each collector's config: one reconcile replaces every
+    # collector (new ones first, a settle, then the old ones go)
+    from disco.utils.syslog import (
+        get_destination_buffer_bytes,
+        get_syslog_urls,
+        set_syslog_services,
+    )
+
+    syslog_urls = await get_syslog_urls(dbsession)
+    buffer_bytes = await get_destination_buffer_bytes(dbsession)
+    await set_syslog_services(host, syslog_urls, buffer_bytes)
