@@ -8,10 +8,11 @@ the local docker socket with vector's `docker_logs` source:
 - `disco logs` streaming (`render_streaming_config`): one service per connected client,
   json lines over tcp to the daemon on the `disco-logging` overlay.
 
-the hostname is not baked into the config: the vrl reads the SYSLOG_HOSTNAME environment
-variable at runtime (`get_env_var`; vector 0.58.0 did not interpolate `${VAR}` inside a
-vrl block when we measured it), so `disco meta:host` keeps working with a
-`docker service update --env-add`, which restarts the tasks with the new value.
+the hostname is part of the rendered config: a hostname change renders a new config,
+whose hash is a new service name, so the reconciler creates the new collector before
+removing the old one (an overlap, no gap: a global service cannot be restarted without
+a gap, its node runs one task at a time and the docker source only reads from its own
+start). SYSLOG_HOSTNAME in the environment is the fallback when the config has none.
 """
 
 from __future__ import annotations
@@ -124,7 +125,8 @@ _CORE_CONDITION = 'downcase(to_string(.label."disco.log.core") ?? "") == "true"'
 # APP-NAME = container name, at most 48 chars. PROCID, MSGID, SD = "-".
 # a docker record with embedded newlines stays one frame with the newlines escaped.
 _SYSLOG_VRL = f"""\
-      hostname = get_env_var("{HOSTNAME_ENV}") ?? "-"
+      hostname = "{{hostname}}"
+      if hostname == "" {{ hostname = get_env_var("{HOSTNAME_ENV}") ?? "-" }}
       if hostname == "" {{ hostname = "-" }}
       severity = if .stream == "stderr" {{ 3 }} else {{ 6 }}
       pri = 8 + severity
@@ -138,13 +140,19 @@ _SYSLOG_VRL = f"""\
 """
 
 
+def _vrl_string(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def render_syslog_config(
     url: str,
     type: SyslogType,
     buffer_bytes: int = DEFAULT_DESTINATION_BUFFER_BYTES,
+    disco_host: str = "",
 ) -> str:
     """vector yaml for one syslog destination. raises InvalidSyslogUrl."""
     dest = parse_syslog_url(url)
+    vrl = _SYSLOG_VRL.replace("{hostname}", _vrl_string(disco_host))
     if type == "CORE":
         condition = f"{_CORE_CONDITION} && {_EXCLUDE_CONDITION}"
     elif type == "GLOBAL":
@@ -187,7 +195,7 @@ def render_syslog_config(
     type: remap
     inputs: [keep]
     source: |
-{_SYSLOG_VRL}\
+{vrl}\
 sinks:
   syslog:
     type: socket

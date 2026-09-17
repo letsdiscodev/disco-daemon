@@ -119,7 +119,7 @@ class FakeDocker:
     async def start_syslog_service(self, disco_host, url, type, buffer_bytes):
         from disco.utils import docker
 
-        cfg = vc.render_syslog_config(url, type, buffer_bytes)
+        cfg = vc.render_syslog_config(url, type, buffer_bytes, disco_host)
         name = docker.syslog_service_name(url, type, cfg)
         self.started.append((url, type))
         self.order.append(f"start {name}")
@@ -151,10 +151,12 @@ def fake(monkeypatch):
     return install
 
 
-def _vector_service(url, type, buffer_bytes=vc.DEFAULT_DESTINATION_BUFFER_BYTES):
+def _vector_service(
+    url, type, buffer_bytes=vc.DEFAULT_DESTINATION_BUFFER_BYTES, host="host"
+):
     from disco.utils import docker
 
-    cfg = vc.render_syslog_config(url, type, buffer_bytes)
+    cfg = vc.render_syslog_config(url, type, buffer_bytes, host)
     return docker.SyslogService(
         name=docker.syslog_service_name(url, type, cfg),
         type=type,
@@ -248,6 +250,18 @@ def test_reconcile_same_url_core_and_global_are_two_services(fake):
         )
     )
     assert sorted(fd.started) == [("syslog://h:1", "CORE"), ("syslog://h:1", "GLOBAL")]
+
+
+def test_reconcile_replaces_on_hostname_change(fake):
+    from disco.utils.syslog import set_syslog_services
+
+    old = _vector_service("syslog://h:1", "GLOBAL", host="old.host")
+    fd = fake([old])
+    asyncio.run(
+        set_syslog_services("new.host", [{"url": "syslog://h:1", "type": "GLOBAL"}])
+    )
+    assert fd.started == [("syslog://h:1", "GLOBAL")] and fd.removed == [old.name]
+    assert fd.order[0].startswith("start ")
 
 
 def test_reconcile_with_zero_destinations_removes_everything(fake):

@@ -168,7 +168,9 @@ async def task_0_33_x(image: str) -> None:
     existing = await docker.list_syslog_services()
     for syslog_url in syslog_urls:
         url, type = syslog_url["url"], syslog_url["type"]
-        config = docker.vectorconfig.render_syslog_config(url, type, buffer_bytes)
+        config = docker.vectorconfig.render_syslog_config(
+            url, type, buffer_bytes, disco_host
+        )
         name = docker.syslog_service_name(url, type, config)
         if name not in {service.name for service in existing}:
             print(f"Starting the Vector collector for {url} ({type})")

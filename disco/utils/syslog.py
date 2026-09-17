@@ -94,10 +94,19 @@ async def get_stream_buffer_bytes(dbsession: DBSession) -> int:
     return int(value)
 
 
+_buffer_bytes_cache = {"value": vectorconfig.DEFAULT_DESTINATION_BUFFER_BYTES}
+
+
+def get_destination_buffer_bytes_sync() -> int:
+    """the last value read from the db by the reconciler (for callers without a db
+    session, the hostname update)."""
+    return _buffer_bytes_cache["value"]
+
+
 def _desired_service_name(
-    url: str, type: Literal["CORE", "GLOBAL"], buffer_bytes: int
+    url: str, type: Literal["CORE", "GLOBAL"], buffer_bytes: int, disco_host: str
 ) -> str:
-    config = vectorconfig.render_syslog_config(url, type, buffer_bytes)
+    config = vectorconfig.render_syslog_config(url, type, buffer_bytes, disco_host)
     return docker.syslog_service_name(url, type, config)
 
 
@@ -108,20 +117,21 @@ async def set_syslog_services(
 ) -> None:
     """make the running collectors match the configured destinations.
 
-    identity of a collector = url + type + rendered config (image and buffer size
-    included) = its service name. a destination whose collector exists under that
+    identity of a collector = url + type + rendered config (image, buffer size and
+    hostname included) = its service name. a destination whose collector exists under that
     exact name is left alone; anything else (a logspout service from before 0.34.0,
     a collector rendered with an older config, a removed destination) is replaced:
     new services are created BEFORE old ones are removed, so a destination never
     goes without a collector. serialized with a lock so two api calls cannot create
     the same service twice; safe to run at any time, including at daemon startup.
     """
+    _buffer_bytes_cache["value"] = buffer_bytes
     async with _reconcile_lock:
         existing = await docker.list_syslog_services()
         desired: dict[str, SyslogUrl] = {}
         for syslog_url in syslog_urls:
             name = _desired_service_name(
-                syslog_url["url"], syslog_url["type"], buffer_bytes
+                syslog_url["url"], syslog_url["type"], buffer_bytes, disco_host
             )
             desired[name] = syslog_url
         existing_names = {service.name for service in existing}

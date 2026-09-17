@@ -92,6 +92,15 @@ def test_render_udp_global():
     assert 'downcase(to_string(.label."disco.log.exclude") ?? "") != "true"' in cfg
     assert "disco.log.core" not in cfg
     assert 'get_env_var("SYSLOG_HOSTNAME") ?? "-"' in cfg
+    assert 'hostname = ""' in cfg  # no host given: env fallback
+    cfg2 = vc.render_syslog_config(
+        "syslog://10.0.0.5:5514", "GLOBAL", disco_host="my.host"
+    )
+    assert 'hostname = "my.host"' in cfg2
+    assert vc.config_hash(cfg) != vc.config_hash(cfg2)
+    assert 'hostname = "a\\"b"' in vc.render_syslog_config(
+        "syslog://h:1", "GLOBAL", disco_host='a"b'
+    )
     assert "truncate(app, 48)" in cfg
     assert 'if .stream == "stderr" { 3 } else { 6 }' in cfg
     assert "codec: raw_message" in cfg

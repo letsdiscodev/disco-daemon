@@ -798,7 +798,7 @@ async def start_syslog_service(
     buffer_bytes: int = vectorconfig.DEFAULT_DESTINATION_BUFFER_BYTES,
 ) -> str:
     """create the vector collector for one destination; returns the service name."""
-    config = vectorconfig.render_syslog_config(url, type, buffer_bytes)
+    config = vectorconfig.render_syslog_config(url, type, buffer_bytes, disco_host)
     name = syslog_service_name(url, type, config)
     log.info("Starting Syslog service %s for %s %s", name, url, type)
     # the rendered config is logged so it exists somewhere other than the swarm store
@@ -948,16 +948,28 @@ async def wait_for_global_service(service_name: str, timeout: float = 180) -> bo
 
 
 async def update_syslog_hostname(service_name: str, disco_host: str) -> None:
-    args = [
-        "docker",
-        "service",
-        "update",
-        service_name,
-        "--env-add",
-        f"SYSLOG_HOSTNAME={disco_host}",
-        "--detach",
-    ]
-    await check_call(args)
+    """re-label the frames of one collector with a new hostname: a new collector with
+    the hostname in its config is created, then the old one removed (overlap, no gap).
+    the buffer size is taken from the old collector's config name when it matches the
+    default; callers that know it use the reconciler instead."""
+    from disco.utils.syslog import get_destination_buffer_bytes_sync
+
+    services = [s for s in await list_syslog_services() if s.name == service_name]
+    if len(services) == 0:
+        log.warning("Syslog service %s not found, hostname not updated", service_name)
+        return
+    service = services[0]
+    buffer_bytes = get_destination_buffer_bytes_sync()
+    new_name = await start_syslog_service(
+        disco_host=disco_host,
+        url=service.url,
+        type=service.type,  # type: ignore[arg-type]
+        buffer_bytes=buffer_bytes,
+    )
+    if new_name == service.name:
+        return
+    await wait_for_global_service(new_name, timeout=120)
+    await rm_syslog_service(service)
 
 
 async def get_node_count() -> int:
