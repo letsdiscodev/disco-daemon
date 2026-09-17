@@ -198,6 +198,7 @@ class LogStreamServer:
         self.project_name = project_name
         self.service_name = service_name
         self.server: asyncio.AbstractServer | None = None
+        self._writers: set[asyncio.StreamWriter] = set()
 
     async def start(self) -> None:
         self.server = await asyncio.start_server(
@@ -209,6 +210,7 @@ class LogStreamServer:
     ) -> None:
         peer = writer.get_extra_info("peername")
         log.info("Log collector connected from %s on port %d", peer, self.port)
+        self._writers.add(writer)
         try:
             while True:
                 line = await reader.readline()
@@ -229,13 +231,24 @@ class LogStreamServer:
                 peer,
             )
         finally:
+            self._writers.discard(writer)
             writer.close()
             log.info("Log collector from %s disconnected", peer)
 
     async def close(self) -> None:
-        if self.server is not None:
-            self.server.close()
-            await self.server.wait_closed()
+        """stop listening and drop the collector connections. `wait_closed` waits for
+        every open connection since python 3.12, and the collector keeps its
+        connection until it is removed, so the connections are closed here first
+        and the wait is bounded."""
+        if self.server is None:
+            return
+        self.server.close()
+        for writer in list(self._writers):
+            writer.close()
+        try:
+            await asyncio.wait_for(self.server.wait_closed(), timeout=5)
+        except TimeoutError:
+            log.warning("Log stream server on port %d did not close in time", self.port)
 
 
 async def monitor_syslog(service_name: str) -> None:

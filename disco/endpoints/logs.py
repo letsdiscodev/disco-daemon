@@ -120,17 +120,18 @@ async def read_logs(
             )
     finally:
         log.info("HTTP Connection for logs disconnected")
-        try:
-            await server.close()
-        except Exception:
-            log.exception("Exception closing log stream server")
-        # scheduled on the loop directly: the response's background tasks are not run
-        # when a streaming client goes away (measured: collectors were left behind)
+        # scheduled on the loop directly, and first: the response's background tasks
+        # are not run when a streaming client goes away (measured: collectors were
+        # left behind), and closing the server must not stand in the way
         _cleanups.add(
             asyncio.get_running_loop().create_task(
                 remove_log_collector(collector_name, config_name)
             )
         )
+        try:
+            await server.close()
+        except Exception:
+            log.exception("Exception closing log stream server")
         for task in list(_cleanups):
             if task.done():
                 _cleanups.discard(task)
