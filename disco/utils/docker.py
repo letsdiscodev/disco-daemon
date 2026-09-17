@@ -758,6 +758,55 @@ async def rm_syslog_service(service: SyslogService) -> None:
         await call(["docker", "volume", "rm", volume])
 
 
+@dataclass
+class LabelledService:
+    name: str
+    labels: dict[str, str]
+
+
+async def get_service_labels(service_name: str) -> dict[str, str]:
+    stdout, _, _ = await check_call(
+        [
+            "docker",
+            "service",
+            "inspect",
+            "--format",
+            "{{ json .Spec.Labels }}",
+            service_name,
+        ]
+    )
+    labels = json.loads("\n".join(stdout) or "{}")
+    return labels or {}
+
+
+async def list_project_services_with_labels(
+    project_name: str | None,
+) -> list[LabelledService]:
+    """every project service (label disco.project.name), or those of one project."""
+    label = (
+        "disco.project.name"
+        if project_name is None
+        else f"disco.project.name={project_name}"
+    )
+    stdout, _, _ = await check_call(
+        [
+            "docker",
+            "service",
+            "ls",
+            "--filter",
+            f"label={label}",
+            "--format",
+            "{{ .Name }}",
+        ]
+    )
+    services = []
+    for name in stdout:
+        services.append(
+            LabelledService(name=name, labels=await get_service_labels(name))
+        )
+    return services
+
+
 async def list_streaming_services() -> list[str]:
     stdout, _, _ = await check_call(
         [

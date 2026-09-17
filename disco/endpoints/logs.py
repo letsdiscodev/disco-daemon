@@ -13,7 +13,9 @@ from disco.utils.logs import (
     STREAM_QUEUE_MAX,
     LogObject,
     LogStreamServer,
+    history_key,
     monitor_syslog,
+    read_history,
     remove_log_collector,
     start_log_collector,
 )
@@ -98,8 +100,18 @@ async def read_logs(
         await server.close()
         raise
     try:
+        # the last lines docker retained, then live; lines the collector already
+        # streamed while the history was read are not shown twice
+        history = await read_history(project_name, service_name)
+        seen = {history_key(log_obj) for log_obj in history}
+        for log_obj in history:
+            yield ServerSentEvent(event="output", data=json.dumps(log_obj))
         while True:
             log_obj = await log_queue.get()
+            key = history_key(log_obj)
+            if key in seen:
+                seen.discard(key)
+                continue
             yield ServerSentEvent(
                 event="output",
                 data=json.dumps(log_obj),

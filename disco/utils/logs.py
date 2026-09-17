@@ -1,11 +1,12 @@
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from disco.utils import docker, vectorconfig
-from disco.utils.subprocess import check_call
+from disco.utils.subprocess import call, check_call
 
 log = logging.getLogger(__name__)
 
@@ -99,6 +100,82 @@ def log_matches(
     if service_name is not None and labels.get("disco.service.name") != service_name:
         return False
     return True
+
+
+HISTORY_LINES = 100
+_SERVICE_LOG_LINE = re.compile(
+    r"^(?P<task>\S+)@(?P<node>\S+)\s+\| (?P<ts>\S+) ?(?P<msg>.*)$"
+)
+
+
+def parse_service_log_line(line: str, labels: dict[str, str]) -> LogObject | None:
+    """one line of `docker service logs --timestamps --no-trunc` ->
+    {"container","labels","timestamp","message"}. the task name is the container name
+    (`<service>.<slot>.<task id>`); the timestamp is docker's (rfc 3339 nanoseconds),
+    cut to milliseconds like the live stream."""
+    m = _SERVICE_LOG_LINE.match(line)
+    if m is None:
+        return None
+    ts = m.group("ts")
+    if len(ts) > 24 and ts.endswith("Z"):
+        ts = ts[:23] + "Z"
+    return {
+        "container": m.group("task"),
+        "labels": labels,
+        "timestamp": ts,
+        "message": m.group("msg"),
+    }
+
+
+async def read_service_history(service_name: str, lines: int) -> list[LogObject]:
+    """the last `lines` lines docker retained for a service (every node)."""
+    stdout, _, process = await call(
+        [
+            "docker",
+            "service",
+            "logs",
+            "--timestamps",
+            "--no-trunc",
+            "--tail",
+            str(lines),
+            service_name,
+        ]
+    )
+    if process.returncode != 0:
+        log.warning("Could not read the history of %s", service_name)
+        return []
+    labels = await docker.get_service_labels(service_name)
+    out = []
+    for line in stdout:
+        log_obj = parse_service_log_line(line, labels)
+        if log_obj is not None:
+            out.append(log_obj)
+    out.sort(key=lambda o: str(o["timestamp"]))
+    return out[-lines:]
+
+
+async def read_history(
+    project_name: str | None, service_name: str | None, lines: int = HISTORY_LINES
+) -> list[LogObject]:
+    """the last `lines` lines of the selected services, oldest first."""
+    services = await docker.list_project_services_with_labels(project_name)
+    if service_name is not None:
+        services = [
+            s for s in services if s.labels.get("disco.service.name") == service_name
+        ]
+    history: list[LogObject] = []
+    for service in services:
+        history += await read_service_history(service.name, lines)
+    history.sort(key=lambda o: str(o["timestamp"]))
+    return history[-lines:]
+
+
+def history_key(log_obj: LogObject) -> tuple[str, str, str]:
+    return (
+        str(log_obj["container"]),
+        str(log_obj["timestamp"]),
+        str(log_obj["message"]),
+    )
 
 
 class LogStreamServer:
