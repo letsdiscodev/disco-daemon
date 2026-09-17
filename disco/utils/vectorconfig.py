@@ -93,7 +93,13 @@ def config_hash(config: str) -> str:
 # vector's docker_logs source delivers the last record of a container that just
 # exited twice (measured on 0.58.0: local proof and droplet). the same container, the
 # same nanosecond timestamp and the same message is never a real second line.
+# bump when the swarm service spec built around the config changes (mounts, update
+# order, limits): the revision is part of the rendered config, so the config hash and
+# with it the service name change and the reconciler replaces the collectors.
+SERVICE_SPEC_REVISION = 2
+
 _DOCKER_SOURCE = f"""\
+# disco collector, service spec revision {SERVICE_SPEC_REVISION}
 data_dir: {VECTOR_DATA_DIR}
 sources:
   docker:

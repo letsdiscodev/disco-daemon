@@ -163,6 +163,15 @@ def test_newline_escape_is_literal_backslash_n():
     assert 'replace(msg, "\\n", "\\\\n")' in cfg
 
 
+def test_spec_revision_in_config():
+    cfg = vc.render_syslog_config("syslog://h:1", "GLOBAL")
+    assert f"service spec revision {vc.SERVICE_SPEC_REVISION}" in cfg
+    assert (
+        f"service spec revision {vc.SERVICE_SPEC_REVISION}"
+        in vc.render_streaming_config(1)
+    )
+
+
 def test_image_pin():
     assert vc.VECTOR_IMAGE == "timberio/vector:0.58.0-alpine"
     assert (
