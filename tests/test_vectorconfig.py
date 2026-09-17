@@ -181,6 +181,16 @@ def test_spec_revision_in_config():
     )
 
 
+def test_data_dir_per_collector():
+    a = vc.render_syslog_config("syslog://h:1", "GLOBAL", disco_host="x")
+    b = vc.render_syslog_config("syslog://h:1", "GLOBAL", disco_host="y")
+    da = [line for line in a.splitlines() if line.startswith("data_dir:")][0]
+    db = [line for line in b.splitlines() if line.startswith("data_dir:")][0]
+    assert da.startswith(f"data_dir: {vc.VECTOR_DATA_DIR}/") and da != db
+    assert a == vc.render_syslog_config("syslog://h:1", "GLOBAL", disco_host="x")
+    assert vc.render_streaming_config(5).count("data_dir: /var/lib/vector/") == 1
+
+
 def test_image_pin():
     assert vc.VECTOR_IMAGE == "timberio/vector:0.58.0-alpine"
     assert (

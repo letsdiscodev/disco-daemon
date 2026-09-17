@@ -150,6 +150,8 @@ def fake(monkeypatch):
             "start_syslog_service",
             "rm_syslog_service",
             "prune_logging_configs",
+            "wait_for_global_service",
+            "COLLECTOR_SETTLE_SECONDS",
         ):
             monkeypatch.setattr(syslog.docker, attr, getattr(fd, attr))
         return fd

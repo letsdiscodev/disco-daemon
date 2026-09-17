@@ -695,8 +695,11 @@ async def create_config(name: str, content: str) -> None:
 
 
 async def rm_config(name: str) -> None:
+    """a config that is already gone (removed by a concurrent cleanup) is fine."""
     log.info("Removing Docker config %s", name)
-    await check_call(["docker", "config", "rm", name])
+    _, stderr, process = await call(["docker", "config", "rm", name])
+    if process.returncode != 0 and not any("not found" in line for line in stderr):
+        raise Exception(f"docker config rm {name} failed: {' '.join(stderr)}")
 
 
 async def list_configs(prefix: str) -> list[str]:
@@ -822,10 +825,18 @@ async def rm_syslog_service(service: SyslogService) -> None:
             f"config {config_name}", lambda: _config_removed(config_name)
         )
     if service.impl == "vector":
-        # the buffer volume on this node; on worker nodes the local volume stays until
-        # the node is pruned (a global service leaves one per node)
-        volume = syslog_buffer_volume_name(service.url, service.type)
-        cleanup_in_background(f"volume {volume}", lambda: _volume_removed(volume))
+        # the buffer volume of the destination is shared by its collectors (a
+        # replacement overlaps the one it replaces, each in its own directory): it
+        # goes with the last one. on this node only; on worker nodes the local volume
+        # stays until the node is pruned (a global service leaves one per node)
+        others = await syslog_services_for(service.url, service.type)
+        if len([o for o in others if o.name != service.name]) == 0:
+            volume = syslog_buffer_volume_name(service.url, service.type)
+            cleanup_in_background(f"volume {volume}", lambda: _volume_removed(volume))
+
+
+async def syslog_services_for(url: str, type: str) -> list[SyslogService]:
+    return [s for s in await list_syslog_services() if s.url == url and s.type == type]
 
 
 @dataclass

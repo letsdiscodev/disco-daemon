@@ -99,9 +99,12 @@ def config_hash(config: str) -> str:
 # with it the service name change and the reconciler replaces the collectors.
 SERVICE_SPEC_REVISION = 2
 
+# `{data_dir}` is filled in by the renderers: each collector gets its own directory
+# inside the destination's buffer volume, so a replacement never shares buffer files
+# with the collector it overlaps.
 _DOCKER_SOURCE = f"""\
 # disco collector, service spec revision {SERVICE_SPEC_REVISION}
-data_dir: {VECTOR_DATA_DIR}
+data_dir: {{data_dir}}
 sources:
   docker:
     type: docker_logs
@@ -185,8 +188,7 @@ def render_syslog_config(
       max_size: {max(buffer_bytes, MIN_DISK_BUFFER_BYTES)}
       when_full: drop_newest
 """
-    return f"""\
-{_DOCKER_SOURCE}\
+    body = f"""\
   keep:
     type: filter
     inputs: [dedupe]
@@ -204,6 +206,15 @@ sinks:
     encoding:
       codec: raw_message
 """
+    return _with_data_dir(_DOCKER_SOURCE + body)
+
+
+def _with_data_dir(config: str) -> str:
+    """the data dir is derived from the config's own hash (without it), so it is
+    unique per rendered config and stable across renders."""
+    marker = "{data_dir}"
+    subdir = config_hash(config)
+    return config.replace(marker, f"{VECTOR_DATA_DIR}/{subdir}")
 
 
 _STREAM_VRL = """\
@@ -226,8 +237,7 @@ def render_streaming_config(
     """
     if not 1 <= port <= 65535:
         raise ValueError(f"port out of range: {port}")
-    return f"""\
-{_DOCKER_SOURCE}\
+    body = f"""\
   json:
     type: remap
     inputs: [dedupe]
@@ -248,3 +258,4 @@ sinks:
     encoding:
       codec: json
 """
+    return _with_data_dir(_DOCKER_SOURCE + body)
