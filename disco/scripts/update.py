@@ -1135,8 +1135,8 @@ def get_update_function_for_version(version: str) -> Callable[[str], Awaitable[N
         return task_0_32_x
     if version.startswith("0.33."):
         return task_0_33_x
-    if version.startswith("0.33."):
-        assert disco.__version__.startswith("0.33.")
+    if version.startswith("0.34."):
+        assert disco.__version__.startswith("0.34.")
         return task_patch
     raise NotImplementedError(f"Updating from version {version} is not supported")
 
