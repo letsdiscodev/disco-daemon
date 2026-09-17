@@ -266,7 +266,7 @@ def test_parse_service_log_line():
     from disco.utils import logs
 
     labels = {"disco.project.name": "p", "disco.service.name": "web"}
-    line = "p-3-web.1.k2j3h4g5f6d7s8a9@node-a    | 2026-09-17T15:25:41.123456789Z hello world"
+    line = "2026-09-17T15:25:41.123456789Z p-3-web.1.k2j3h4g5f6d7s8a9@node-a    | hello world"
     obj = logs.parse_service_log_line(line, labels)
     assert obj == {
         "container": "p-3-web.1.k2j3h4g5f6d7s8a9",
@@ -276,7 +276,7 @@ def test_parse_service_log_line():
     }
     # an empty message line
     obj = logs.parse_service_log_line(
-        "p-3-web.1.abc@n | 2026-09-17T15:25:41.000000000Z ", labels
+        "2026-09-17T15:25:41.000000000Z p-3-web.1.abc@n | ", labels
     )
     assert obj is not None and obj["message"] == ""
     assert logs.parse_service_log_line("garbage", labels) is None

@@ -104,15 +104,16 @@ def log_matches(
 
 HISTORY_LINES = 100
 _SERVICE_LOG_LINE = re.compile(
-    r"^(?P<task>\S+)@(?P<node>\S+)\s+\| (?P<ts>\S+) ?(?P<msg>.*)$"
+    r"^(?P<ts>\S+) (?P<task>\S+)@(?P<node>\S+)\s+\| ?(?P<msg>.*)$"
 )
 
 
 def parse_service_log_line(line: str, labels: dict[str, str]) -> LogObject | None:
     """one line of `docker service logs --timestamps --no-trunc` ->
-    {"container","labels","timestamp","message"}. the task name is the container name
-    (`<service>.<slot>.<task id>`); the timestamp is docker's (rfc 3339 nanoseconds),
-    cut to milliseconds like the live stream."""
+    {"container","labels","timestamp","message"}. the line is
+    `<rfc 3339 ns timestamp> <task name>@<node>    | <message>`; the task name is the
+    container name (`<service>.<slot>.<task id>`); the timestamp is cut to
+    milliseconds like the live stream."""
     m = _SERVICE_LOG_LINE.match(line)
     if m is None:
         return None
@@ -129,7 +130,8 @@ def parse_service_log_line(line: str, labels: dict[str, str]) -> LogObject | Non
 
 async def read_service_history(service_name: str, lines: int) -> list[LogObject]:
     """the last `lines` lines docker retained for a service (every node)."""
-    stdout, _, process = await call(
+    # stdout and stderr of the containers come back on the matching streams
+    stdout, stderr, process = await call(
         [
             "docker",
             "service",
@@ -146,7 +148,7 @@ async def read_service_history(service_name: str, lines: int) -> list[LogObject]
         return []
     labels = await docker.get_service_labels(service_name)
     out = []
-    for line in stdout:
+    for line in stdout + stderr:
         log_obj = parse_service_log_line(line, labels)
         if log_obj is not None:
             out.append(log_obj)
