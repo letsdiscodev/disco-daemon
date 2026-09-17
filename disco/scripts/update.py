@@ -196,6 +196,7 @@ async def task_0_33_x(image: str) -> None:
     for name in streaming:
         print(f"Removing the streaming collector {name} (clients reconnect)")
         await docker.rm_service(name)
+    await docker.wait_for_cleanups()
     await docker.prune_logging_configs()
     async with Session.begin() as dbsession:
         await keyvalues.set_value(

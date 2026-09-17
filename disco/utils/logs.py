@@ -293,4 +293,6 @@ async def remove_log_collector(service_name: str, config_name: str) -> None:
     try:
         await docker.rm_service(service_name)
     finally:
-        await docker.rm_config_if_unused(config_name)
+        docker.cleanup_in_background(
+            f"config {config_name}", lambda: docker._config_removed(config_name)
+        )

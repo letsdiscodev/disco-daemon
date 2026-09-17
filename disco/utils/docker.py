@@ -720,6 +720,65 @@ async def rm_config_if_unused(config_name: str) -> None:
         await rm_config(config_name)
 
 
+_cleanup_tasks: set[asyncio.Task] = set()
+
+
+async def _retry_cleanup(
+    what: str,
+    attempt: Callable[[], Awaitable[bool]],
+    attempts: int = 20,
+    delay: float = 3,
+) -> None:
+    """docker keeps a removed service's config and volume "in use" for a moment after
+    `service rm`; try again for a while before giving up (the daily cron prunes)."""
+    for i in range(attempts):
+        try:
+            if await attempt():
+                return
+        except Exception:
+            log.debug("Cleanup of %s failed on attempt %d", what, i + 1, exc_info=True)
+        await asyncio.sleep(delay)
+    log.warning("Giving up cleaning up %s after %d attempts", what, attempts)
+
+
+def cleanup_in_background(
+    what: str, attempt: Callable[[], Awaitable[bool]]
+) -> asyncio.Task:
+    task = asyncio.get_running_loop().create_task(_retry_cleanup(what, attempt))
+    _cleanup_tasks.add(task)
+    task.add_done_callback(_cleanup_tasks.discard)
+    return task
+
+
+async def wait_for_cleanups() -> None:
+    """for scripts (the updater): background cleanups die with the event loop."""
+    if _cleanup_tasks:
+        await asyncio.gather(*_cleanup_tasks, return_exceptions=True)
+
+
+async def _config_removed(config_name: str) -> bool:
+    if len(await services_using_config(config_name)) > 0:
+        return False
+    if await config_exists(config_name):
+        _, _, process = await call(["docker", "config", "rm", config_name])
+        if process.returncode != 0:
+            return False
+        log.info("Removed Docker config %s", config_name)
+    return True
+
+
+async def _volume_removed(volume: str) -> bool:
+    stdout, _, _ = await call(
+        ["docker", "volume", "ls", "-q", "--filter", f"name=^{volume}$"]
+    )
+    if volume not in stdout:
+        return True
+    _, _, process = await call(["docker", "volume", "rm", volume])
+    if process.returncode == 0:
+        log.info("Removed Docker volume %s", volume)
+    return process.returncode == 0
+
+
 async def prune_logging_configs() -> None:
     """configs of collectors that no longer exist (a crash between rm and cleanup)."""
     for prefix in (SYSLOG_CONFIG_PREFIX, STREAM_CONFIG_PREFIX):
@@ -750,12 +809,15 @@ async def rm_syslog_service(service: SyslogService) -> None:
     )
     await rm_service(service.name)
     if service.config is not None:
-        await rm_config_if_unused(service.config)
+        config_name = service.config
+        cleanup_in_background(
+            f"config {config_name}", lambda: _config_removed(config_name)
+        )
     if service.impl == "vector":
         # the buffer volume on this node; on worker nodes the local volume stays until
         # the node is pruned (a global service leaves one per node)
         volume = syslog_buffer_volume_name(service.url, service.type)
-        await call(["docker", "volume", "rm", volume])
+        cleanup_in_background(f"volume {volume}", lambda: _volume_removed(volume))
 
 
 @dataclass
