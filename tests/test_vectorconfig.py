@@ -82,6 +82,8 @@ def test_destination_id_stable_and_type_sensitive():
 def test_render_udp_global():
     cfg = vc.render_syslog_config("syslog://10.0.0.5:5514", "GLOBAL")
     assert "type: docker_logs" in cfg
+    assert "type: dedupe" in cfg and "match: [container_id, timestamp, message]" in cfg
+    assert "inputs: [dedupe]" in cfg
     assert "mode: udp" in cfg
     assert "address: 10.0.0.5:5514" in cfg
     assert "tls:" not in cfg
@@ -141,6 +143,7 @@ def test_config_hash_changes_with_content():
 
 def test_render_streaming():
     cfg = vc.render_streaming_config(12345)
+    assert "type: dedupe" in cfg and "inputs: [dedupe]" in cfg
     assert "address: disco:12345" in cfg
     assert "mode: tcp" in cfg
     assert "codec: json" in cfg

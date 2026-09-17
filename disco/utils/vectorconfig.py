@@ -90,12 +90,23 @@ def config_hash(config: str) -> str:
     return hashlib.sha256(config.encode()).hexdigest()[:12]
 
 
+# vector's docker_logs source delivers the last record of a container that just
+# exited twice (measured on 0.58.0: local proof and droplet). the same container, the
+# same nanosecond timestamp and the same message is never a real second line.
 _DOCKER_SOURCE = f"""\
 data_dir: {VECTOR_DATA_DIR}
 sources:
   docker:
     type: docker_logs
     docker_host: unix:///var/run/docker.sock
+transforms:
+  dedupe:
+    type: dedupe
+    inputs: [docker]
+    cache:
+      num_events: 5000
+    fields:
+      match: [container_id, timestamp, message]
 """
 
 # logspout matched EXCLUDE_LABELS by value "true", case-insensitively; same here.
@@ -162,10 +173,9 @@ def render_syslog_config(
 """
     return f"""\
 {_DOCKER_SOURCE}\
-transforms:
   keep:
     type: filter
-    inputs: [docker]
+    inputs: [dedupe]
     condition: '{condition}'
   frame:
     type: remap
@@ -204,10 +214,9 @@ def render_streaming_config(
         raise ValueError(f"port out of range: {port}")
     return f"""\
 {_DOCKER_SOURCE}\
-transforms:
   json:
     type: remap
-    inputs: [docker]
+    inputs: [dedupe]
     source: |
 {_STREAM_VRL}\
 sinks:
