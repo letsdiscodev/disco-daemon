@@ -53,8 +53,8 @@ def test_parse_syslog_url_accepts(url, host, port, tls):
         "syslog+ssl://host:514",
         "syslog://user:pw@host:514",  # userinfo
         "syslog://host:514/path",
-        "syslog://host:514?sd=x",  # F9 query string (no key)
-        "syslog://host:514?api_key=abc",  # F9 query string (with key)
+        "syslog://host:514?sd=x",  # query string: per-destination options in the url, cut from v1 (prd F9)
+        "syslog://host:514?api_key=abc",  # a credential in the url, never (prd F9)
         "syslog://host?api_key=abc:514",
         "syslog://host:514#frag",
         "syslog://host:514 ",

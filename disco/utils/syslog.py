@@ -160,7 +160,7 @@ async def set_syslog_services(
         await docker.prune_logging_configs()
 
 
-async def reconcile_syslog_services_on_boot() -> None:
+async def reconcile_syslog_services_on_disco_boot() -> None:
     """repair a partial state left by a crash between two docker calls."""
     from disco.models.db import ReadSession
 
