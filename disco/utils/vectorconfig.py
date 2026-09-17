@@ -97,7 +97,7 @@ def config_hash(config: str) -> str:
 # bump when the swarm service spec built around the config changes (mounts, update
 # order, limits): the revision is part of the rendered config, so the config hash and
 # with it the service name change and the reconciler replaces the collectors.
-SERVICE_SPEC_REVISION = 2
+SERVICE_SPEC_REVISION = 3
 
 # `{data_dir}` is filled in by the renderers: each collector gets its own directory
 # inside the destination's buffer volume, so a replacement never shares buffer files

@@ -56,7 +56,7 @@ def test_build_syslog_service_args():
     )
     assert f"--env {vc.HOSTNAME_ENV}=my.host" in joined
     assert "--mode global" in joined
-    assert "--update-order start-first" in joined
+    assert "--update-order" not in joined  # start-first fails on a global service
     assert "--limit-memory" in joined
     assert args[-3:] == [vc.VECTOR_IMAGE, "--config", vc.VECTOR_CONFIG_PATH]
     # no logspout leftovers

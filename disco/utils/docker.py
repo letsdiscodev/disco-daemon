@@ -654,11 +654,11 @@ def build_syslog_service_args(
         f"{vectorconfig.HOSTNAME_ENV}={disco_host}",
         "--mode",
         "global",
-        # a restart (hostname change, forced update) starts the new task before the
-        # old one stops: a few duplicated lines instead of a gap (measured: ~1s lost
-        # with stop-first, the docker source only reads from its own start)
-        "--update-order",
-        "start-first",
+        # no start-first: a global service runs one task per node, the new task ran
+        # beside the old one and exited (78, the buffer directory in use) and swarm
+        # paused the update. a forced restart of a collector loses the seconds between
+        # its tasks (the docker source reads from its own start); hostname changes
+        # and upgrades replace the collector with an overlap instead (see syslog.py)
         "--limit-memory",
         SYSLOG_TASK_MEMORY_LIMIT,
         "--log-driver",
