@@ -609,7 +609,7 @@ def stream_config_name(config: str) -> str:
     return f"{STREAM_CONFIG_PREFIX}{vectorconfig.config_hash(config)}"
 
 
-def syslog_buffer_volume_name(url: str, type: Literal["CORE", "GLOBAL"]) -> str:
+def syslog_buffer_volume_name(url: str, type: str) -> str:
     return f"{SYSLOG_BUFFER_VOLUME_PREFIX}{vectorconfig.destination_id(url, type)}"
 
 
@@ -754,7 +754,7 @@ async def rm_syslog_service(service: SyslogService) -> None:
     if service.impl == "vector":
         # the buffer volume on this node; on worker nodes the local volume stays until
         # the node is pruned (a global service leaves one per node)
-        volume = syslog_buffer_volume_name(service.url, service.type)  # type: ignore[arg-type]
+        volume = syslog_buffer_volume_name(service.url, service.type)
         await call(["docker", "volume", "rm", volume])
 
 

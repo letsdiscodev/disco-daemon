@@ -81,7 +81,7 @@ def parse_syslog_url(url: str) -> SyslogDestination:
     )
 
 
-def destination_id(url: str, type: SyslogType) -> str:
+def destination_id(url: str, type: str) -> str:
     """stable short id for a destination, used in service, config and volume names."""
     return hashlib.sha256(f"{type} {url}".encode()).hexdigest()[:12]
 
