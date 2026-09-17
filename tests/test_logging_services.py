@@ -294,9 +294,20 @@ def test_parse_service_log_line():
     assert obj == {
         "container": "p-3-web.1.k2j3h4g5f6d7s8a9",
         "labels": labels,
-        "timestamp": "2026-09-17T15:25:41.123Z",
+        "timestamp": "2026-09-17T15:25:41Z",
+        "ts": "2026-09-17T15:25:41.123Z",
         "message": "hello world",
     }
+    assert logs.for_client(obj) == {
+        "container": "p-3-web.1.k2j3h4g5f6d7s8a9",
+        "labels": labels,
+        "timestamp": "2026-09-17T15:25:41Z",
+        "message": "hello world",
+    }
+    live = dict(obj)
+    assert logs.history_key(live) == logs.history_key(obj)
+    other = dict(live, ts="2026-09-17T15:25:41.900Z")
+    assert logs.history_key(other) != logs.history_key(obj)  # same second, another line
     # an empty message line
     obj = logs.parse_service_log_line(
         "2026-09-17T15:25:41.000000000Z p-3-web.1.abc@n | ", labels
@@ -304,3 +315,4 @@ def test_parse_service_log_line():
     assert obj is not None and obj["message"] == ""
     assert logs.parse_service_log_line("garbage", labels) is None
     assert logs.history_key(obj) == ("p-3-web.1.abc", "2026-09-17T15:25:41.000Z", "")
+    assert obj["timestamp"] == "2026-09-17T15:25:41Z"

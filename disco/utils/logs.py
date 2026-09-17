@@ -118,12 +118,12 @@ def parse_service_log_line(line: str, labels: dict[str, str]) -> LogObject | Non
     if m is None:
         return None
     ts = m.group("ts")
-    if len(ts) > 24 and ts.endswith("Z"):
-        ts = ts[:23] + "Z"
+    ms = ts[:23] + "Z" if len(ts) > 24 and ts.endswith("Z") else ts
     return {
         "container": m.group("task"),
         "labels": labels,
-        "timestamp": ts,
+        "timestamp": ms[:19] + "Z" if len(ms) >= 20 else ms,
+        "ts": ms,
         "message": m.group("msg"),
     }
 
@@ -173,11 +173,17 @@ async def read_history(
 
 
 def history_key(log_obj: LogObject) -> tuple[str, str, str]:
+    """container + millisecond timestamp + message: the same line in history and live."""
     return (
         str(log_obj["container"]),
-        str(log_obj["timestamp"]),
+        str(log_obj.get("ts", log_obj["timestamp"])),
         str(log_obj["message"]),
     )
+
+
+def for_client(log_obj: LogObject) -> LogObject:
+    """what the cli and dashboard get: the four keys logspout sent, seconds timestamp."""
+    return {k: v for k, v in log_obj.items() if k != "ts"}
 
 
 class LogStreamServer:

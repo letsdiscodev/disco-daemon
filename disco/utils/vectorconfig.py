@@ -120,9 +120,14 @@ transforms:
 """
 
 # logspout matched EXCLUDE_LABELS by value "true", case-insensitively; same here.
-_EXCLUDE_CONDITION = 'downcase(to_string(.label."disco.log.exclude") ?? "") != "true"'
+_EXCLUDE_CONDITION = (
+    'downcase(to_string(.label."disco.log.exclude") ?? "") != "true"'
+    ' && downcase(to_string(.label."disco.run") ?? "") != "true"'
+)
 _CORE_CONDITION = 'downcase(to_string(.label."disco.log.core") ?? "") == "true"'
 
+# `disco run` sessions carry disco.run=true and a tty: logspout never forwarded tty
+# containers to destinations, so they stay out (they still show in `disco logs`).
 # rfc 5424: <PRI>1 TIMESTAMP HOSTNAME APP-NAME PROCID MSGID SD MSG
 # PRI = facility user (1) * 8 + severity: stderr -> err (3), stdout -> info (6).
 # APP-NAME = container name, at most 48 chars. PROCID, MSGID, SD = "-".
@@ -133,7 +138,7 @@ _SYSLOG_VRL = f"""\
       if hostname == "" {{ hostname = "-" }}
       severity = if .stream == "stderr" {{ 3 }} else {{ 6 }}
       pri = 8 + severity
-      ts = format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%S%.3fZ") ?? "-"
+      ts = format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%SZ") ?? "-"
       app = to_string(.container_name) ?? "-"
       app = truncate(app, 48)
       if app == "" {{ app = "-" }}
@@ -221,7 +226,8 @@ _STREAM_VRL = """\
       . = {
         "container": to_string(.container_name) ?? "",
         "labels": object(.label) ?? {},
-        "timestamp": format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%S%.3fZ") ?? "",
+        "timestamp": format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%SZ") ?? "",
+        "ts": format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%S%.3fZ") ?? "",
         "message": to_string(.message) ?? ""
       }
 """

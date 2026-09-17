@@ -13,6 +13,7 @@ from disco.utils.logs import (
     STREAM_QUEUE_MAX,
     LogObject,
     LogStreamServer,
+    for_client,
     history_key,
     monitor_syslog,
     read_history,
@@ -107,7 +108,7 @@ async def read_logs(
         history = await read_history(project_name, service_name)
         seen = {history_key(log_obj) for log_obj in history}
         for log_obj in history:
-            yield ServerSentEvent(event="output", data=json.dumps(log_obj))
+            yield ServerSentEvent(event="output", data=json.dumps(for_client(log_obj)))
         while True:
             log_obj = await log_queue.get()
             key = history_key(log_obj)
@@ -116,7 +117,7 @@ async def read_logs(
                 continue
             yield ServerSentEvent(
                 event="output",
-                data=json.dumps(log_obj),
+                data=json.dumps(for_client(log_obj)),
             )
     finally:
         log.info("HTTP Connection for logs disconnected")

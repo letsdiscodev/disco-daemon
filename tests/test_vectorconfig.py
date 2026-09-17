@@ -90,7 +90,11 @@ def test_render_udp_global():
     assert "method: bytes" in cfg
     assert "when_full: drop_newest" in cfg
     assert 'downcase(to_string(.label."disco.log.exclude") ?? "") != "true"' in cfg
+    assert 'downcase(to_string(.label."disco.run") ?? "") != "true"' in cfg
     assert "disco.log.core" not in cfg
+    assert (
+        '"%Y-%m-%dT%H:%M:%SZ"' in cfg and "%.3f" not in cfg
+    )  # whole seconds, as logspout
     assert 'get_env_var("SYSLOG_HOSTNAME") ?? "-"' in cfg
     assert 'hostname = ""' in cfg  # no host given: env fallback
     cfg2 = vc.render_syslog_config(
@@ -161,6 +165,8 @@ def test_render_streaming():
     for key in ('"container"', '"labels"', '"timestamp"', '"message"'):
         assert key in cfg
     assert "disco.log.exclude" not in cfg  # streaming shows everything, as logspout did
+    assert "disco.run" not in cfg
+    assert '"ts": format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%S%.3fZ")' in cfg
     with pytest.raises(ValueError):
         vc.render_streaming_config(0)
 
