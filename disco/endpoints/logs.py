@@ -12,10 +12,12 @@ from disco.auth import get_api_key_wo_tx
 from disco.models.db import ReadSession
 from disco.utils import docker
 from disco.utils.logs import (
+    MAX_STREAMS,
     STREAM_QUEUE_MAX,
     LogObject,
     LogStreamServer,
     for_client,
+    get_running_syslogs,
     history_key,
     monitor_syslog,
     read_history,
@@ -85,6 +87,10 @@ async def read_logs(
     background_tasks: BackgroundTasks,
 ):
     port = random.randint(10000, 65535)
+    if len(await get_running_syslogs()) >= MAX_STREAMS:
+        raise HTTPException(
+            status_code=429, detail=f"At most {MAX_STREAMS} log sessions at once"
+        )
     async with ReadSession.begin() as dbsession:
         buffer_bytes = await get_stream_buffer_bytes(dbsession)
     config = render_streaming_config(port, buffer_bytes)

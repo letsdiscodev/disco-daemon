@@ -74,6 +74,10 @@ async def _save_syslog_urls(dbsession: DBSession, syslog_urls: list[SyslogUrl]) 
     await keyvalues.set_value(dbsession, SYSLOG_URLS_KEY, json.dumps(syslog_urls))
 
 
+# every destination is one more collector task per node reading the docker socket,
+# with its own disk buffer: a small server cannot take many (prd 2.2)
+MAX_DESTINATIONS = 10
+
 LOGGING_DESTINATION_BUFFER_KEY = "LOGGING_DESTINATION_BUFFER_BYTES"
 LOGGING_STREAM_BUFFER_KEY = "LOGGING_STREAM_BUFFER_BYTES"
 

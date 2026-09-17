@@ -23,6 +23,9 @@ _active_syslogs: list[ActiveSyslog] = []
 # the daemon holds at most STREAM_QUEUE_MAX lines of at most STREAM_LINE_LIMIT bytes per
 # client (128 MB worst case); the rest waits in the collector's buffer (backpressure)
 STREAM_QUEUE_MAX = 500
+# every open `disco logs` is one more collector task per node reading the docker
+# socket, plus a queue in the daemon (prd 2.2)
+MAX_STREAMS = 10
 # a docker record is at most 16 KB; vector merges partial records, so one line without
 # a newline can be longer. above this the connection is dropped (the collector
 # reconnects and resends from its buffer, the line is logged and skipped).

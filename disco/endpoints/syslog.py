@@ -2,7 +2,7 @@ import logging
 from enum import Enum
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, model_validator
 
 from disco.auth import get_api_key_wo_tx
@@ -10,6 +10,7 @@ from disco.models.db import ReadSession, Session
 from disco.utils import keyvalues
 from disco.utils.apikeys import get_valid_api_key_by_id
 from disco.utils.syslog import (
+    MAX_DESTINATIONS,
     add_syslog_url,
     get_destination_buffer_bytes,
     get_syslog_urls,
@@ -52,6 +53,14 @@ async def syslog_post(
         api_key = await get_valid_api_key_by_id(dbsession, api_key_id)
         assert api_key is not None
         if add_remove_syslog.action == SyslogAction.add:
+            current = await get_syslog_urls(dbsession)
+            if len(current) >= MAX_DESTINATIONS and add_remove_syslog.url not in [
+                syslog_url["url"] for syslog_url in current
+            ]:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"At most {MAX_DESTINATIONS} log destinations",
+                )
             syslog_urls = await add_syslog_url(
                 dbsession, add_remove_syslog.url, api_key
             )
