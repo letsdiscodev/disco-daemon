@@ -132,6 +132,12 @@ class FakeDocker:
     async def prune_logging_configs(self):
         self.pruned += 1
 
+    async def wait_for_global_service(self, name, timeout=180):
+        self.order.append(f"wait {name}")
+        return True
+
+    COLLECTOR_SETTLE_SECONDS = 0
+
 
 @pytest.fixture
 def fake(monkeypatch):
@@ -211,7 +217,7 @@ def test_reconcile_replaces_logspout_create_before_remove(fake):
     )
     assert fd.started == [("syslog://h:1", "GLOBAL")]
     assert fd.removed == [old.name]
-    assert fd.order[0].startswith("start ") and fd.order[1].startswith("rm ")
+    assert [o.split()[0] for o in fd.order] == ["start", "wait", "rm"]
 
 
 def test_reconcile_removes_extra_and_stale_config(fake):

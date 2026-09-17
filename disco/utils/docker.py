@@ -591,6 +591,9 @@ SYSLOG_BUFFER_VOLUME_PREFIX = "disco-vector-buffer-"
 # hard caps for one collector task per node (observed under a 50k lines/s burst on
 # 0.58.0: ~140 MB udp, ~80 MB tls); the disk buffer survives an oom restart
 SYSLOG_TASK_MEMORY_LIMIT = "512m"
+# seconds between a replacement collector's task running and the old collector's
+# removal: vector attaches to the containers a few seconds after its task starts
+COLLECTOR_SETTLE_SECONDS = 10
 STREAM_TASK_MEMORY_LIMIT = "256m"
 
 
@@ -969,6 +972,7 @@ async def update_syslog_hostname(service_name: str, disco_host: str) -> None:
     if new_name == service.name:
         return
     await wait_for_global_service(new_name, timeout=120)
+    await asyncio.sleep(COLLECTOR_SETTLE_SECONDS)
     await rm_syslog_service(service)
 
 

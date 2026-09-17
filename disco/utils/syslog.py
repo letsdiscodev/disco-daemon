@@ -135,18 +135,28 @@ async def set_syslog_services(
             )
             desired[name] = syslog_url
         existing_names = {service.name for service in existing}
+        created = []
         for name, syslog_url in desired.items():
             if name in existing_names:
                 continue
-            await docker.start_syslog_service(
-                disco_host=disco_host,
-                url=syslog_url["url"],
-                type=syslog_url["type"],
-                buffer_bytes=buffer_bytes,
+            created.append(
+                await docker.start_syslog_service(
+                    disco_host=disco_host,
+                    url=syslog_url["url"],
+                    type=syslog_url["type"],
+                    buffer_bytes=buffer_bytes,
+                )
             )
-        for service in existing:
-            if service.name not in desired:
-                await docker.rm_syslog_service(service)
+        to_remove = [service for service in existing if service.name not in desired]
+        if created and to_remove:
+            # the new collectors must be attached to the containers before the old
+            # ones go: "task running" comes a few seconds before that (measured: a
+            # 4s gap when removing right away), so wait for the tasks, then settle
+            for name in created:
+                await docker.wait_for_global_service(name, timeout=180)
+            await asyncio.sleep(docker.COLLECTOR_SETTLE_SECONDS)
+        for service in to_remove:
+            await docker.rm_syslog_service(service)
         await docker.prune_logging_configs()
 
 
