@@ -27,6 +27,8 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 
+_cleanups: set[asyncio.Task] = set()
+
 
 @router.get("/api/logs")
 async def logs_all(background_tasks: BackgroundTasks):
@@ -122,4 +124,13 @@ async def read_logs(
             await server.close()
         except Exception:
             log.exception("Exception closing log stream server")
-        background_tasks.add_task(remove_log_collector, collector_name, config_name)
+        # scheduled on the loop directly: the response's background tasks are not run
+        # when a streaming client goes away (measured: collectors were left behind)
+        _cleanups.add(
+            asyncio.get_running_loop().create_task(
+                remove_log_collector(collector_name, config_name)
+            )
+        )
+        for task in list(_cleanups):
+            if task.done():
+                _cleanups.discard(task)
