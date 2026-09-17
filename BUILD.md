@@ -10,6 +10,22 @@ docker buildx build \
   .
 ```
 
+## Tests
+
+```
+uv run pytest
+```
+
+Unit tests for the pure parts (the vector config renderer, the syslog url parser, the
+collector command builders, the reconciler with docker stubbed). The integration gate is
+disco-tester with `--build-local`.
+
+## Log forwarding image
+
+Syslog destinations and `disco logs` run `timberio/vector` (pinned in
+`disco/utils/vectorconfig.py`, multi-arch). Bump the tag and the manifest digest together
+and run disco-tester's `vector-proof` and the logging steps before releasing.
+
 ## Linters/Formatters
 
 ```
