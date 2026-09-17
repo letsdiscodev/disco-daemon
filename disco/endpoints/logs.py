@@ -9,9 +9,17 @@ from sse_starlette.sse import EventSourceResponse
 
 from disco.auth import get_api_key_wo_tx
 from disco.models.db import ReadSession
-from disco.utils import docker
-from disco.utils.logs import LOGSPOUT_CMD, JsonLogServer, monitor_syslog
+from disco.utils.logs import (
+    STREAM_QUEUE_MAX,
+    LogObject,
+    LogStreamServer,
+    monitor_syslog,
+    remove_log_collector,
+    start_log_collector,
+)
 from disco.utils.projects import get_project_by_name
+from disco.utils.syslog import get_stream_buffer_bytes
+from disco.utils.vectorconfig import render_streaming_config
 
 log = logging.getLogger(__name__)
 
@@ -70,22 +78,25 @@ async def read_logs(
     background_tasks: BackgroundTasks,
 ):
     port = random.randint(10000, 65535)
-    logspout_cmd = LOGSPOUT_CMD.copy()
-    assert logspout_cmd[4] == "{name}"
-    syslog_service_name = f"disco-syslog-{port}"
-    await monitor_syslog(syslog_service_name)
-    logspout_cmd[4] = syslog_service_name
-    logspout_cmd[-1] = logspout_cmd[-1].format(port=port)
-    transport = None
-    log_queue: asyncio.Queue[dict[str, str | dict[str, str]]] = asyncio.Queue()
-    await asyncio.create_subprocess_exec(*logspout_cmd)
-    loop = asyncio.get_running_loop()
-    transport, _ = await loop.create_datagram_endpoint(
-        lambda: JsonLogServer(
-            log_queue=log_queue, project_name=project_name, service_name=service_name
-        ),
-        local_addr=("0.0.0.0", port),
+    async with ReadSession.begin() as dbsession:
+        buffer_bytes = await get_stream_buffer_bytes(dbsession)
+    config = render_streaming_config(port, buffer_bytes)
+    collector_name = f"disco-syslog-{port}"
+    log_queue: asyncio.Queue[LogObject] = asyncio.Queue(maxsize=STREAM_QUEUE_MAX)
+    server = LogStreamServer(
+        port=port,
+        log_queue=log_queue,
+        project_name=project_name,
+        service_name=service_name,
     )
+    # listen before the collector exists: the first lines have somewhere to go
+    await server.start()
+    await monitor_syslog(collector_name)
+    try:
+        config_name = await start_log_collector(collector_name, config)
+    except Exception:
+        await server.close()
+        raise
     try:
         while True:
             log_obj = await log_queue.get()
@@ -95,10 +106,8 @@ async def read_logs(
             )
     finally:
         log.info("HTTP Connection for logs disconnected")
-        if transport is not None:
-            try:
-                transport.close()
-                log.info("Closed datagram log endpoint")
-            except Exception:
-                log.exception("Exception closing transport")
-        background_tasks.add_task(docker.rm_service, syslog_service_name)
+        try:
+            await server.close()
+        except Exception:
+            log.exception("Exception closing log stream server")
+        background_tasks.add_task(remove_log_collector, collector_name, config_name)

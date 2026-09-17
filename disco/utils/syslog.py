@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from typing import Literal, TypedDict
@@ -5,7 +6,7 @@ from typing import Literal, TypedDict
 from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 
 from disco.models import ApiKey
-from disco.utils import docker, keyvalues
+from disco.utils import docker, keyvalues, vectorconfig
 
 log = logging.getLogger(__name__)
 
@@ -73,26 +74,81 @@ async def _save_syslog_urls(dbsession: DBSession, syslog_urls: list[SyslogUrl]) 
     await keyvalues.set_value(dbsession, SYSLOG_URLS_KEY, json.dumps(syslog_urls))
 
 
-async def set_syslog_services(disco_host: str, syslog_urls: list[SyslogUrl]) -> None:
-    existing_services = await docker.list_syslog_services()
-    # add missing services
-    for syslog_url in syslog_urls:
-        already_exists = False
-        for existing_service in existing_services:
-            if syslog_url["url"] == existing_service.url:
-                already_exists = True
-        if not already_exists:
+LOGGING_DESTINATION_BUFFER_KEY = "LOGGING_DESTINATION_BUFFER_BYTES"
+LOGGING_STREAM_BUFFER_KEY = "LOGGING_STREAM_BUFFER_BYTES"
+
+_reconcile_lock = asyncio.Lock()
+
+
+async def get_destination_buffer_bytes(dbsession: DBSession) -> int:
+    value = await keyvalues.get_value(dbsession, LOGGING_DESTINATION_BUFFER_KEY)
+    if value is None:
+        return vectorconfig.DEFAULT_DESTINATION_BUFFER_BYTES
+    return int(value)
+
+
+async def get_stream_buffer_bytes(dbsession: DBSession) -> int:
+    value = await keyvalues.get_value(dbsession, LOGGING_STREAM_BUFFER_KEY)
+    if value is None:
+        return vectorconfig.DEFAULT_STREAM_BUFFER_BYTES
+    return int(value)
+
+
+def _desired_service_name(
+    url: str, type: Literal["CORE", "GLOBAL"], buffer_bytes: int
+) -> str:
+    config = vectorconfig.render_syslog_config(url, type, buffer_bytes)
+    return docker.syslog_service_name(url, type, config)
+
+
+async def set_syslog_services(
+    disco_host: str,
+    syslog_urls: list[SyslogUrl],
+    buffer_bytes: int = vectorconfig.DEFAULT_DESTINATION_BUFFER_BYTES,
+) -> None:
+    """make the running collectors match the configured destinations.
+
+    identity of a collector = url + type + rendered config (image and buffer size
+    included) = its service name. a destination whose collector exists under that
+    exact name is left alone; anything else (a logspout service from before 0.34.0,
+    a collector rendered with an older config, a removed destination) is replaced:
+    new services are created BEFORE old ones are removed, so a destination never
+    goes without a collector. serialized with a lock so two api calls cannot create
+    the same service twice; safe to run at any time, including at daemon startup.
+    """
+    async with _reconcile_lock:
+        existing = await docker.list_syslog_services()
+        desired: dict[str, SyslogUrl] = {}
+        for syslog_url in syslog_urls:
+            name = _desired_service_name(
+                syslog_url["url"], syslog_url["type"], buffer_bytes
+            )
+            desired[name] = syslog_url
+        existing_names = {service.name for service in existing}
+        for name, syslog_url in desired.items():
+            if name in existing_names:
+                continue
             await docker.start_syslog_service(
                 disco_host=disco_host,
                 url=syslog_url["url"],
                 type=syslog_url["type"],
+                buffer_bytes=buffer_bytes,
             )
-    # remove extra services
-    for existing_service in existing_services:
-        should_still_exist = False
-        for syslog_url in syslog_urls:
-            if syslog_url["url"] == existing_service.url:
-                should_still_exist = True
-        if not should_still_exist:
-            log.info("Stopping Syslog service %s", existing_service.url)
-            await docker.rm_service(existing_service.name)
+        for service in existing:
+            if service.name not in desired:
+                await docker.rm_syslog_service(service)
+        await docker.prune_logging_configs()
+
+
+async def reconcile_syslog_services_on_boot() -> None:
+    """repair a partial state left by a crash between two docker calls."""
+    from disco.models.db import ReadSession
+
+    try:
+        async with ReadSession.begin() as dbsession:
+            disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
+            syslog_urls = await get_syslog_urls(dbsession)
+            buffer_bytes = await get_destination_buffer_bytes(dbsession)
+        await set_syslog_services(disco_host, syslog_urls, buffer_bytes)
+    except Exception:
+        log.exception("Failed to reconcile syslog services on boot")

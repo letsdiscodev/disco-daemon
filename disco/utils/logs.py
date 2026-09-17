@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from disco.utils import docker
+from disco.utils import docker, vectorconfig
 from disco.utils.subprocess import check_call
 
 log = logging.getLogger(__name__)
@@ -19,78 +19,144 @@ class ActiveSyslog:
 syslog_list_lock = asyncio.Lock()
 _active_syslogs: list[ActiveSyslog] = []
 
-LOGSPOUT_CMD = [
-    "docker",
-    "service",
-    "create",
-    "--name",
-    "{name}",
-    "--mode",
-    "global",
-    "--env",
-    "BACKLOG=false",
-    "--env",
-    'RAW_FORMAT={ "container" : "{{`{{ .Container.Name }}`}}", '
-    '"labels": {{`{{ toJSON .Container.Config.Labels }}`}}, '
-    '"timestamp": "{{`{{ .Time.Format "2006-01-02T15:04:05Z07:00" }}`}}", '
-    '"message": {{`{{ toJSON .Data }}`}} }',
-    "--mount",
-    "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
-    "--network",
-    "disco-logging",
-    "--env",
-    "ALLOW_TTY=true",
-    "--label",
-    "disco.syslogs",
-    "--log-driver",
-    "json-file",
-    "--log-opt",
-    "max-size=20m",
-    "--log-opt",
-    "max-file=5",
-    "gliderlabs/logspout:latest",
-    "raw://disco:{port}",
-]
+STREAM_QUEUE_MAX = 1000
+# a docker record is at most 16 KB, but vector merges partial records: one line without
+# a newline can be as long as the writer made it. above this the connection is dropped
+# (the collector reconnects and resends from its buffer, the line is logged and skipped).
+STREAM_LINE_LIMIT = 64 * 1024 * 1024
+STREAM_TASK_MEMORY_LIMIT = "256m"
 
 
-class JsonLogServer(asyncio.DatagramProtocol):
+def build_streaming_service_args(name: str, config_name: str) -> list[str]:
+    """pure: the `docker service create` argv for one `disco logs` collector.
+
+    no buffer volume: the disk buffer lives in the task's own filesystem and goes away
+    with the service when the client disconnects.
+    """
+    return [
+        "docker",
+        "service",
+        "create",
+        "--name",
+        name,
+        "--detach",
+        "--mode",
+        "global",
+        "--label",
+        "disco.syslogs",
+        "--label",
+        f"disco.syslog.config={config_name}",
+        "--label",
+        f"disco.syslog.image={vectorconfig.VECTOR_IMAGE}",
+        "--config",
+        f"source={config_name},target={vectorconfig.VECTOR_CONFIG_PATH}",
+        "--mount",
+        "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+        "--network",
+        "disco-logging",
+        "--limit-memory",
+        STREAM_TASK_MEMORY_LIMIT,
+        "--log-driver",
+        "json-file",
+        "--log-opt",
+        "max-size=20m",
+        "--log-opt",
+        "max-file=5",
+        vectorconfig.VECTOR_IMAGE,
+        "--config",
+        vectorconfig.VECTOR_CONFIG_PATH,
+    ]
+
+
+LogObject = dict[str, str | dict[str, str]]
+
+
+def parse_stream_line(line: bytes) -> LogObject | None:
+    """one json line from the collector -> {"container","labels","timestamp","message"}."""
+    try:
+        json_str = line.decode("utf-8")
+    except UnicodeDecodeError:
+        log.error("Failed to UTF-8 decode log line: %r", line[:200])
+        return None
+    try:
+        log_obj = json.loads(json_str)
+    except json.decoder.JSONDecodeError:
+        log.error("Failed to JSON decode log line: %s", json_str[:200])
+        return None
+    if not isinstance(log_obj, dict) or not isinstance(log_obj.get("labels"), dict):
+        log.error("Unexpected log line shape: %s", json_str[:200])
+        return None
+    return log_obj
+
+
+def log_matches(
+    log_obj: LogObject, project_name: str | None, service_name: str | None
+) -> bool:
+    labels = log_obj["labels"]
+    assert isinstance(labels, dict)
+    if project_name is not None and labels.get("disco.project.name") != project_name:
+        return False
+    if service_name is not None and labels.get("disco.service.name") != service_name:
+        return False
+    return True
+
+
+class LogStreamServer:
+    """tcp listener for one `disco logs` client: the collector on every node connects
+    and sends json lines; matching lines go into a bounded queue that the sse writer
+    drains. when the client is slow the queue fills, this server stops reading, the
+    collector's sink blocks and its buffer holds the backlog (backpressure, no drops)."""
+
     def __init__(
         self,
-        log_queue,
-        project_name: str | None = None,
-        service_name: str | None = None,
-    ):
+        port: int,
+        log_queue: "asyncio.Queue[LogObject]",
+        project_name: str | None,
+        service_name: str | None,
+    ) -> None:
+        self.port = port
         self.log_queue = log_queue
         self.project_name = project_name
         self.service_name = service_name
+        self.server: asyncio.AbstractServer | None = None
 
-    def connection_made(self, transport):
-        self.transport = transport
+    async def start(self) -> None:
+        self.server = await asyncio.start_server(
+            self._handle, "0.0.0.0", self.port, limit=STREAM_LINE_LIMIT
+        )
 
-    def datagram_received(self, data, addr):
+    async def _handle(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        peer = writer.get_extra_info("peername")
+        log.info("Log collector connected from %s on port %d", peer, self.port)
         try:
-            json_str = data.decode("utf-8")
-        except UnicodeDecodeError:
-            log.error("Failed to UTF-8 decode log str: %s", data)
-            return
-        try:
-            log_obj = json.loads(json_str)
-        except json.decoder.JSONDecodeError:
-            log.error("Failed to JSON decode log str: %s", json_str)
-            return
-        if self.project_name is not None:
-            if log_obj["labels"].get("disco.project.name") != self.project_name:
-                return
-        if self.service_name is not None:
-            if log_obj["labels"].get("disco.service.name") != self.service_name:
-                return
-        self.log_queue.put_nowait(log_obj)
-
-    def connection_lost(self, exception):
-        try:
-            self.transport.close()
-        except Exception:
+            while True:
+                line = await reader.readline()
+                if len(line) == 0:
+                    break
+                log_obj = parse_stream_line(line.rstrip(b"\n"))
+                if log_obj is None:
+                    continue
+                if not log_matches(log_obj, self.project_name, self.service_name):
+                    continue
+                await self.log_queue.put(log_obj)
+        except (asyncio.IncompleteReadError, ConnectionResetError):
             pass
+        except ValueError:
+            log.exception(
+                "Log line over %d bytes from %s, dropping the connection",
+                STREAM_LINE_LIMIT,
+                peer,
+            )
+        finally:
+            writer.close()
+            log.info("Log collector from %s disconnected", peer)
+
+    async def close(self) -> None:
+        if self.server is not None:
+            self.server.close()
+            await self.server.wait_closed()
 
 
 async def monitor_syslog(service_name: str) -> None:
@@ -135,3 +201,19 @@ async def clean_up_rogue_syslogs() -> None:
         if running_syslog not in active_syslogs:
             log.warning("Killing rogue syslog %s", running_syslog)
             await docker.rm_service(running_syslog)
+    await docker.prune_logging_configs()
+
+
+async def start_log_collector(service_name: str, config: str) -> str:
+    """create the config object and the global collector service; returns the config name."""
+    config_name = docker.stream_config_name(config)
+    await docker.create_config(config_name, config)
+    await check_call(build_streaming_service_args(service_name, config_name))
+    return config_name
+
+
+async def remove_log_collector(service_name: str, config_name: str) -> None:
+    try:
+        await docker.rm_service(service_name)
+    finally:
+        await docker.rm_config_if_unused(config_name)

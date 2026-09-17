@@ -6,7 +6,11 @@ import sys
 
 from disco.models.db import Session, build_engines
 from disco.utils import keyvalues
-from disco.utils.syslog import set_core_syslogs, set_syslog_services
+from disco.utils.syslog import (
+    get_destination_buffer_bytes,
+    set_core_syslogs,
+    set_syslog_services,
+)
 
 log = logging.getLogger(__name__)
 
@@ -22,4 +26,5 @@ async def _main(urls: list[str]) -> None:
     async with Session.begin() as dbsession:
         disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
         syslog_urls = await set_core_syslogs(dbsession, urls)
-    await set_syslog_services(disco_host, syslog_urls)
+        buffer_bytes = await get_destination_buffer_bytes(dbsession)
+    await set_syslog_services(disco_host, syslog_urls, buffer_bytes)

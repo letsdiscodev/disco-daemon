@@ -41,6 +41,7 @@ async def _main() -> None:
         assert installed_version is not None
     if installed_version == disco.__version__:
         print(f"Current version is latest ({disco.__version__}), not updating.")
+        await _start_daemon_if_missing(image)
         async with Session.begin() as dbsession:
             await save_done_updating(dbsession)
         return
@@ -95,6 +96,20 @@ async def _main() -> None:
         await save_done_updating(dbsession)
 
 
+async def _start_daemon_if_missing(image: str) -> None:
+    """an update that died after writing the version but before restarting the
+    daemon leaves `disco` removed: running the update again must bring it back."""
+    from disco.utils import docker
+
+    if await docker.service_exists("disco"):
+        return
+    print("The Disco service is missing, starting it")
+    async with ReadSession.begin() as dbsession:
+        host_home = await keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
+    assert host_home is not None
+    await start_disco_daemon(host_home, image)
+
+
 def _rerun_command(image: str) -> str:
     """The command the daemon ran (see disco.utils.meta.update_disco)."""
     from disco.utils.dqlite import DQLITE_OVERLAY_NETWORK
@@ -128,6 +143,100 @@ def _alembic_upgrade(connection, version_hash: str) -> None:
     config = Config("/disco/app/alembic.ini")
     config.attributes["connection"] = connection
     command.upgrade(config, version_hash)
+
+
+async def task_0_33_x(image: str) -> None:
+    """logspout -> vector for every syslog destination (see docs/logging.md).
+
+    per destination: create the vector collector, wait until it runs on every node,
+    emit a marker line that must reach the destination through vector, THEN remove the
+    logspout service. never remove-before-create. streaming collectors (`disco logs`)
+    are removed, clients reconnect. idempotent and resumable: a run that dies at any
+    point can be run again and finds the vector collectors it already created. the
+    version is written last.
+    """
+    from disco.utils import docker
+    from disco.utils.syslog import get_destination_buffer_bytes, get_syslog_urls
+
+    print("Updating from 0.33.x to 0.34.0")
+    async with ReadSession.begin() as dbsession:
+        disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
+        syslog_urls = await get_syslog_urls(dbsession)
+        buffer_bytes = await get_destination_buffer_bytes(dbsession)
+    print(f"Pulling {docker.vectorconfig.VECTOR_IMAGE}")
+    await docker.pull(docker.vectorconfig.VECTOR_IMAGE)
+    existing = await docker.list_syslog_services()
+    for syslog_url in syslog_urls:
+        url, type = syslog_url["url"], syslog_url["type"]
+        config = docker.vectorconfig.render_syslog_config(url, type, buffer_bytes)
+        name = docker.syslog_service_name(url, type, config)
+        if name not in {service.name for service in existing}:
+            print(f"Starting the Vector collector for {url} ({type})")
+            await docker.start_syslog_service(
+                disco_host=disco_host, url=url, type=type, buffer_bytes=buffer_bytes
+            )
+        else:
+            print(f"Vector collector for {url} ({type}) already exists")
+        ready = await docker.wait_for_global_service(name, timeout=300)
+        if not ready:
+            raise Exception(
+                f"The Vector collector {name} for {url} is not running on every node"
+            )
+        await _emit_logging_migration_marker(url, type)
+        for service in existing:
+            if service.url == url and service.type == type and service.impl is None:
+                print(f"Removing the logspout service {service.name} for {url}")
+                await docker.rm_syslog_service(service)
+    # logspout services for destinations that are no longer configured
+    for service in existing:
+        if service.impl is None and await docker.service_exists(service.name):
+            print(f"Removing the logspout service {service.name} for {service.url}")
+            await docker.rm_syslog_service(service)
+    streaming = await docker.list_streaming_services()
+    for name in streaming:
+        print(f"Removing the streaming collector {name} (clients reconnect)")
+        await docker.rm_service(name)
+    await docker.prune_logging_configs()
+    async with Session.begin() as dbsession:
+        await keyvalues.set_value(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.34.0"
+        )
+
+
+async def _emit_logging_migration_marker(url: str, type: str) -> None:
+    """a line that must show up at the destination, sent through the new collector.
+
+    the updater itself is labelled disco.log.core=true, so its own output reaches CORE
+    destinations; for GLOBAL ones a throwaway container emits the line. the container
+    is not `--rm`: an auto-removed container that exits at once is gone before the
+    collector attaches to it.
+    """
+    from disco.config import BUSYBOX_VERSION
+    from disco.utils import docker
+
+    marker = f"disco logging migration to vector 0.34.0: {type} {url}"
+    print(marker)
+    if type != "GLOBAL":
+        return
+    name = f"disco-logging-migration-{docker.vectorconfig.destination_id(url, type)}"
+    await call(["docker", "rm", "-f", name])
+    await check_call(
+        [
+            "docker",
+            "run",
+            "--detach",
+            "--name",
+            name,
+            "--label",
+            "disco.log.migration=true",
+            f"busybox:{BUSYBOX_VERSION}",
+            "sh",
+            "-c",
+            f"echo '{marker}'; sleep 5",
+        ]
+    )
+    await asyncio.sleep(6)
+    await call(["docker", "rm", "-f", name])
 
 
 async def task_0_32_x(image: str) -> None:
@@ -728,7 +837,6 @@ async def task_0_13_x(image: str) -> None:
 
 
 async def task_0_12_x(image: str) -> None:
-
     print("Updating from 0.12.x to 0.13.0")
     async with ReadSession.begin() as dbsession:
         host_home = await keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
@@ -1025,6 +1133,8 @@ def get_update_function_for_version(version: str) -> Callable[[str], Awaitable[N
         return task_0_31_x
     if version.startswith("0.32."):
         return task_0_32_x
+    if version.startswith("0.33."):
+        return task_0_33_x
     if version.startswith("0.33."):
         assert disco.__version__.startswith("0.33.")
         return task_patch

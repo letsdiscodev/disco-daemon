@@ -6,7 +6,6 @@ import re
 import shlex
 import signal
 import subprocess
-import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from multiprocessing import cpu_count
@@ -15,6 +14,7 @@ from typing import AsyncGenerator, Awaitable, Callable, Literal
 import disco
 from disco.config import BUSYBOX_VERSION
 from disco.errors import ProcessStatusError
+from disco.utils import vectorconfig
 from disco.utils.discofile import DiscoFile
 from disco.utils.discofile import Service as DiscoService
 from disco.utils.filesystem import project_path
@@ -543,6 +543,10 @@ class SyslogService:
     name: str
     type: str
     url: str
+    # None on a logspout service (before 0.34.0)
+    impl: str | None = None
+    image: str | None = None
+    config: str | None = None
 
 
 async def list_syslog_services() -> list[SyslogService]:
@@ -568,33 +572,61 @@ async def list_syslog_services() -> list[SyslogService]:
     services_data = json.loads(services_json)
     services = []
     for service_data in services_data:
+        labels = service_data["Spec"]["Labels"]
         service = SyslogService(
             name=service_data["Spec"]["Name"],
-            type=service_data["Spec"]["Labels"]["disco.syslog.type"],
-            url=service_data["Spec"]["Labels"]["disco.syslog.url"],
+            type=labels["disco.syslog.type"],
+            url=labels["disco.syslog.url"],
+            impl=labels.get("disco.syslog.impl"),
+            image=labels.get("disco.syslog.image"),
+            config=labels.get("disco.syslog.config"),
         )
         services.append(service)
     return services
 
 
-def _logspout_url(url: str, type: Literal["CORE", "GLOBAL"]) -> str:
-    if type == "CORE":
-        return f"{url}?filter.labels=disco.log.core:true"
-    assert type == "GLOBAL"
-    return url
+SYSLOG_CONFIG_PREFIX = "disco-syslog-cfg-"
+STREAM_CONFIG_PREFIX = "disco-stream-cfg-"
+SYSLOG_BUFFER_VOLUME_PREFIX = "disco-vector-buffer-"
+# hard caps for one collector task per node (observed under a 50k lines/s burst on
+# 0.58.0: ~140 MB udp, ~80 MB tls); the disk buffer survives an oom restart
+SYSLOG_TASK_MEMORY_LIMIT = "512m"
+STREAM_TASK_MEMORY_LIMIT = "256m"
 
 
-async def start_syslog_service(
-    disco_host: str, url: str, type: Literal["CORE", "GLOBAL"]
-) -> None:
-    log.info("Starting Syslog service %s %s", url, type)
-    syslog_url = _logspout_url(url=url, type=type)
-    args = [
+def syslog_service_name(url: str, type: Literal["CORE", "GLOBAL"], config: str) -> str:
+    """deterministic: the same destination with the same rendered config has one name,
+    a config change gets a new name so the new service can overlap the old one."""
+    dest = vectorconfig.destination_id(url, type)
+    return f"disco-syslog-{dest}-{vectorconfig.config_hash(config)}"
+
+
+def syslog_config_name(config: str) -> str:
+    return f"{SYSLOG_CONFIG_PREFIX}{vectorconfig.config_hash(config)}"
+
+
+def stream_config_name(config: str) -> str:
+    return f"{STREAM_CONFIG_PREFIX}{vectorconfig.config_hash(config)}"
+
+
+def syslog_buffer_volume_name(url: str, type: Literal["CORE", "GLOBAL"]) -> str:
+    return f"{SYSLOG_BUFFER_VOLUME_PREFIX}{vectorconfig.destination_id(url, type)}"
+
+
+def build_syslog_service_args(
+    disco_host: str,
+    url: str,
+    type: Literal["CORE", "GLOBAL"],
+    config: str,
+) -> list[str]:
+    """pure: the `docker service create` argv for one vector syslog collector."""
+    config_name = syslog_config_name(config)
+    return [
         "docker",
         "service",
         "create",
         "--name",
-        f"disco-syslog-{uuid.uuid4().hex}",
+        syslog_service_name(url, type, config),
         "--detach",
         "--label",
         "disco.syslog",
@@ -602,24 +634,201 @@ async def start_syslog_service(
         f"disco.syslog.url={url}",
         "--label",
         f"disco.syslog.type={type}",
+        "--label",
+        "disco.syslog.impl=vector",
+        "--label",
+        f"disco.syslog.image={vectorconfig.VECTOR_IMAGE}",
+        "--label",
+        f"disco.syslog.config={config_name}",
+        "--config",
+        f"source={config_name},target={vectorconfig.VECTOR_CONFIG_PATH}",
         "--mount",
         "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+        "--mount",
+        f"type=volume,source={syslog_buffer_volume_name(url, type)},"
+        f"target={vectorconfig.VECTOR_DATA_DIR}",
         "--env",
-        f"SYSLOG_HOSTNAME={disco_host}",
-        "--env",
-        "EXCLUDE_LABELS=disco.log.exclude",
+        f"{vectorconfig.HOSTNAME_ENV}={disco_host}",
         "--mode",
         "global",
+        "--limit-memory",
+        SYSLOG_TASK_MEMORY_LIMIT,
         "--log-driver",
         "json-file",
         "--log-opt",
         "max-size=20m",
         "--log-opt",
         "max-file=5",
-        "gliderlabs/logspout:latest",
-        syslog_url,
+        vectorconfig.VECTOR_IMAGE,
+        "--config",
+        vectorconfig.VECTOR_CONFIG_PATH,
     ]
-    await check_call(args)
+
+
+async def config_exists(name: str) -> bool:
+    process = await asyncio.create_subprocess_exec(
+        "docker",
+        "config",
+        "inspect",
+        name,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    await process.wait()
+    return process.returncode == 0
+
+
+async def create_config(name: str, content: str) -> None:
+    """swarm configs are immutable: creating an existing name is a no-op here."""
+    if await config_exists(name):
+        return
+    log.info("Creating Docker config %s", name)
+    await check_call(["docker", "config", "create", name, "-"], stdin=content)
+
+
+async def rm_config(name: str) -> None:
+    log.info("Removing Docker config %s", name)
+    await check_call(["docker", "config", "rm", name])
+
+
+async def list_configs(prefix: str) -> list[str]:
+    stdout, _, _ = await check_call(
+        ["docker", "config", "ls", "--format", "{{ .Name }}"]
+    )
+    return [name for name in stdout if name.startswith(prefix)]
+
+
+async def services_using_config(config_name: str) -> list[str]:
+    stdout, _, _ = await check_call(
+        [
+            "docker",
+            "service",
+            "ls",
+            "--filter",
+            f"label=disco.syslog.config={config_name}",
+            "--format",
+            "{{ .Name }}",
+        ]
+    )
+    return stdout
+
+
+async def rm_config_if_unused(config_name: str) -> None:
+    if len(await services_using_config(config_name)) > 0:
+        return
+    if await config_exists(config_name):
+        await rm_config(config_name)
+
+
+async def prune_logging_configs() -> None:
+    """configs of collectors that no longer exist (a crash between rm and cleanup)."""
+    for prefix in (SYSLOG_CONFIG_PREFIX, STREAM_CONFIG_PREFIX):
+        for name in await list_configs(prefix):
+            await rm_config_if_unused(name)
+
+
+async def start_syslog_service(
+    disco_host: str,
+    url: str,
+    type: Literal["CORE", "GLOBAL"],
+    buffer_bytes: int = vectorconfig.DEFAULT_DESTINATION_BUFFER_BYTES,
+) -> str:
+    """create the vector collector for one destination; returns the service name."""
+    config = vectorconfig.render_syslog_config(url, type, buffer_bytes)
+    name = syslog_service_name(url, type, config)
+    log.info("Starting Syslog service %s for %s %s", name, url, type)
+    # the rendered config is logged so it exists somewhere other than the swarm store
+    log.info("Vector config for %s %s:\n%s", url, type, config)
+    await create_config(syslog_config_name(config), config)
+    await check_call(build_syslog_service_args(disco_host, url, type, config))
+    return name
+
+
+async def rm_syslog_service(service: SyslogService) -> None:
+    log.info(
+        "Stopping Syslog service %s (%s %s)", service.name, service.url, service.type
+    )
+    await rm_service(service.name)
+    if service.config is not None:
+        await rm_config_if_unused(service.config)
+    if service.impl == "vector":
+        # the buffer volume on this node; on worker nodes the local volume stays until
+        # the node is pruned (a global service leaves one per node)
+        volume = syslog_buffer_volume_name(service.url, service.type)  # type: ignore[arg-type]
+        await call(["docker", "volume", "rm", volume])
+
+
+async def list_streaming_services() -> list[str]:
+    stdout, _, _ = await check_call(
+        [
+            "docker",
+            "service",
+            "ls",
+            "--filter",
+            "label=disco.syslogs",
+            "--format",
+            "{{ .Name }}",
+        ]
+    )
+    return stdout
+
+
+async def running_task_nodes(service_name: str) -> set[str]:
+    """node ids with a running task of the service."""
+    stdout, _, _ = await check_call(
+        [
+            "docker",
+            "service",
+            "ps",
+            service_name,
+            "--filter",
+            "desired-state=running",
+            "--format",
+            "{{ .Node }} {{ .CurrentState }}",
+            "--no-trunc",
+        ]
+    )
+    return {
+        line.split(" ", 1)[0]
+        for line in stdout
+        if line.split(" ", 1)[1].startswith("Running")
+    }
+
+
+async def eligible_nodes() -> set[str]:
+    """nodes a global service gets a task on: ready and active."""
+    stdout, _, _ = await check_call(
+        [
+            "docker",
+            "node",
+            "ls",
+            "--format",
+            "{{ .Hostname }} {{ .Status }} {{ .Availability }}",
+        ]
+    )
+    return {
+        line.split()[0] for line in stdout if line.split()[1:] == ["Ready", "Active"]
+    }
+
+
+async def wait_for_global_service(service_name: str, timeout: float = 180) -> bool:
+    """true once the service has a running task on every eligible node."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        nodes = await eligible_nodes()
+        running = await running_task_nodes(service_name)
+        if len(nodes) > 0 and nodes <= running:
+            return True
+        if asyncio.get_running_loop().time() > deadline:
+            log.warning(
+                "Service %s not running everywhere after %ss: nodes=%s running=%s",
+                service_name,
+                timeout,
+                sorted(nodes),
+                sorted(running),
+            )
+            return False
+        await asyncio.sleep(2)
 
 
 async def update_syslog_hostname(service_name: str, disco_host: str) -> None:
@@ -1024,7 +1233,6 @@ def get_image_name_for_service(
 async def login(
     disco_host_home: str, address: str, username: str, password: str
 ) -> None:
-
     log.info("Docker login to %s", address)
     args = [
         "docker",
@@ -1047,7 +1255,6 @@ async def login(
 
 
 async def logout(disco_host_home: str, address: str) -> None:
-
     log.info("Docker logout from %s", address)
     args = [
         "docker",

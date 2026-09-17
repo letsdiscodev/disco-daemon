@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from disco.auth import get_api_key_wo_tx
 from disco.models.db import ReadSession, Session
@@ -11,10 +11,12 @@ from disco.utils import keyvalues
 from disco.utils.apikeys import get_valid_api_key_by_id
 from disco.utils.syslog import (
     add_syslog_url,
+    get_destination_buffer_bytes,
     get_syslog_urls,
     remove_syslog_url,
     set_syslog_services,
 )
+from disco.utils.vectorconfig import InvalidSyslogUrl, parse_syslog_url
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +31,15 @@ class SyslogAction(Enum):
 class AddRemoveSyslogReqBody(BaseModel):
     action: SyslogAction
     url: str = Field(..., pattern=r"^syslog(\+tls)?://\S+:\d+$")
+
+    @field_validator("url")
+    @classmethod
+    def _valid_syslog_url(cls, value: str) -> str:
+        try:
+            parse_syslog_url(value)
+        except InvalidSyslogUrl as e:
+            raise ValueError(str(e))
+        return value
 
 
 @router.post("/api/syslog")
@@ -49,7 +60,10 @@ async def syslog_post(
                 dbsession, add_remove_syslog.url, api_key
             )
         disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
-    await set_syslog_services(disco_host=disco_host, syslog_urls=syslog_urls)
+        buffer_bytes = await get_destination_buffer_bytes(dbsession)
+    await set_syslog_services(
+        disco_host=disco_host, syslog_urls=syslog_urls, buffer_bytes=buffer_bytes
+    )
     return {
         "urls": [
             syslog_url["url"]
