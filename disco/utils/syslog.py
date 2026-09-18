@@ -98,15 +98,6 @@ async def get_stream_buffer_bytes(dbsession: DBSession) -> int:
     return int(value)
 
 
-_buffer_bytes_cache = {"value": vectorconfig.DEFAULT_DESTINATION_BUFFER_BYTES}
-
-
-def get_destination_buffer_bytes_sync() -> int:
-    """the last value read from the db by the reconciler (for callers without a db
-    session, the hostname update)."""
-    return _buffer_bytes_cache["value"]
-
-
 def _desired_service_name(
     url: str, type: Literal["CORE", "GLOBAL"], buffer_bytes: int, disco_host: str
 ) -> str:
@@ -129,7 +120,6 @@ async def set_syslog_services(
     goes without a collector. serialized with a lock so two api calls cannot create
     the same service twice; safe to run at any time, including at daemon startup.
     """
-    _buffer_bytes_cache["value"] = buffer_bytes
     async with _reconcile_lock:
         existing = await docker.list_syslog_services()
         desired: dict[str, SyslogUrl] = {}

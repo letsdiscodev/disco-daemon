@@ -984,32 +984,6 @@ async def wait_for_global_service(service_name: str, timeout: float = 180) -> bo
         await asyncio.sleep(2)
 
 
-async def update_syslog_hostname(service_name: str, disco_host: str) -> None:
-    """re-label the frames of one collector with a new hostname: a new collector with
-    the hostname in its config is created, then the old one removed (overlap, no gap).
-    the buffer size is taken from the old collector's config name when it matches the
-    default; callers that know it use the reconciler instead."""
-    from disco.utils.syslog import get_destination_buffer_bytes_sync
-
-    services = [s for s in await list_syslog_services() if s.name == service_name]
-    if len(services) == 0:
-        log.warning("Syslog service %s not found, hostname not updated", service_name)
-        return
-    service = services[0]
-    buffer_bytes = get_destination_buffer_bytes_sync()
-    new_name = await start_syslog_service(
-        disco_host=disco_host,
-        url=service.url,
-        type=service.type,  # type: ignore[arg-type]
-        buffer_bytes=buffer_bytes,
-    )
-    if new_name == service.name:
-        return
-    await wait_for_global_service(new_name, timeout=120)
-    await asyncio.sleep(COLLECTOR_SETTLE_SECONDS)
-    await rm_syslog_service(service)
-
-
 async def get_node_count() -> int:
     log.info("Getting Docker Swarm node count")
     args = [
