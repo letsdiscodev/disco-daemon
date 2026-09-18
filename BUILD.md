@@ -12,13 +12,9 @@ docker buildx build \
 
 ## Tests
 
-```
-uv run pytest
-```
-
-Unit tests for the pure parts (the vector config renderer, the syslog url parser, the
-collector command builders, the reconciler with docker stubbed). The integration gate is
-disco-tester with `--build-local`.
+The tests live in disco-tester: `uv run pytest` there covers the pure logging modules of
+this repo (config renderer, url parser, collector command builders, reconciler with docker
+stubbed), and `uv run disco-tester run --build-local ...` is the integration gate.
 
 ## Log forwarding image
 
