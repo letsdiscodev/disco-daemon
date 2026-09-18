@@ -1,7 +1,9 @@
 import asyncio
 import logging
+import os
 import re
 import tarfile
+import tempfile
 import uuid
 from collections.abc import AsyncIterator
 
@@ -63,6 +65,29 @@ async def receive_tar_gz(project_name: str, chunks: AsyncIterator[bytes]) -> str
         return destination
     finally:
         await aiofiles.os.remove(archive_path)
+
+
+async def write_tar_gz(project_name: str, directory: str | None) -> str:
+    """Creates a tar.gz of the directory. Returns the file path.
+
+    Empty when directory is None or missing.
+    In a temporary file the caller has to remove.
+
+    """
+    fd, archive_path = tempfile.mkstemp(prefix=f"{project_name}-", suffix=".tar.gz")
+    os.close(fd)
+
+    def create() -> None:
+        try:
+            with tarfile.open(archive_path, "w:gz") as tar:
+                if directory is not None and os.path.isdir(directory):
+                    tar.add(directory, arcname=".")
+        except OSError:
+            os.remove(archive_path)
+            raise
+
+    await asyncio.get_running_loop().run_in_executor(None, create)
+    return archive_path
 
 
 async def write_disco_file(project_name: str, disco_file: DiscoFile) -> str:

@@ -4,10 +4,13 @@ import logging
 from datetime import datetime
 from typing import Annotated
 
+import aiofiles.os
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sse_starlette import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
+from starlette.background import BackgroundTask
 
 from disco.auth import get_api_key_wo_tx
 from disco.endpoints.dependencies import get_project_name_from_url_wo_tx
@@ -20,11 +23,12 @@ from disco.utils.deployments import (
     create_deployment,
     get_deployment_by_number,
     get_deployments_with_status,
+    get_files_deployment_for_download,
     get_last_deployment,
 )
 from disco.utils.discofile import DiscoFile
 from disco.utils.envvariables import get_env_variable_by_name
-from disco.utils.filesystem import rmtree
+from disco.utils.filesystem import path_unlink, project_path, rmtree
 from disco.utils.projects import get_project_by_name
 
 log = logging.getLogger(__name__)
@@ -116,8 +120,7 @@ async def _require_no_github_repo(project_name: str) -> None:
         if await project.awaitable_attrs.github_repo is not None:
             raise HTTPException(
                 status_code=422,
-                detail="Project has a GitHub repository: deploy a commit, "
-                "or remove the repository from the project to deploy files",
+                detail="Not available when the project has a GitHub repository",
             )
 
 
@@ -253,6 +256,63 @@ async def files_post(
     return await _create_files_deployment(
         project_name, received_path, api_key_id, background_tasks
     )
+
+
+@router.get(
+    "/api/projects/{project_name}/files",
+    dependencies=[Depends(get_api_key_wo_tx)],
+)
+async def files_get(
+    project_name: Annotated[str, Depends(get_project_name_from_url_wo_tx)],
+):
+    """GET the files of a FILES deployment, as a tar.gz."""
+    await _require_no_github_repo(project_name)
+    for _ in range(10):
+        number, status = await _files_deployment_for_download(project_name)
+        if number is None:
+            directory = None
+        elif await aiofiles.os.path.isdir(
+            pendingfiles.pending_path(project_name, number)
+        ):
+            # queued, or live and set aside by a deployment in progress
+            directory = pendingfiles.pending_path(project_name, number)
+        else:
+            # in progress or live: project directory
+            directory = project_path(project_name)
+        try:
+            archive_path = await pendingfiles.write_tar_gz(project_name, directory)
+        except OSError:
+            continue  # a deployment moved the files while they were read
+        if (number, status) == await _files_deployment_for_download(project_name):
+            break # deployment didn't change while generating file, continue with that
+        # deployment changed while generating file, start over
+        await path_unlink(archive_path)
+    else:
+        raise HTTPException(status_code=503, detail="Deployments are changing, retry")
+    headers = {}
+    if number is not None:
+        assert status is not None
+        headers["X-Disco-Deployment"] = str(number)
+        headers["X-Disco-Deployment-Status"] = status
+    return FileResponse(
+        archive_path,
+        media_type="application/gzip",
+        filename=f"{project_name}.tar.gz",
+        headers=headers,
+        background=BackgroundTask(path_unlink, archive_path),
+    )
+
+
+async def _files_deployment_for_download(
+    project_name: str,
+) -> tuple[int, str] | tuple[None, None]:
+    async with ReadSession.begin() as dbsession:
+        project = await get_project_by_name(dbsession, project_name)
+        assert project is not None
+        deployment = await get_files_deployment_for_download(dbsession, project)
+        if deployment is None:
+            return None, None
+        return deployment.number, deployment.status
 
 
 @router.get(

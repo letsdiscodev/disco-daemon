@@ -312,6 +312,36 @@ async def get_superseding_deployment(
     return result.scalars().first()
 
 
+async def get_files_deployment_for_download(
+    dbsession: DBSession, project: Project
+) -> Deployment | None:
+    # The latest FILES deployment that is not live yet.
+    stmt = (
+        select(Deployment)
+        .where(Deployment.project == project)
+        .where(Deployment.status.in_(["QUEUED", "PREPARING", "REPLACING"]))
+        .where(Deployment.deployment_type == "FILES")
+        .order_by(Deployment.number.desc())
+        .limit(1)
+    )
+    deployment = (await dbsession.execute(stmt)).scalars().first()
+    if deployment is not None:
+        return deployment
+    # Else, the latest FILES deployment that is or has been live.
+    stmt = (
+        select(Deployment)
+        .where(Deployment.project == project)
+        .where(Deployment.status == "COMPLETE")
+        .where(Deployment.deployment_type != "ENV_VAR")
+        .order_by(Deployment.number.desc())
+        .limit(1)
+    )
+    deployment = (await dbsession.execute(stmt)).scalars().first()
+    if deployment is None or deployment.deployment_type != "FILES":
+        return None
+    return deployment
+
+
 async def get_deployment_in_progress(
     dbsession: DBSession, project: Project
 ) -> Deployment | None:
