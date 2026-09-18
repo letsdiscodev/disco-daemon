@@ -211,8 +211,9 @@ class LogStreamServer:
         self.server: asyncio.AbstractServer | None = None
         self._writers: set[asyncio.StreamWriter] = set()
         self._handlers: set[asyncio.Task] = set()
-        # set when the first collector task connects: the source is running by then
-        self.connected = asyncio.Event()
+        # one collector task per node connects; the source of each is running by then
+        self.connections = 0
+        self.connected = asyncio.Condition()
 
     async def start(self) -> None:
         self.server = await asyncio.start_server(
@@ -228,36 +229,56 @@ class LogStreamServer:
         task = asyncio.current_task()
         if task is not None:
             self._handlers.add(task)
-        self.connected.set()
+        async with self.connected:
+            self.connections += 1
+            self.connected.notify_all()
         try:
             while True:
-                line = await reader.readline()
-                if len(line) == 0:
-                    break
+                try:
+                    line = await reader.readuntil(b"\n")
+                except asyncio.LimitOverrunError:
+                    # one record over the limit: skip it, keep the connection
+                    await _skip_line(reader)
+                    log.warning(
+                        "Skipped a log record over %d bytes from %s",
+                        STREAM_LINE_LIMIT,
+                        peer,
+                    )
+                    continue
+                except asyncio.IncompleteReadError as e:
+                    line = e.partial
+                    if len(line) == 0:
+                        break
                 log_obj = parse_stream_line(line.rstrip(b"\n"))
                 if log_obj is None:
                     continue
                 if not log_matches(log_obj, self.project_name, self.service_name):
                     continue
                 await self.log_queue.put(log_obj)
-        except (asyncio.IncompleteReadError, ConnectionResetError):
+        except ConnectionResetError:
             pass
         except asyncio.CancelledError:
             # close(): the client is gone, a put() blocked on a full queue must not
             # keep this handler and its lines alive
             pass
-        except ValueError:
-            log.exception(
-                "Log line over %d bytes from %s, dropping the connection",
-                STREAM_LINE_LIMIT,
-                peer,
-            )
         finally:
             self._writers.discard(writer)
             if task is not None:
                 self._handlers.discard(task)
             writer.close()
             log.info("Log collector from %s disconnected", peer)
+
+    async def wait_for_connections(self, count: int, timeout: float) -> bool:
+        """true once `count` collector tasks have connected (one per node)."""
+        try:
+            async with self.connected:
+                await asyncio.wait_for(
+                    self.connected.wait_for(lambda: self.connections >= count),
+                    timeout=timeout,
+                )
+            return True
+        except TimeoutError:
+            return False
 
     async def close(self) -> None:
         """stop listening and drop the collector connections. `wait_closed` waits for
@@ -331,9 +352,36 @@ async def start_log_collector(service_name: str, config: str) -> str:
 
 
 async def remove_log_collector(service_name: str, config_name: str) -> None:
+    """remove the collector; a `docker service create` cancelled mid-way can still
+    commit after this runs, so a missing service is looked for again for a while."""
     try:
-        await docker.rm_service(service_name)
+        for _ in range(10):
+            if await docker.service_exists(service_name):
+                await docker.rm_service(service_name)
+                break
+            await asyncio.sleep(3)
     finally:
         docker.cleanup_in_background(
             f"config {config_name}", lambda: docker._config_removed(config_name)
         )
+
+
+async def _skip_line(reader: asyncio.StreamReader) -> None:
+    while True:
+        chunk = await reader.read(64 * 1024)
+        if not chunk or b"\n" in chunk:
+            return
+
+
+async def remove_all_log_collectors() -> None:
+    """at boot: no client can be attached to a daemon that just started, every
+    streaming collector left by the previous process is an orphan."""
+    for name in await get_running_syslogs():
+        log.info(
+            "Removing the streaming collector %s left by the previous daemon", name
+        )
+        try:
+            await docker.rm_service(name)
+        except Exception:
+            log.exception("Could not remove %s", name)
+    await docker.prune_logging_configs()

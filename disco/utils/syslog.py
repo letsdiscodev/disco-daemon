@@ -123,10 +123,19 @@ async def set_syslog_services(
     async with _reconcile_lock:
         existing = await docker.list_syslog_services()
         desired: dict[str, SyslogUrl] = {}
+        untouched: set[tuple[str, str]] = set()
         for syslog_url in syslog_urls:
-            name = _desired_service_name(
-                syslog_url["url"], syslog_url["type"], buffer_bytes, disco_host
-            )
+            try:
+                name = _desired_service_name(
+                    syslog_url["url"], syslog_url["type"], buffer_bytes, disco_host
+                )
+            except vectorconfig.InvalidSyslogUrl as e:
+                # stored before 0.34.0 and not renderable: whatever runs for it stays
+                log.warning(
+                    "Leaving the collector of %s as it is: %s", syslog_url["url"], e
+                )
+                untouched.add((syslog_url["url"], syslog_url["type"]))
+                continue
             desired[name] = syslog_url
         existing_names = {service.name for service in existing}
         created = []
@@ -141,13 +150,24 @@ async def set_syslog_services(
                     buffer_bytes=buffer_bytes,
                 )
             )
-        to_remove = [service for service in existing if service.name not in desired]
+        to_remove = [
+            service
+            for service in existing
+            if service.name not in desired
+            and (service.url, service.type) not in untouched
+        ]
         not_ready: set[tuple[str, str]] = set()
-        if created and to_remove:
-            # the new collectors must be attached to the containers before the old
-            # ones go: "task running" comes a few seconds before that (measured: a
-            # 4s gap when removing right away), so wait for the tasks, then settle
-            for name in created:
+        replaced = {(s.url, s.type) for s in to_remove}
+        # every replacement, created now or left by an earlier attempt, must run on
+        # every node before the collector it replaces goes; then a settle (the task
+        # runs a few seconds before vector is attached, measured: a 4s gap otherwise)
+        replacements = [
+            name
+            for name, syslog_url in desired.items()
+            if (syslog_url["url"], syslog_url["type"]) in replaced
+        ]
+        if replacements:
+            for name in replacements:
                 if not await docker.wait_for_global_service(name, timeout=180):
                     syslog_url = desired[name]
                     not_ready.add((syslog_url["url"], syslog_url["type"]))
@@ -168,8 +188,10 @@ async def set_syslog_services(
 async def reconcile_syslog_services_on_disco_boot() -> None:
     """repair a partial state left by a crash between two docker calls."""
     from disco.models.db import ReadSession
+    from disco.utils.logs import remove_all_log_collectors
 
     try:
+        await remove_all_log_collectors()
         async with ReadSession.begin() as dbsession:
             disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
             syslog_urls = await get_syslog_urls(dbsession)

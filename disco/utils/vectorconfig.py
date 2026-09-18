@@ -174,7 +174,7 @@ def render_syslog_config(
     if dest.tls:
         transport = f"""\
     mode: tcp
-    address: {dest.address}
+    address: "{dest.address}"
     tls:
       enabled: true
       verify_certificate: true
@@ -189,7 +189,7 @@ def render_syslog_config(
     else:
         transport = f"""\
     mode: udp
-    address: {dest.address}
+    address: "{dest.address}"
     framing:
       method: bytes
     buffer:
@@ -258,7 +258,7 @@ sinks:
     type: socket
     inputs: [json]
     mode: tcp
-    address: disco:{port}
+    address: "disco:{port}"
     framing:
       method: newline_delimited
     buffer:

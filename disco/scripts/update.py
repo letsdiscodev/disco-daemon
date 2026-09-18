@@ -166,6 +166,7 @@ async def task_0_33_x(image: str) -> None:
     print(f"Pulling {docker.vectorconfig.VECTOR_IMAGE}")
     await docker.pull(docker.vectorconfig.VECTOR_IMAGE)
     existing = await docker.list_syslog_services()
+    skipped: set[tuple[str, str]] = set()
     for syslog_url in syslog_urls:
         url, type = syslog_url["url"], syslog_url["type"]
         try:
@@ -176,6 +177,7 @@ async def task_0_33_x(image: str) -> None:
             print(
                 f"SKIPPING {url} ({type}): {e}. Its logspout service is left running."
             )
+            skipped.add((url, type))
             continue
         name = docker.syslog_service_name(url, type, config)
         if name not in {service.name for service in existing}:
@@ -199,6 +201,8 @@ async def task_0_33_x(image: str) -> None:
                 await docker.rm_syslog_service(service)
     # logspout services for destinations that are no longer configured
     for service in existing:
+        if (service.url, service.type) in skipped:
+            continue
         if service.impl is None and await docker.service_exists(service.name):
             print(f"Removing the logspout service {service.name} for {service.url}")
             await docker.rm_syslog_service(service)
