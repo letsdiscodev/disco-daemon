@@ -594,7 +594,6 @@ SYSLOG_TASK_MEMORY_LIMIT = "512m"
 # seconds between a replacement collector's task running and the old collector's
 # removal: vector attaches to the containers a few seconds after its task starts
 COLLECTOR_SETTLE_SECONDS = 10
-STREAM_TASK_MEMORY_LIMIT = "256m"
 
 
 def syslog_service_name(url: str, type: Literal["CORE", "GLOBAL"], config: str) -> str:
