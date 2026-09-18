@@ -283,6 +283,35 @@ async def get_last_deployment(
     return result.scalars().first()
 
 
+async def get_superseding_deployment(
+    dbsession: DBSession, deployment: Deployment
+) -> Deployment | None:
+    """The newest queued deployment that makes this one pointless, if any.
+
+    We'll skip the deployment if it's superseded by another one.
+    For an ENV_VAR deployment, any other more recent deployment superseeds it.
+    For a FILES or GITHUB deployment, another FILES or GITHUB deployment
+    superseeds it, but not an ENV_VAR one.
+
+    This sounds complicated but we have this to avoid a race condition
+    where many deployments would be queued and if we just skip to the
+    last one, the source folder would not contain the latest files
+    (i.e. the last one is ENV_VAR, but we skipped a FILES deployment).
+
+    """
+    stmt = (
+        select(Deployment)
+        .where(Deployment.project_id == deployment.project_id)
+        .where(Deployment.status == "QUEUED")
+        .where(Deployment.number > deployment.number)
+    )
+    if deployment.deployment_type != "ENV_VAR":
+        stmt = stmt.where(Deployment.deployment_type != "ENV_VAR")
+    stmt = stmt.order_by(Deployment.number.desc()).limit(1)
+    result = await dbsession.execute(stmt)
+    return result.scalars().first()
+
+
 async def get_deployment_in_progress(
     dbsession: DBSession, project: Project
 ) -> Deployment | None:

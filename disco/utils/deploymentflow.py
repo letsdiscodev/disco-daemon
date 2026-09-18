@@ -21,8 +21,8 @@ from disco.utils.deployments import (
     DEPLOYMENT_STATUS,
     get_deployment_by_id,
     get_deployment_in_progress,
-    get_last_deployment,
     get_live_deployment,
+    get_superseding_deployment,
     set_deployment_commit_hash,
     set_deployment_disco_file,
     set_deployment_status,
@@ -173,12 +173,10 @@ async def process_deployment(deployment_id: str) -> None:
                     f"before processing deployment {deployment.number}.\n"
                 )
                 return False
-            last_deployment = await get_last_deployment(
-                dbsession, project, statuses=["QUEUED"]
-            )
-            if last_deployment is not None and last_deployment.id != deployment_id:
+            superseding = await get_superseding_deployment(dbsession, deployment)
+            if superseding is not None:
                 await log_output(
-                    f"Deployment {last_deployment.number} is latest, "
+                    f"Deployment {superseding.number} is latest, "
                     f"skipping deployment {deployment.number}.\n"
                 )
                 await set_deployment_status(deployment, "SKIPPED")
