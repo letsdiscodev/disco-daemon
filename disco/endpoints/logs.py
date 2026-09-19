@@ -21,6 +21,7 @@ from disco.utils.logs import (
     history_key,
     monitor_syslog,
     read_history,
+    release_syslog,
     remove_log_collector,
     start_log_collector,
 )
@@ -121,6 +122,7 @@ async def read_logs(
         await start_log_collector(collector_name, config)
     except BaseException:
         # includes the client leaving during creation (CancelledError)
+        await release_syslog(collector_name)
         _cleanups.add(
             asyncio.get_running_loop().create_task(
                 remove_log_collector(collector_name, config_name)
@@ -164,6 +166,9 @@ async def read_logs(
             )
     finally:
         log.info("HTTP Connection for logs disconnected")
+        # the session no longer counts towards the cap (it used to count for 24 h:
+        # the eleventh `disco logs` of a day was refused with 429)
+        await release_syslog(collector_name)
         # scheduled on the loop directly, and first: the response's background tasks
         # are not run when a streaming client goes away (measured: collectors were
         # left behind), and closing the server must not stand in the way

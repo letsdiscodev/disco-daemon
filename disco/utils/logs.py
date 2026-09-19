@@ -313,6 +313,16 @@ async def monitor_syslog(service_name: str) -> None:
         )
 
 
+async def release_syslog(service_name: str) -> None:
+    """the session is over: it no longer counts towards the cap. (the 24 h expiry
+    below is only a safety net for a session that never reached this.)"""
+    global _active_syslogs
+    async with syslog_list_lock:
+        _active_syslogs = [
+            sl for sl in _active_syslogs if sl.service_name != service_name
+        ]
+
+
 async def get_active_syslogs() -> list[str]:
     global _active_syslogs
     async with syslog_list_lock:
