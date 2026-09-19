@@ -651,6 +651,8 @@ def build_syslog_service_args(
         f"target={vectorconfig.VECTOR_DATA_DIR}",
         "--env",
         f"{vectorconfig.HOSTNAME_ENV}={disco_host}",
+        "--env",
+        vectorconfig.VECTOR_LOG_ENV,
         "--mode",
         "global",
         # no start-first: a global service runs one task per node, the new task ran

@@ -101,7 +101,13 @@ def config_hash(config: str) -> str:
 # bump when the swarm service spec built around the config changes (mounts, update
 # order, limits): the revision is part of the rendered config, so the config hash and
 # with it the service name change and the reconciler replaces the collectors.
-SERVICE_SPEC_REVISION = 3
+SERVICE_SPEC_REVISION = 4
+
+# vector's own log level. at the default (info) every collector announces every
+# container it starts or stops tailing, and those lines are container output too:
+# they reached every destination and `disco logs`. logspout only printed a startup
+# banner. warnings and errors (a destination refusing connections) still show.
+VECTOR_LOG_ENV = "VECTOR_LOG=warn"
 
 # `{data_dir}` is filled in by the renderers: each collector gets its own directory
 # inside the destination's buffer volume, so a replacement never shares buffer files
@@ -226,9 +232,11 @@ def _with_data_dir(config: str) -> str:
     return config.replace(marker, f"{VECTOR_DATA_DIR}/{subdir}")
 
 
+# the container is sent with docker's leading slash ("/<service>.<slot>.<task>"), as
+# logspout's {{.Container.Name}} did: the cli drops the first character of the field
 _STREAM_VRL = """\
       . = {
-        "container": to_string(.container_name) ?? "",
+        "container": "/" + (to_string(.container_name) ?? ""),
         "labels": object(.label) ?? {},
         "timestamp": format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%SZ") ?? "",
         "ts": format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%S%.3fZ") ?? "",
