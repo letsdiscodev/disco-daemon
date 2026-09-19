@@ -232,11 +232,12 @@ def _with_data_dir(config: str) -> str:
     return config.replace(marker, f"{VECTOR_DATA_DIR}/{subdir}")
 
 
-# the container is sent with docker's leading slash ("/<service>.<slot>.<task>"), as
-# logspout's {{.Container.Name}} did: the cli drops the first character of the field
+# the container name as docker names it ("<service>.<slot>.<task>"), without the
+# leading slash logspout's {{.Container.Name}} carried: clis older than the one
+# released with 0.34.0 dropped the first character of the field to remove it
 _STREAM_VRL = """\
       . = {
-        "container": "/" + (to_string(.container_name) ?? ""),
+        "container": to_string(.container_name) ?? "",
         "labels": object(.label) ?? {},
         "timestamp": format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%SZ") ?? "",
         "ts": format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%S%.3fZ") ?? "",

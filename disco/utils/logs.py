@@ -118,16 +118,15 @@ def parse_service_log_line(line: str, labels: dict[str, str]) -> LogObject | Non
     """one line of `docker service logs --timestamps --no-trunc` ->
     {"container","labels","timestamp","message"}. the line is
     `<rfc 3339 ns timestamp> <task name>@<node>    | <message>`; the task name is the
-    container name (`<service>.<slot>.<task id>`), sent with docker's leading slash
-    like the live stream (the cli drops the first character); the timestamp is cut to
-    milliseconds like the live stream."""
+    container name (`<service>.<slot>.<task id>`), without a leading slash like the
+    live stream; the timestamp is cut to milliseconds like the live stream."""
     m = _SERVICE_LOG_LINE.match(line)
     if m is None:
         return None
     ts = m.group("ts")
     ms = ts[:23] + "Z" if len(ts) > 24 and ts.endswith("Z") else ts
     return {
-        "container": "/" + m.group("task"),
+        "container": m.group("task"),
         "labels": labels,
         "timestamp": ms[:19] + "Z" if len(ms) >= 20 else ms,
         "ts": ms,
