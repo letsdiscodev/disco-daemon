@@ -12,12 +12,10 @@ from disco.auth import get_api_key_wo_tx
 from disco.models.db import ReadSession
 from disco.utils import docker
 from disco.utils.logs import (
-    MAX_STREAMS,
     STREAM_QUEUE_MAX,
     LogObject,
     LogStreamServer,
     for_client,
-    get_active_syslogs,
     history_key,
     monitor_syslog,
     read_history,
@@ -34,23 +32,10 @@ log = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 
 _cleanups: set[asyncio.Task] = set()
-_admission_lock = asyncio.Lock()
-
-
-async def _admit() -> None:
-    """the session cap, before the response starts (a real 429), under a lock so two
-    requests cannot both be the tenth; counted on this process's own sessions, so
-    orphans of a previous process (removed at boot anyway) never block clients."""
-    async with _admission_lock:
-        if len(await get_active_syslogs()) >= MAX_STREAMS:
-            raise HTTPException(
-                status_code=429, detail=f"At most {MAX_STREAMS} log sessions at once"
-            )
 
 
 @router.get("/api/logs")
 async def logs_all(background_tasks: BackgroundTasks):
-    await _admit()
     return EventSourceResponse(
         read_logs(
             project_name=None, service_name=None, background_tasks=background_tasks
@@ -67,7 +52,6 @@ async def logs_project(
         project = await get_project_by_name(dbsession, project_name)
         if project is None:
             raise HTTPException(status_code=404)
-    await _admit()
     return EventSourceResponse(
         read_logs(
             project_name=project_name,
@@ -87,7 +71,6 @@ async def logs_project_service(
         project = await get_project_by_name(dbsession, project_name)
         if project is None:
             raise HTTPException(status_code=404)
-    await _admit()
     return EventSourceResponse(
         read_logs(
             project_name=project_name,
@@ -166,8 +149,8 @@ async def read_logs(
             )
     finally:
         log.info("HTTP Connection for logs disconnected")
-        # the session no longer counts towards the cap (it used to count for 24 h:
-        # the eleventh `disco logs` of a day was refused with 429)
+        # the session leaves the list of live sessions (which the rogue-collector
+        # sweep compares against)
         await release_syslog(collector_name)
         # scheduled on the loop directly, and first: the response's background tasks
         # are not run when a streaming client goes away (measured: collectors were

@@ -25,7 +25,6 @@ _active_syslogs: list[ActiveSyslog] = []
 STREAM_QUEUE_MAX = 500
 # every open `disco logs` is one more collector task per node reading the docker
 # socket, plus a queue in the daemon (prd 2.2)
-MAX_STREAMS = 10
 # a docker record is at most 16 KB; vector merges partial records, so one line without
 # a newline can be longer. above this the connection is dropped (the collector
 # reconnects and resends from its buffer, the line is logged and skipped).
@@ -314,7 +313,7 @@ async def monitor_syslog(service_name: str) -> None:
 
 
 async def release_syslog(service_name: str) -> None:
-    """the session is over: it no longer counts towards the cap. (the 24 h expiry
+    """the session is over: out of the list of live sessions. (the 24 h expiry
     below is only a safety net for a session that never reached this.)"""
     global _active_syslogs
     async with syslog_list_lock:
