@@ -32,49 +32,6 @@ STREAM_LINE_LIMIT = 256 * 1024
 STREAM_TASK_MEMORY_LIMIT = "256m"
 
 
-def build_streaming_service_args(name: str, config_name: str) -> list[str]:
-    """pure: the `docker service create` argv for one `disco logs` collector.
-
-    no buffer volume: the disk buffer lives in the task's own filesystem and goes away
-    with the service when the client disconnects.
-    """
-    return [
-        "docker",
-        "service",
-        "create",
-        "--name",
-        name,
-        "--detach",
-        "--mode",
-        "global",
-        "--label",
-        "disco.syslogs",
-        "--label",
-        f"disco.syslog.config={config_name}",
-        "--label",
-        f"disco.syslog.image={vectorconfig.VECTOR_IMAGE}",
-        "--config",
-        f"source={config_name},target={vectorconfig.VECTOR_CONFIG_PATH}",
-        "--mount",
-        "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
-        "--network",
-        "disco-logging",
-        "--env",
-        vectorconfig.VECTOR_LOG_ENV,
-        "--limit-memory",
-        STREAM_TASK_MEMORY_LIMIT,
-        "--log-driver",
-        "json-file",
-        "--log-opt",
-        "max-size=20m",
-        "--log-opt",
-        "max-file=5",
-        vectorconfig.VECTOR_IMAGE,
-        "--config",
-        vectorconfig.VECTOR_CONFIG_PATH,
-    ]
-
-
 LogObject = dict[str, str | dict[str, str]]
 
 
@@ -358,7 +315,42 @@ async def start_log_collector(service_name: str, config: str) -> str:
     """create the config object and the global collector service; returns the config name."""
     config_name = docker.stream_config_name(config)
     await docker.create_config(config_name, config)
-    await check_call(build_streaming_service_args(service_name, config_name))
+    args = [
+        "docker",
+        "service",
+        "create",
+        "--name",
+        service_name,
+        "--detach",
+        "--mode",
+        "global",
+        "--label",
+        "disco.syslogs",
+        "--label",
+        f"disco.syslog.config={config_name}",
+        "--label",
+        f"disco.syslog.image={vectorconfig.VECTOR_IMAGE}",
+        "--config",
+        f"source={config_name},target={vectorconfig.VECTOR_CONFIG_PATH}",
+        "--mount",
+        "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+        "--network",
+        "disco-logging",
+        "--env",
+        vectorconfig.VECTOR_LOG_ENV,
+        "--limit-memory",
+        STREAM_TASK_MEMORY_LIMIT,
+        "--log-driver",
+        "json-file",
+        "--log-opt",
+        "max-size=20m",
+        "--log-opt",
+        "max-file=5",
+        vectorconfig.VECTOR_IMAGE,
+        "--config",
+        vectorconfig.VECTOR_CONFIG_PATH,
+    ]
+    await check_call(args)
     return config_name
 
 
