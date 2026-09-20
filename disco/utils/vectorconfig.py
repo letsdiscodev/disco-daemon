@@ -86,12 +86,7 @@ transforms:
 """
 
 # Same as logspout: labels matched by value "true", case-insensitively.
-# disco.run containers are excluded from destinations (logspout skipped TTY
-# containers), they still show in `disco logs`.
-_EXCLUDE_CONDITION = (
-    'downcase(to_string(.label."disco.log.exclude") ?? "") != "true"'
-    ' && downcase(to_string(.label."disco.run") ?? "") != "true"'
-)
+_EXCLUDE_CONDITION = 'downcase(to_string(.label."disco.log.exclude") ?? "") != "true"'
 _CORE_CONDITION = 'downcase(to_string(.label."disco.log.core") ?? "") == "true"'
 
 # RFC 5424: <PRI>1 TIMESTAMP HOSTNAME APP-NAME PROCID MSGID SD MSG
