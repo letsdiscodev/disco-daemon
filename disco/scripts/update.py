@@ -97,8 +97,8 @@ async def _main() -> None:
 
 
 async def _start_daemon_if_missing(image: str) -> None:
-    """an update that died after writing the version but before restarting the
-    daemon leaves `disco` removed: running the update again must bring it back."""
+    # An update that died after writing the version but before restarting the
+    # daemon leaves the disco service removed
     from disco.utils import docker
 
     if await docker.service_exists("disco"):
@@ -146,15 +146,9 @@ def _alembic_upgrade(connection, version_hash: str) -> None:
 
 
 async def task_0_33_x(image: str) -> None:
-    """logspout -> vector for every syslog destination (see docs/logging.md).
-
-    per destination: create the vector collector, wait until it runs on every node,
-    emit a marker line that must reach the destination through vector, THEN remove the
-    logspout service. never remove-before-create. streaming collectors (`disco logs`)
-    are removed, clients reconnect. idempotent and resumable: a run that dies at any
-    point can be run again and finds the vector collectors it already created. the
-    version is written last.
-    """
+    # logspout -> Vector. For each destination, the Vector collector is created
+    # and running on every node before the logspout service is removed.
+    # Idempotent: a run that dies can be run again.
     from disco.utils import docker
     from disco.utils.logs import get_running_syslogs
     from disco.utils.syslog import get_destination_buffer_bytes, get_syslog_urls
@@ -194,7 +188,6 @@ async def task_0_33_x(image: str) -> None:
                 f"The Vector collector {name} for {url} is not running on every node"
             )
         await _emit_logging_migration_marker(url, type)
-        # the collector attaches to the containers a few seconds after its task runs
         await asyncio.sleep(docker.COLLECTOR_SETTLE_SECONDS)
         for service in existing:
             if service.url == url and service.type == type and service.impl is None:
@@ -219,13 +212,10 @@ async def task_0_33_x(image: str) -> None:
 
 
 async def _emit_logging_migration_marker(url: str, type: str) -> None:
-    """a line that must show up at the destination, sent through the new collector.
-
-    the updater itself is labelled disco.log.core=true, so its own output reaches CORE
-    destinations; for GLOBAL ones a throwaway container emits the line. the container
-    is not `--rm`: an auto-removed container that exits at once is gone before the
-    collector attaches to it.
-    """
+    # A line that should show up at the destination through the new collector.
+    # The updater is labelled disco.log.core=true, so printing is enough for
+    # CORE destinations. Not --rm: an auto-removed container that exits at
+    # once is gone before the collector attaches to it.
     from disco.config import BUSYBOX_VERSION
     from disco.utils import docker
 
