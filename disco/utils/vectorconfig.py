@@ -1,45 +1,34 @@
-"""vector configuration for log forwarding: pure functions, no docker, no db.
-
-two kinds of collector run as swarm global services (one task per node), both reading
-the local docker socket with vector's `docker_logs` source:
-
-- syslog destinations (`render_syslog_config`): one service per configured url, rfc 5424
-  frames over udp (`syslog://`) or tcp+tls (`syslog+tls://`, lf framed).
-- `disco logs` streaming (`render_streaming_config`): one service per connected client,
-  json lines over tcp to the daemon on the `disco-logging` overlay.
-
-the hostname is part of the rendered config: a hostname change renders a new config,
-whose hash is a new service name, so the reconciler creates the new collector before
-removing the old one (an overlap, no gap: a global service cannot be restarted without
-a gap, its node runs one task at a time and the docker source only reads from its own
-start). SYSLOG_HOSTNAME in the environment is the fallback when the config has none.
-"""
-
-from __future__ import annotations
+"""Vector configs for the log collectors (syslog destinations and `disco logs`)."""
 
 import hashlib
 import re
 from dataclasses import dataclass
 from typing import Literal
 
-# pinned; multi-arch (linux/amd64, linux/arm64, arm/v7, arm/v6)
+# Multi-arch (amd64, arm64, arm/v7, arm/v6)
 VECTOR_IMAGE = "timberio/vector:0.58.0-alpine"
 VECTOR_CONFIG_PATH = "/etc/vector/vector.yaml"
 VECTOR_DATA_DIR = "/var/lib/vector"
 HOSTNAME_ENV = "SYSLOG_HOSTNAME"
 
-# disk buffer sizes (bytes). keyvalues LOGGING_DESTINATION_BUFFER_BYTES and
-# LOGGING_STREAM_BUFFER_BYTES override them (no cli option, see docs/logging).
 DEFAULT_DESTINATION_BUFFER_BYTES = 512 * 1024 * 1024
 DEFAULT_STREAM_BUFFER_BYTES = 100 * 1024 * 1024
-# vector refuses disk buffers under this size
+# Vector refuses disk buffers smaller than this
 MIN_DISK_BUFFER_BYTES = 268_435_488
+
+# Bump when the service spec built around the config changes (mounts, limits, ...).
+# The config hash is the service name, so this makes the reconciler replace the
+# running collectors.
+SERVICE_SPEC_REVISION = 4
+
+# At the default level (info), Vector logs every container it starts/stops
+# tailing, and those lines get forwarded like any other container output.
+VECTOR_LOG_ENV = "VECTOR_LOG=warn"
 
 SyslogType = Literal["CORE", "GLOBAL"]
 
-# host: a name (letters, digits, dots, dashes, underscores) or an ipv6 address in
-# brackets; the endpoint accepted any non-space host before 0.34.0, so nothing a server
-# already stores may be refused here (the migration renders every stored url)
+# The endpoint accepted any non-space host before 0.34.0. URLs stored back then
+# must still parse, hence underscores and bracketed IPv6.
 _SYSLOG_URL_RE = re.compile(
     r"^syslog(?P<tls>\+tls)?://"
     r"(?P<host>\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9_](?:[A-Za-z0-9_.-]*[A-Za-z0-9_])?)"
@@ -63,11 +52,6 @@ class SyslogDestination:
 
 
 def parse_syslog_url(url: str) -> SyslogDestination:
-    """`syslog://host:port` (udp) or `syslog+tls://host:port` (tcp + tls), nothing else.
-
-    no userinfo, path, query string or fragment: a credential does not belong in a
-    url that ends up in labels and logs (see the prd, F9).
-    """
     m = _SYSLOG_URL_RE.match(url)
     if m is None:
         raise InvalidSyslogUrl(
@@ -83,7 +67,6 @@ def parse_syslog_url(url: str) -> SyslogDestination:
 
 
 def destination_id(url: str, type: str) -> str:
-    """stable short id for a destination, used in service, config and volume names."""
     return hashlib.sha256(f"{type} {url}".encode()).hexdigest()[:12]
 
 
@@ -91,23 +74,8 @@ def config_hash(config: str) -> str:
     return hashlib.sha256(config.encode()).hexdigest()[:12]
 
 
-# vector's docker_logs source delivers the last record of a container that just
-# exited twice (measured on 0.58.0: local proof and droplet). the same container, the
-# same nanosecond timestamp and the same message is never a real second line.
-# bump when the swarm service spec built around the config changes (mounts, update
-# order, limits): the revision is part of the rendered config, so the config hash and
-# with it the service name change and the reconciler replaces the collectors.
-SERVICE_SPEC_REVISION = 4
-
-# vector's own log level. at the default (info) every collector announces every
-# container it starts or stops tailing, and those lines are container output too:
-# they reached every destination and `disco logs`. logspout only printed a startup
-# banner. warnings and errors (a destination refusing connections) still show.
-VECTOR_LOG_ENV = "VECTOR_LOG=warn"
-
-# `{data_dir}` is filled in by the renderers: each collector gets its own directory
-# inside the destination's buffer volume, so a replacement never shares buffer files
-# with the collector it overlaps.
+# The dedupe transform is for docker_logs delivering the last record of an
+# exiting container twice (Vector 0.58.0).
 _DOCKER_SOURCE = f"""\
 # disco collector, service spec revision {SERVICE_SPEC_REVISION}, image {VECTOR_IMAGE}
 data_dir: {{data_dir}}
@@ -125,19 +93,17 @@ transforms:
       match: [container_id, timestamp, message]
 """
 
-# logspout matched EXCLUDE_LABELS by value "true", case-insensitively; same here.
+# Same as logspout: labels matched by value "true", case-insensitively.
+# disco.run containers are excluded from destinations (logspout skipped TTY
+# containers), they still show in `disco logs`.
 _EXCLUDE_CONDITION = (
     'downcase(to_string(.label."disco.log.exclude") ?? "") != "true"'
     ' && downcase(to_string(.label."disco.run") ?? "") != "true"'
 )
 _CORE_CONDITION = 'downcase(to_string(.label."disco.log.core") ?? "") == "true"'
 
-# `disco run` sessions carry disco.run=true and a tty: logspout never forwarded tty
-# containers to destinations, so they stay out (they still show in `disco logs`).
-# rfc 5424: <PRI>1 TIMESTAMP HOSTNAME APP-NAME PROCID MSGID SD MSG
-# PRI = facility user (1) * 8 + severity: stderr -> err (3), stdout -> info (6).
-# APP-NAME = container name, at most 48 chars. PROCID, MSGID, SD = "-".
-# a docker record with embedded newlines stays one frame with the newlines escaped.
+# RFC 5424: <PRI>1 TIMESTAMP HOSTNAME APP-NAME PROCID MSGID SD MSG
+# PRI = facility user (1) * 8 + severity, stderr -> err (3), stdout -> info (6)
 _SYSLOG_VRL = f"""\
       hostname = "{{hostname}}"
       if hostname == "" {{ hostname = get_env_var("{HOSTNAME_ENV}") ?? "-" }}
@@ -153,6 +119,16 @@ _SYSLOG_VRL = f"""\
       . = {{ "message": "<" + to_string(pri) + ">1 " + ts + " " + hostname + " " + app + " - - - " + msg }}
 """
 
+_STREAM_VRL = """\
+      . = {
+        "container": to_string(.container_name) ?? "",
+        "labels": object(.label) ?? {},
+        "timestamp": format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%SZ") ?? "",
+        "ts": format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%S%.3fZ") ?? "",
+        "message": to_string(.message) ?? ""
+      }
+"""
+
 
 def _vrl_string(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
@@ -164,7 +140,6 @@ def render_syslog_config(
     buffer_bytes: int = DEFAULT_DESTINATION_BUFFER_BYTES,
     disco_host: str = "",
 ) -> str:
-    """vector yaml for one syslog destination. raises InvalidSyslogUrl."""
     dest = parse_syslog_url(url)
     vrl = _SYSLOG_VRL.replace("{hostname}", _vrl_string(disco_host))
     if type == "CORE":
@@ -220,36 +195,9 @@ sinks:
     return _with_data_dir(_DOCKER_SOURCE + body)
 
 
-def _with_data_dir(config: str) -> str:
-    """the data dir is derived from the config's own hash (without it), so it is
-    unique per rendered config and stable across renders."""
-    marker = "{data_dir}"
-    subdir = config_hash(config)
-    return config.replace(marker, f"{VECTOR_DATA_DIR}/{subdir}")
-
-
-# the container name as docker names it ("<service>.<slot>.<task>"), without the
-# leading slash logspout's {{.Container.Name}} carried: clis older than the one
-# released with 0.34.0 dropped the first character of the field to remove it
-_STREAM_VRL = """\
-      . = {
-        "container": to_string(.container_name) ?? "",
-        "labels": object(.label) ?? {},
-        "timestamp": format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%SZ") ?? "",
-        "ts": format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%S%.3fZ") ?? "",
-        "message": to_string(.message) ?? ""
-      }
-"""
-
-
 def render_streaming_config(
     port: int, buffer_bytes: int = DEFAULT_STREAM_BUFFER_BYTES
 ) -> str:
-    """vector yaml for one `disco logs` client: json lines over tcp to disco:<port>.
-
-    the json shape is what disco.utils.logs.JsonLogServer reads:
-    {"container", "labels", "timestamp", "message"}.
-    """
     if not 1 <= port <= 65535:
         raise ValueError(f"port out of range: {port}")
     body = f"""\
@@ -274,3 +222,9 @@ sinks:
       codec: json
 """
     return _with_data_dir(_DOCKER_SOURCE + body)
+
+
+def _with_data_dir(config: str) -> str:
+    # Each rendered config gets its own directory in the buffer volume, so a
+    # replacement collector never shares buffer files with the one it overlaps.
+    return config.replace("{data_dir}", f"{VECTOR_DATA_DIR}/{config_hash(config)}")
