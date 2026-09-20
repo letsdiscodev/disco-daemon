@@ -581,9 +581,6 @@ async def list_syslog_services() -> list[SyslogService]:
     return services
 
 
-SYSLOG_TASK_MEMORY_LIMIT = "512m"
-
-
 def syslog_service_name(url: str, type: Literal["CORE", "GLOBAL"]) -> str:
     return f"disco-syslog-{vectorconfig.destination_id(url, type)}"
 
@@ -622,8 +619,6 @@ async def start_syslog_service(
         vectorconfig.VECTOR_LOG_ENV,
         "--mode",
         "global",
-        "--limit-memory",
-        SYSLOG_TASK_MEMORY_LIMIT,
         "--log-driver",
         "json-file",
         "--log-opt",

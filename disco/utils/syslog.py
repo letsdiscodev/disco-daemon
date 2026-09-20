@@ -74,8 +74,6 @@ async def _save_syslog_urls(dbsession: DBSession, syslog_urls: list[SyslogUrl]) 
     await keyvalues.set_value(dbsession, SYSLOG_URLS_KEY, json.dumps(syslog_urls))
 
 
-MAX_DESTINATIONS = 10
-
 _reconcile_lock = asyncio.Lock()
 
 

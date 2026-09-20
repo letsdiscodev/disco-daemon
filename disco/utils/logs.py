@@ -25,7 +25,6 @@ _active_syslogs: list[ActiveSyslog] = []
 STREAM_QUEUE_MAX = 500
 # Docker records are at most 16 KB but Vector merges partial records
 STREAM_LINE_LIMIT = 256 * 1024
-STREAM_TASK_MEMORY_LIMIT = "256m"
 
 
 LogObject = dict[str, str | dict[str, str]]
@@ -305,8 +304,6 @@ async def start_log_collector(service_name: str, config: str) -> None:
         f"{vectorconfig.CONFIG_ENV}={config}",
         "--env",
         vectorconfig.VECTOR_LOG_ENV,
-        "--limit-memory",
-        STREAM_TASK_MEMORY_LIMIT,
         "--log-driver",
         "json-file",
         "--log-opt",
