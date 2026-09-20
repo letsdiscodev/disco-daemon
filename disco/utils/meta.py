@@ -79,8 +79,7 @@ async def set_disco_host(dbsession: DBSession, host: str, by_api_key: ApiKey) ->
     )
     await caddy.update_disco_host(host)
     await keyvalues.set_value(dbsession=dbsession, key="DISCO_HOST", value=host)
-    # the hostname is part of each collector's config: one reconcile replaces every
-    # collector (new ones first, a settle, then the old ones go)
+    # The hostname is part of the collectors' config, reconciling replaces them
     from disco.utils.syslog import (
         get_destination_buffer_bytes,
         get_syslog_urls,

@@ -35,7 +35,7 @@ class AddRemoveSyslogReqBody(BaseModel):
 
     @model_validator(mode="after")
     def _valid_syslog_url(self) -> "AddRemoveSyslogReqBody":
-        # strict on add; a url stored before 0.34.0 must always be removable
+        # Strict on add only: a URL stored before 0.34.0 must stay removable
         if self.action == SyslogAction.add:
             try:
                 parse_syslog_url(self.url)
