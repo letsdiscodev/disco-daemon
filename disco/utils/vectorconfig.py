@@ -8,7 +8,13 @@ from dataclasses import dataclass
 from typing import Literal
 
 VECTOR_IMAGE = "timberio/vector:0.58.0-alpine"
-VECTOR_CONFIG_PATH = "/etc/vector/vector.yaml"
+# The rendered config travels in this env var (not VECTOR_*: Vector reads those
+# as its own options); the container writes it to a file and runs Vector on it.
+CONFIG_ENV = "DISCO_VECTOR_CONFIG"
+VECTOR_COMMAND = (
+    f'printf "%s\\n" "${CONFIG_ENV}" > /tmp/vector.yaml'
+    " && exec vector --config /tmp/vector.yaml"
+)
 HOSTNAME_ENV = "SYSLOG_HOSTNAME"
 # Bump when spec changes to update services
 SERVICE_SPEC_REVISION = 4

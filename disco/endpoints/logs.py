@@ -96,16 +96,13 @@ async def read_logs(
     )
     await server.start()
     await monitor_syslog(collector_name)
-    config_name = docker.stream_config_name(config)
     try:
         await start_log_collector(collector_name, config)
     except BaseException:
         # includes the client leaving during creation (CancelledError)
         await release_syslog(collector_name)
         _cleanups.add(
-            asyncio.get_running_loop().create_task(
-                remove_log_collector(collector_name, config_name)
-            )
+            asyncio.get_running_loop().create_task(remove_log_collector(collector_name))
         )
         await server.close()
         raise
@@ -147,9 +144,7 @@ async def read_logs(
         # Not a BackgroundTasks task: those don't run when a streaming client
         # goes away
         _cleanups.add(
-            asyncio.get_running_loop().create_task(
-                remove_log_collector(collector_name, config_name)
-            )
+            asyncio.get_running_loop().create_task(remove_log_collector(collector_name))
         )
         try:
             await server.close()

@@ -281,12 +281,9 @@ async def clean_up_rogue_syslogs() -> None:
         if running_syslog not in active_syslogs:
             log.warning("Killing rogue syslog %s", running_syslog)
             await docker.rm_service(running_syslog)
-    await docker.prune_logging_configs()
 
 
-async def start_log_collector(service_name: str, config: str) -> str:
-    config_name = docker.stream_config_name(config)
-    await docker.create_config(config_name, config)
+async def start_log_collector(service_name: str, config: str) -> None:
     args = [
         "docker",
         "service",
@@ -299,15 +296,13 @@ async def start_log_collector(service_name: str, config: str) -> str:
         "--label",
         "disco.syslogs",
         "--label",
-        f"disco.syslog.config={config_name}",
-        "--label",
         f"disco.syslog.image={vectorconfig.VECTOR_IMAGE}",
-        "--config",
-        f"source={config_name},target={vectorconfig.VECTOR_CONFIG_PATH}",
         "--mount",
         "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
         "--network",
         "disco-logging",
+        "--env",
+        f"{vectorconfig.CONFIG_ENV}={config}",
         "--env",
         vectorconfig.VECTOR_LOG_ENV,
         "--limit-memory",
@@ -318,26 +313,22 @@ async def start_log_collector(service_name: str, config: str) -> str:
         "max-size=20m",
         "--log-opt",
         "max-file=5",
+        "--entrypoint",
+        "sh",
         vectorconfig.VECTOR_IMAGE,
-        "--config",
-        vectorconfig.VECTOR_CONFIG_PATH,
+        "-c",
+        vectorconfig.VECTOR_COMMAND,
     ]
     await check_call(args)
-    return config_name
 
 
-async def remove_log_collector(service_name: str, config_name: str) -> None:
-    try:
-        # A "docker service create" cancelled mid-way can still commit after this
-        for _ in range(10):
-            if await docker.service_exists(service_name):
-                await docker.rm_service(service_name)
-                break
-            await asyncio.sleep(3)
-    finally:
-        docker.cleanup_in_background(
-            f"config {config_name}", lambda: docker._config_removed(config_name)
-        )
+async def remove_log_collector(service_name: str) -> None:
+    # A "docker service create" cancelled mid-way can still commit after this
+    for _ in range(10):
+        if await docker.service_exists(service_name):
+            await docker.rm_service(service_name)
+            break
+        await asyncio.sleep(3)
 
 
 async def _skip_line(reader: asyncio.StreamReader) -> None:
@@ -355,4 +346,3 @@ async def remove_all_log_collectors() -> None:
             await docker.rm_service(name)
         except Exception:
             log.exception("Could not remove %s", name)
-    await docker.prune_logging_configs()

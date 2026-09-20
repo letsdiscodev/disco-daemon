@@ -139,7 +139,6 @@ async def set_syslog_services(disco_host: str, syslog_urls: list[SyslogUrl]) -> 
                 )
                 continue
             await docker.rm_syslog_service(service)
-        await docker.prune_logging_configs()
 
 
 async def reconcile_syslog_services_on_disco_boot() -> None:

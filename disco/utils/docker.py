@@ -585,8 +585,6 @@ async def list_syslog_services() -> list[SyslogService]:
     return services
 
 
-SYSLOG_CONFIG_PREFIX = "disco-syslog-cfg-"
-STREAM_CONFIG_PREFIX = "disco-stream-cfg-"
 SYSLOG_TASK_MEMORY_LIMIT = "512m"
 # Vector attaches to the containers a few seconds after its task starts
 COLLECTOR_SETTLE_SECONDS = 10
@@ -597,130 +595,6 @@ def syslog_service_name(url: str, type: Literal["CORE", "GLOBAL"], config: str) 
     return f"disco-syslog-{dest}-{vectorconfig.config_hash(config)}"
 
 
-def syslog_config_name(config: str) -> str:
-    return f"{SYSLOG_CONFIG_PREFIX}{vectorconfig.config_hash(config)}"
-
-
-def stream_config_name(config: str) -> str:
-    return f"{STREAM_CONFIG_PREFIX}{vectorconfig.config_hash(config)}"
-
-
-async def config_exists(name: str) -> bool:
-    process = await asyncio.create_subprocess_exec(
-        "docker",
-        "config",
-        "inspect",
-        name,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    await process.wait()
-    return process.returncode == 0
-
-
-async def create_config(name: str, content: str) -> None:
-    if await config_exists(name):
-        return
-    log.info("Creating Docker config %s", name)
-    await check_call(["docker", "config", "create", name, "-"], stdin=content)
-
-
-async def list_configs(prefix: str) -> list[str]:
-    stdout, _, _ = await check_call(
-        ["docker", "config", "ls", "--format", "{{ .Name }}"]
-    )
-    return [name for name in stdout if name.startswith(prefix)]
-
-
-async def services_using_config(config_name: str) -> list[str]:
-    stdout, _, _ = await check_call(
-        [
-            "docker",
-            "service",
-            "ls",
-            "--filter",
-            f"label=disco.syslog.config={config_name}",
-            "--format",
-            "{{ .Name }}",
-        ]
-    )
-    return stdout
-
-
-_cleanup_tasks: set[asyncio.Task] = set()
-
-
-async def _retry_cleanup(
-    what: str,
-    attempt: Callable[[], Awaitable[bool]],
-    attempts: int = 20,
-    delay: float = 3,
-) -> None:
-    # Docker reports a removed service's config and volume as in use for a
-    # moment after "service rm"
-    for i in range(attempts):
-        try:
-            if await attempt():
-                return
-        except Exception:
-            log.debug("Cleanup of %s failed on attempt %d", what, i + 1, exc_info=True)
-        await asyncio.sleep(delay)
-    log.warning("Giving up cleaning up %s after %d attempts", what, attempts)
-
-
-def cleanup_in_background(
-    what: str, attempt: Callable[[], Awaitable[bool]]
-) -> asyncio.Task:
-    task = asyncio.get_running_loop().create_task(_retry_cleanup(what, attempt))
-    _cleanup_tasks.add(task)
-    task.add_done_callback(_cleanup_tasks.discard)
-    return task
-
-
-async def wait_for_cleanups() -> None:
-    if _cleanup_tasks:
-        await asyncio.gather(*_cleanup_tasks, return_exceptions=True)
-
-
-async def _config_removed(config_name: str) -> bool:
-    if len(await services_using_config(config_name)) > 0:
-        return False
-    if await config_exists(config_name):
-        _, _, process = await call(["docker", "config", "rm", config_name])
-        if process.returncode != 0:
-            return False
-        log.info("Removed Docker config %s", config_name)
-    return True
-
-
-async def prune_logging_configs() -> None:
-    # Configs left behind by a crash between "service rm" and the cleanup.
-    # Recent ones may belong to a service that is being created right now.
-    for prefix in (SYSLOG_CONFIG_PREFIX, STREAM_CONFIG_PREFIX):
-        for name in await list_configs(prefix):
-            if await _config_age_seconds(name) < 600:
-                continue
-            if not await _config_removed(name):
-                log.warning("Could not remove Docker config %s", name)
-
-
-async def _config_age_seconds(name: str) -> float:
-    stdout, _, process = await call(
-        ["docker", "config", "inspect", "--format", "{{ .CreatedAt }}", name]
-    )
-    if process.returncode != 0 or not stdout:
-        return 0
-    # 2026-09-17 16:27:55.684124307 +0000 UTC
-    raw = stdout[0].strip().split(" +")[0]
-    try:
-        created = datetime.strptime(raw[:26], "%Y-%m-%d %H:%M:%S.%f").replace(
-            tzinfo=timezone.utc
-        )
-    except ValueError:
-        return 0
-    return (datetime.now(timezone.utc) - created).total_seconds()
-
-
 async def start_syslog_service(
     disco_host: str,
     url: str,
@@ -728,10 +602,8 @@ async def start_syslog_service(
 ) -> str:
     config = vectorconfig.render_syslog_config(url, type, disco_host)
     name = syslog_service_name(url, type, config)
-    config_name = syslog_config_name(config)
     log.info("Starting Syslog service %s for %s %s", name, url, type)
     log.info("Vector config for %s %s:\n%s", url, type, config)
-    await create_config(config_name, config)
     args = [
         "docker",
         "service",
@@ -750,11 +622,11 @@ async def start_syslog_service(
         "--label",
         f"disco.syslog.image={vectorconfig.VECTOR_IMAGE}",
         "--label",
-        f"disco.syslog.config={config_name}",
-        "--config",
-        f"source={config_name},target={vectorconfig.VECTOR_CONFIG_PATH}",
+        f"disco.syslog.config={vectorconfig.config_hash(config)}",
         "--mount",
         "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+        "--env",
+        f"{vectorconfig.CONFIG_ENV}={config}",
         "--env",
         f"{vectorconfig.HOSTNAME_ENV}={disco_host}",
         "--env",
@@ -769,9 +641,11 @@ async def start_syslog_service(
         "max-size=20m",
         "--log-opt",
         "max-file=5",
+        "--entrypoint",
+        "sh",
         vectorconfig.VECTOR_IMAGE,
-        "--config",
-        vectorconfig.VECTOR_CONFIG_PATH,
+        "-c",
+        vectorconfig.VECTOR_COMMAND,
     ]
     await check_call(args)
     return name
@@ -782,11 +656,6 @@ async def rm_syslog_service(service: SyslogService) -> None:
         "Stopping Syslog service %s (%s %s)", service.name, service.url, service.type
     )
     await rm_service(service.name)
-    if service.config is not None:
-        config_name = service.config
-        cleanup_in_background(
-            f"config {config_name}", lambda: _config_removed(config_name)
-        )
 
 
 @dataclass
