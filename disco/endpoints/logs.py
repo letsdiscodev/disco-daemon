@@ -24,7 +24,6 @@ from disco.utils.logs import (
     start_log_collector,
 )
 from disco.utils.projects import get_project_by_name
-from disco.utils.syslog import get_stream_buffer_bytes
 from disco.utils.vectorconfig import render_streaming_config
 
 log = logging.getLogger(__name__)
@@ -86,9 +85,7 @@ async def read_logs(
     background_tasks: BackgroundTasks,
 ):
     port = random.randint(10000, 65535)
-    async with ReadSession.begin() as dbsession:
-        buffer_bytes = await get_stream_buffer_bytes(dbsession)
-    config = render_streaming_config(port, buffer_bytes)
+    config = render_streaming_config(port)
     collector_name = f"disco-syslog-{port}"
     log_queue: asyncio.Queue[LogObject] = asyncio.Queue(maxsize=STREAM_QUEUE_MAX)
     server = LogStreamServer(

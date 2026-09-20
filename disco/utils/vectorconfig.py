@@ -9,14 +9,10 @@ from typing import Literal
 
 VECTOR_IMAGE = "timberio/vector:0.58.0-alpine"
 VECTOR_CONFIG_PATH = "/etc/vector/vector.yaml"
-VECTOR_DATA_DIR = "/var/lib/vector"
 HOSTNAME_ENV = "SYSLOG_HOSTNAME"
 # Bump when spec changes to update services
 SERVICE_SPEC_REVISION = 4
 
-DEFAULT_DESTINATION_BUFFER_BYTES = 512 * 1024 * 1024
-DEFAULT_STREAM_BUFFER_BYTES = 100 * 1024 * 1024
-MIN_DISK_BUFFER_BYTES = 268_435_488
 VECTOR_LOG_ENV = "VECTOR_LOG=warn"
 
 SyslogType = Literal["CORE", "GLOBAL"]
@@ -70,7 +66,6 @@ def config_hash(config: str) -> str:
 # exiting container twice (Vector 0.58.0).
 _DOCKER_SOURCE = f"""\
 # disco collector, service spec revision {SERVICE_SPEC_REVISION}, image {VECTOR_IMAGE}
-data_dir: {{data_dir}}
 sources:
   docker:
     type: docker_logs
@@ -121,12 +116,7 @@ def _vrl_string(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def render_syslog_config(
-    url: str,
-    type: SyslogType,
-    buffer_bytes: int = DEFAULT_DESTINATION_BUFFER_BYTES,
-    disco_host: str = "",
-) -> str:
+def render_syslog_config(url: str, type: SyslogType, disco_host: str = "") -> str:
     dest = parse_syslog_url(url)
     vrl = _SYSLOG_VRL.replace("{hostname}", _vrl_string(disco_host))
     if type == "CORE":
@@ -146,8 +136,6 @@ def render_syslog_config(
     framing:
       method: newline_delimited
     buffer:
-      type: disk
-      max_size: {max(buffer_bytes, MIN_DISK_BUFFER_BYTES)}
       when_full: block
 """
     else:
@@ -157,8 +145,6 @@ def render_syslog_config(
     framing:
       method: bytes
     buffer:
-      type: disk
-      max_size: {max(buffer_bytes, MIN_DISK_BUFFER_BYTES)}
       when_full: drop_newest
 """
     body = f"""\
@@ -179,12 +165,10 @@ sinks:
     encoding:
       codec: raw_message
 """
-    return _with_data_dir(_DOCKER_SOURCE + body)
+    return _DOCKER_SOURCE + body
 
 
-def render_streaming_config(
-    port: int, buffer_bytes: int = DEFAULT_STREAM_BUFFER_BYTES
-) -> str:
+def render_streaming_config(port: int) -> str:
     if not 1 <= port <= 65535:
         raise ValueError(f"port out of range: {port}")
     body = f"""\
@@ -202,16 +186,8 @@ sinks:
     framing:
       method: newline_delimited
     buffer:
-      type: disk
-      max_size: {max(buffer_bytes, MIN_DISK_BUFFER_BYTES)}
       when_full: block
     encoding:
       codec: json
 """
-    return _with_data_dir(_DOCKER_SOURCE + body)
-
-
-def _with_data_dir(config: str) -> str:
-    # Each rendered config gets its own directory in the buffer volume, so a
-    # replacement collector never shares buffer files with the one it overlaps.
-    return config.replace("{data_dir}", f"{VECTOR_DATA_DIR}/{config_hash(config)}")
+    return _DOCKER_SOURCE + body

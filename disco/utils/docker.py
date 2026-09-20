@@ -587,7 +587,6 @@ async def list_syslog_services() -> list[SyslogService]:
 
 SYSLOG_CONFIG_PREFIX = "disco-syslog-cfg-"
 STREAM_CONFIG_PREFIX = "disco-stream-cfg-"
-SYSLOG_BUFFER_VOLUME_PREFIX = "disco-vector-buffer-"
 SYSLOG_TASK_MEMORY_LIMIT = "512m"
 # Vector attaches to the containers a few seconds after its task starts
 COLLECTOR_SETTLE_SECONDS = 10
@@ -604,10 +603,6 @@ def syslog_config_name(config: str) -> str:
 
 def stream_config_name(config: str) -> str:
     return f"{STREAM_CONFIG_PREFIX}{vectorconfig.config_hash(config)}"
-
-
-def syslog_buffer_volume_name(url: str, type: str) -> str:
-    return f"{SYSLOG_BUFFER_VOLUME_PREFIX}{vectorconfig.destination_id(url, type)}"
 
 
 async def config_exists(name: str) -> bool:
@@ -698,18 +693,6 @@ async def _config_removed(config_name: str) -> bool:
     return True
 
 
-async def _volume_removed(volume: str) -> bool:
-    stdout, _, _ = await call(
-        ["docker", "volume", "ls", "-q", "--filter", f"name=^{volume}$"]
-    )
-    if volume not in stdout:
-        return True
-    _, _, process = await call(["docker", "volume", "rm", volume])
-    if process.returncode == 0:
-        log.info("Removed Docker volume %s", volume)
-    return process.returncode == 0
-
-
 async def prune_logging_configs() -> None:
     # Configs left behind by a crash between "service rm" and the cleanup.
     # Recent ones may belong to a service that is being created right now.
@@ -742,9 +725,8 @@ async def start_syslog_service(
     disco_host: str,
     url: str,
     type: Literal["CORE", "GLOBAL"],
-    buffer_bytes: int = vectorconfig.DEFAULT_DESTINATION_BUFFER_BYTES,
 ) -> str:
-    config = vectorconfig.render_syslog_config(url, type, buffer_bytes, disco_host)
+    config = vectorconfig.render_syslog_config(url, type, disco_host)
     name = syslog_service_name(url, type, config)
     config_name = syslog_config_name(config)
     log.info("Starting Syslog service %s for %s %s", name, url, type)
@@ -773,9 +755,6 @@ async def start_syslog_service(
         f"source={config_name},target={vectorconfig.VECTOR_CONFIG_PATH}",
         "--mount",
         "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
-        "--mount",
-        f"type=volume,source={syslog_buffer_volume_name(url, type)},"
-        f"target={vectorconfig.VECTOR_DATA_DIR}",
         "--env",
         f"{vectorconfig.HOSTNAME_ENV}={disco_host}",
         "--env",
@@ -808,19 +787,6 @@ async def rm_syslog_service(service: SyslogService) -> None:
         cleanup_in_background(
             f"config {config_name}", lambda: _config_removed(config_name)
         )
-    if service.impl == "vector":
-        # The buffer volume is shared by the collectors of a destination
-        # (a replacement overlaps the one it replaces), remove it with the last one.
-        others = [
-            s
-            for s in await list_syslog_services()
-            if s.url == service.url
-            and s.type == service.type
-            and s.name != service.name
-        ]
-        if len(others) == 0:
-            volume = syslog_buffer_volume_name(service.url, service.type)
-            cleanup_in_background(f"volume {volume}", lambda: _volume_removed(volume))
 
 
 @dataclass

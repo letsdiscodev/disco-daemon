@@ -76,33 +76,12 @@ async def _save_syslog_urls(dbsession: DBSession, syslog_urls: list[SyslogUrl]) 
 
 MAX_DESTINATIONS = 10
 
-LOGGING_DESTINATION_BUFFER_KEY = "LOGGING_DESTINATION_BUFFER_BYTES"
-LOGGING_STREAM_BUFFER_KEY = "LOGGING_STREAM_BUFFER_BYTES"
-
 _reconcile_lock = asyncio.Lock()
 
 
-async def get_destination_buffer_bytes(dbsession: DBSession) -> int:
-    value = await keyvalues.get_value(dbsession, LOGGING_DESTINATION_BUFFER_KEY)
-    if value is None:
-        return vectorconfig.DEFAULT_DESTINATION_BUFFER_BYTES
-    return int(value)
-
-
-async def get_stream_buffer_bytes(dbsession: DBSession) -> int:
-    value = await keyvalues.get_value(dbsession, LOGGING_STREAM_BUFFER_KEY)
-    if value is None:
-        return vectorconfig.DEFAULT_STREAM_BUFFER_BYTES
-    return int(value)
-
-
-async def set_syslog_services(
-    disco_host: str,
-    syslog_urls: list[SyslogUrl],
-    buffer_bytes: int = vectorconfig.DEFAULT_DESTINATION_BUFFER_BYTES,
-) -> None:
+async def set_syslog_services(disco_host: str, syslog_urls: list[SyslogUrl]) -> None:
     # A collector's service name is derived from its rendered config (which
-    # includes the hostname and buffer size). Anything running under another
+    # includes the hostname). Anything running under another
     # name (logspout, an older config, a removed destination) is replaced.
     # New collectors are created before the old ones are removed.
     async with _reconcile_lock:
@@ -112,7 +91,7 @@ async def set_syslog_services(
         for syslog_url in syslog_urls:
             try:
                 config = vectorconfig.render_syslog_config(
-                    syslog_url["url"], syslog_url["type"], buffer_bytes, disco_host
+                    syslog_url["url"], syslog_url["type"], disco_host
                 )
             except vectorconfig.InvalidSyslogUrl as e:
                 # Stored before 0.34.0, leave whatever runs for it alone
@@ -132,7 +111,6 @@ async def set_syslog_services(
                     disco_host=disco_host,
                     url=syslog_url["url"],
                     type=syslog_url["type"],
-                    buffer_bytes=buffer_bytes,
                 )
         to_remove = [
             service
@@ -173,7 +151,6 @@ async def reconcile_syslog_services_on_disco_boot() -> None:
         async with ReadSession.begin() as dbsession:
             disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
             syslog_urls = await get_syslog_urls(dbsession)
-            buffer_bytes = await get_destination_buffer_bytes(dbsession)
-        await set_syslog_services(disco_host, syslog_urls, buffer_bytes)
+        await set_syslog_services(disco_host, syslog_urls)
     except Exception:
         log.exception("Failed to reconcile syslog services on boot")

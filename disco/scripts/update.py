@@ -151,13 +151,12 @@ async def task_0_33_x(image: str) -> None:
     # Idempotent: a run that dies can be run again.
     from disco.utils import docker
     from disco.utils.logs import get_running_syslogs
-    from disco.utils.syslog import get_destination_buffer_bytes, get_syslog_urls
+    from disco.utils.syslog import get_syslog_urls
 
     print("Updating from 0.33.x to 0.34.0")
     async with ReadSession.begin() as dbsession:
         disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
         syslog_urls = await get_syslog_urls(dbsession)
-        buffer_bytes = await get_destination_buffer_bytes(dbsession)
     print(f"Pulling {docker.vectorconfig.VECTOR_IMAGE}")
     await docker.pull(docker.vectorconfig.VECTOR_IMAGE)
     existing = await docker.list_syslog_services()
@@ -165,9 +164,7 @@ async def task_0_33_x(image: str) -> None:
     for syslog_url in syslog_urls:
         url, type = syslog_url["url"], syslog_url["type"]
         try:
-            config = docker.vectorconfig.render_syslog_config(
-                url, type, buffer_bytes, disco_host
-            )
+            config = docker.vectorconfig.render_syslog_config(url, type, disco_host)
         except docker.vectorconfig.InvalidSyslogUrl as e:
             print(
                 f"SKIPPING {url} ({type}): {e}. Its logspout service is left running."
@@ -177,9 +174,7 @@ async def task_0_33_x(image: str) -> None:
         name = docker.syslog_service_name(url, type, config)
         if name not in {service.name for service in existing}:
             print(f"Starting the Vector collector for {url} ({type})")
-            await docker.start_syslog_service(
-                disco_host=disco_host, url=url, type=type, buffer_bytes=buffer_bytes
-            )
+            await docker.start_syslog_service(disco_host=disco_host, url=url, type=type)
         else:
             print(f"Vector collector for {url} ({type}) already exists")
         ready = await docker.wait_for_global_service(name, timeout=300)

@@ -12,7 +12,6 @@ from disco.utils.apikeys import get_valid_api_key_by_id
 from disco.utils.syslog import (
     MAX_DESTINATIONS,
     add_syslog_url,
-    get_destination_buffer_bytes,
     get_syslog_urls,
     remove_syslog_url,
     set_syslog_services,
@@ -70,10 +69,7 @@ async def syslog_post(
                 dbsession, add_remove_syslog.url, api_key
             )
         disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
-        buffer_bytes = await get_destination_buffer_bytes(dbsession)
-    await set_syslog_services(
-        disco_host=disco_host, syslog_urls=syslog_urls, buffer_bytes=buffer_bytes
-    )
+    await set_syslog_services(disco_host=disco_host, syslog_urls=syslog_urls)
     return {
         "urls": [
             syslog_url["url"]
