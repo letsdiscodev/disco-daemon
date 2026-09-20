@@ -138,18 +138,14 @@ async def set_syslog_services(
                 continue
             desired[name] = syslog_url
         existing_names = {service.name for service in existing}
-        created = []
         for name, syslog_url in desired.items():
-            if name in existing_names:
-                continue
-            created.append(
+            if name not in existing_names:
                 await docker.start_syslog_service(
                     disco_host=disco_host,
                     url=syslog_url["url"],
                     type=syslog_url["type"],
                     buffer_bytes=buffer_bytes,
                 )
-            )
         to_remove = [
             service
             for service in existing
