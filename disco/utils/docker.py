@@ -593,7 +593,6 @@ async def start_syslog_service(
     config = vectorconfig.render_syslog_config(url, type, disco_host)
     name = syslog_service_name(url, type)
     log.info("Starting Syslog service %s for %s %s", name, url, type)
-    log.info("Vector config for %s %s:\n%s", url, type, config)
     args = [
         "docker",
         "service",
@@ -613,8 +612,6 @@ async def start_syslog_service(
         "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
         "--env",
         f"{vectorconfig.CONFIG_ENV}={config}",
-        "--env",
-        f"{vectorconfig.HOSTNAME_ENV}={disco_host}",
         "--env",
         vectorconfig.VECTOR_LOG_ENV,
         "--mode",

@@ -21,7 +21,7 @@ syslog_list_lock = asyncio.Lock()
 _active_syslogs: list[ActiveSyslog] = []
 
 # Lines waiting for the SSE writer. When full, the server stops reading and
-# the collector buffers on disk.
+# the collector holds them.
 STREAM_QUEUE_MAX = 500
 # Docker records are at most 16 KB but Vector merges partial records
 STREAM_LINE_LIMIT = 256 * 1024
@@ -294,8 +294,6 @@ async def start_log_collector(service_name: str, config: str) -> None:
         "global",
         "--label",
         "disco.syslogs",
-        "--label",
-        f"disco.syslog.image={vectorconfig.VECTOR_IMAGE}",
         "--mount",
         "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
         "--network",

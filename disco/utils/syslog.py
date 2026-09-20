@@ -93,7 +93,7 @@ async def set_syslog_services(disco_host: str, syslog_urls: list[SyslogUrl]) -> 
             if service.name in desired and desired[service.name][1] == service.config:
                 kept.add(service.name)
             else:
-                log.info("Stopping Syslog service %s", service.url)
+                log.info("Stopping Syslog service %s (%s)", service.name, service.url)
                 await docker.rm_service(service.name)
         for name, (syslog_url, _) in desired.items():
             if name not in kept:

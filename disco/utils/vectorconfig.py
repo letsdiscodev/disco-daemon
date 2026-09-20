@@ -14,7 +14,6 @@ VECTOR_COMMAND = (
     f'printf "%s\\n" "${CONFIG_ENV}" > /tmp/vector.yaml'
     " && exec vector --config /tmp/vector.yaml"
 )
-HOSTNAME_ENV = "SYSLOG_HOSTNAME"
 # Bump when spec changes to update services
 SERVICE_SPEC_REVISION = 4
 
@@ -55,19 +54,18 @@ _CORE_CONDITION = 'downcase(to_string(.label."disco.log.core") ?? "") == "true"'
 
 # RFC 5424: <PRI>1 TIMESTAMP HOSTNAME APP-NAME PROCID MSGID SD MSG
 # PRI = facility user (1) * 8 + severity, stderr -> err (3), stdout -> info (6)
-_SYSLOG_VRL = f"""\
-      hostname = "{{hostname}}"
-      if hostname == "" {{ hostname = get_env_var("{HOSTNAME_ENV}") ?? "-" }}
-      if hostname == "" {{ hostname = "-" }}
-      severity = if .stream == "stderr" {{ 3 }} else {{ 6 }}
+_SYSLOG_VRL = """\
+      hostname = "{hostname}"
+      if hostname == "" { hostname = "-" }
+      severity = if .stream == "stderr" { 3 } else { 6 }
       pri = 8 + severity
       ts = format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%SZ") ?? "-"
       app = to_string(.container_name) ?? "-"
       app = truncate(app, 48)
-      if app == "" {{ app = "-" }}
+      if app == "" { app = "-" }
       msg = to_string(.message) ?? ""
       msg = replace(msg, "\\n", "\\\\n")
-      . = {{ "message": "<" + to_string(pri) + ">1 " + ts + " " + hostname + " " + app + " - - - " + msg }}
+      . = { "message": "<" + to_string(pri) + ">1 " + ts + " " + hostname + " " + app + " - - - " + msg }
 """
 
 _STREAM_VRL = """\
