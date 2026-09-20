@@ -62,6 +62,7 @@ async def lifespan(app: FastAPI):
     yield
     worker.stop()
     await worker_task
+    await log_listener.stop()
 
 
 app = FastAPI(lifespan=lifespan, middleware=middleware)

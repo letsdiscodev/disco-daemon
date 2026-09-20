@@ -661,7 +661,9 @@ async def list_services_with_labels(project_name: str | None) -> list[LabelledSe
     ids = [line.strip() for line in ids if len(line.strip()) > 0]
     if len(ids) == 0:
         return []
-    stdout, _, _ = await check_call(
+    # a service removed between the two calls fails the inspect (exit 1), the
+    # others are still printed
+    stdout, _, _ = await call(
         [
             "docker",
             "service",
@@ -694,18 +696,6 @@ async def eligible_nodes() -> set[str]:
     return {
         line.split()[0] for line in stdout if line.split()[1:] == ["Ready", "Active"]
     }
-
-
-async def get_node_count() -> int:
-    log.info("Getting Docker Swarm node count")
-    args = [
-        "docker",
-        "info",
-        "--format",
-        "{{ .Swarm.Nodes }}",
-    ]
-    stdout, _, _ = await check_call(args)
-    return int(stdout[0])
 
 
 async def get_node_list() -> list[str]:

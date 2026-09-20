@@ -74,6 +74,12 @@ class LogListener:
             self._handle, "0.0.0.0", LOGS_PORT, limit=STREAM_LINE_LIMIT
         )
 
+    async def stop(self) -> None:
+        if self.server is not None:
+            self.server.close()
+        for writer in list(self._peers):
+            writer.close()
+
     async def _handle(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
@@ -88,17 +94,22 @@ class LogListener:
                 try:
                     line = await reader.readuntil(b"\n")
                 except asyncio.LimitOverrunError as e:
-                    await _skip_record(reader, e)
                     log.warning(
-                        "Skipped a log record over %d bytes from %s",
+                        "Skipping a log record over %d bytes from %s",
                         STREAM_LINE_LIMIT,
                         address,
                     )
+                    try:
+                        await _skip_record(reader, e)
+                    except asyncio.IncompleteReadError:
+                        break
                     continue
                 except asyncio.IncompleteReadError as e:
                     if len(e.partial) == 0:
                         break
                     line = e.partial
+                if len(self.sessions) == 0:
+                    continue
                 log_obj = parse_stream_line(line.rstrip(b"\n"))
                 if log_obj is None:
                     continue
@@ -309,7 +320,10 @@ async def read_service_history(
         )
     except TimeoutError:
         # "docker service logs" sometimes hangs (see docker.get_log_for_service)
-        process.kill()
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
         await process.wait()
         log.warning("Timed out reading the history of %s", service.name)
         return []
