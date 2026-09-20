@@ -615,65 +615,6 @@ def syslog_buffer_volume_name(url: str, type: str) -> str:
     return f"{SYSLOG_BUFFER_VOLUME_PREFIX}{vectorconfig.destination_id(url, type)}"
 
 
-def build_syslog_service_args(
-    disco_host: str,
-    url: str,
-    type: Literal["CORE", "GLOBAL"],
-    config: str,
-) -> list[str]:
-    """pure: the `docker service create` argv for one vector syslog collector."""
-    config_name = syslog_config_name(config)
-    return [
-        "docker",
-        "service",
-        "create",
-        "--name",
-        syslog_service_name(url, type, config),
-        "--detach",
-        "--label",
-        "disco.syslog",
-        "--label",
-        f"disco.syslog.url={url}",
-        "--label",
-        f"disco.syslog.type={type}",
-        "--label",
-        "disco.syslog.impl=vector",
-        "--label",
-        f"disco.syslog.image={vectorconfig.VECTOR_IMAGE}",
-        "--label",
-        f"disco.syslog.config={config_name}",
-        "--config",
-        f"source={config_name},target={vectorconfig.VECTOR_CONFIG_PATH}",
-        "--mount",
-        "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
-        "--mount",
-        f"type=volume,source={syslog_buffer_volume_name(url, type)},"
-        f"target={vectorconfig.VECTOR_DATA_DIR}",
-        "--env",
-        f"{vectorconfig.HOSTNAME_ENV}={disco_host}",
-        "--env",
-        vectorconfig.VECTOR_LOG_ENV,
-        "--mode",
-        "global",
-        # no start-first: a global service runs one task per node, the new task ran
-        # beside the old one and exited (78, the buffer directory in use) and swarm
-        # paused the update. a forced restart of a collector loses the seconds between
-        # its tasks (the docker source reads from its own start); hostname changes
-        # and upgrades replace the collector with an overlap instead (see syslog.py)
-        "--limit-memory",
-        SYSLOG_TASK_MEMORY_LIMIT,
-        "--log-driver",
-        "json-file",
-        "--log-opt",
-        "max-size=20m",
-        "--log-opt",
-        "max-file=5",
-        vectorconfig.VECTOR_IMAGE,
-        "--config",
-        vectorconfig.VECTOR_CONFIG_PATH,
-    ]
-
-
 async def config_exists(name: str) -> bool:
     process = await asyncio.create_subprocess_exec(
         "docker",
@@ -830,11 +771,61 @@ async def start_syslog_service(
     """create the vector collector for one destination; returns the service name."""
     config = vectorconfig.render_syslog_config(url, type, buffer_bytes, disco_host)
     name = syslog_service_name(url, type, config)
+    config_name = syslog_config_name(config)
     log.info("Starting Syslog service %s for %s %s", name, url, type)
     # the rendered config is logged so it exists somewhere other than the swarm store
     log.info("Vector config for %s %s:\n%s", url, type, config)
-    await create_config(syslog_config_name(config), config)
-    await check_call(build_syslog_service_args(disco_host, url, type, config))
+    await create_config(config_name, config)
+    args = [
+        "docker",
+        "service",
+        "create",
+        "--name",
+        name,
+        "--detach",
+        "--label",
+        "disco.syslog",
+        "--label",
+        f"disco.syslog.url={url}",
+        "--label",
+        f"disco.syslog.type={type}",
+        "--label",
+        "disco.syslog.impl=vector",
+        "--label",
+        f"disco.syslog.image={vectorconfig.VECTOR_IMAGE}",
+        "--label",
+        f"disco.syslog.config={config_name}",
+        "--config",
+        f"source={config_name},target={vectorconfig.VECTOR_CONFIG_PATH}",
+        "--mount",
+        "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+        "--mount",
+        f"type=volume,source={syslog_buffer_volume_name(url, type)},"
+        f"target={vectorconfig.VECTOR_DATA_DIR}",
+        "--env",
+        f"{vectorconfig.HOSTNAME_ENV}={disco_host}",
+        "--env",
+        vectorconfig.VECTOR_LOG_ENV,
+        "--mode",
+        "global",
+        # no start-first: a global service runs one task per node, the new task ran
+        # beside the old one and exited (78, the buffer directory in use) and swarm
+        # paused the update. a forced restart of a collector loses the seconds between
+        # its tasks (the docker source reads from its own start); hostname changes
+        # and upgrades replace the collector with an overlap instead (see syslog.py)
+        "--limit-memory",
+        SYSLOG_TASK_MEMORY_LIMIT,
+        "--log-driver",
+        "json-file",
+        "--log-opt",
+        "max-size=20m",
+        "--log-opt",
+        "max-file=5",
+        vectorconfig.VECTOR_IMAGE,
+        "--config",
+        vectorconfig.VECTOR_CONFIG_PATH,
+    ]
+    await check_call(args)
     return name
 
 
