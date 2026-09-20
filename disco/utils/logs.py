@@ -171,7 +171,7 @@ async def ensure_log_collector() -> None:
     async with _collector_lock:
         if await docker.service_exists(COLLECTOR_NAME):
             labels = await docker.get_service_labels(COLLECTOR_NAME)
-            if labels.get("disco.syslog.config") == config_hash:
+            if labels.get("disco.logs.config") == config_hash:
                 return
             log.info("Replacing the disco logs collector, its config changed")
             await docker.rm_service(COLLECTOR_NAME)
@@ -186,9 +186,9 @@ async def ensure_log_collector() -> None:
             "--mode",
             "global",
             "--label",
-            "disco.syslogs",
+            "disco.logs",
             "--label",
-            f"disco.syslog.config={config_hash}",
+            f"disco.logs.config={config_hash}",
             "--mount",
             "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
             "--network",
@@ -224,7 +224,7 @@ async def remove_idle_log_collector() -> None:
 
 
 async def remove_all_log_collectors() -> None:
-    # the 0.33 to 0.34 update: the per-session logspout collectors
+    # the 0.33 to 0.34 update: the per-session logspout collectors (label disco.syslogs)
     stdout, _, _ = await check_call(
         [
             "docker",
