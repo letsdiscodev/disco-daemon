@@ -890,21 +890,6 @@ async def list_project_services_with_labels(
     return services
 
 
-async def list_streaming_services() -> list[str]:
-    stdout, _, _ = await check_call(
-        [
-            "docker",
-            "service",
-            "ls",
-            "--filter",
-            "label=disco.syslogs",
-            "--format",
-            "{{ .Name }}",
-        ]
-    )
-    return stdout
-
-
 async def running_task_nodes(service_name: str) -> set[str]:
     """node ids with a running task of the service."""
     stdout, _, _ = await check_call(

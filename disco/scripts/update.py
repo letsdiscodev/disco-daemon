@@ -156,6 +156,7 @@ async def task_0_33_x(image: str) -> None:
     version is written last.
     """
     from disco.utils import docker
+    from disco.utils.logs import get_running_syslogs
     from disco.utils.syslog import get_destination_buffer_bytes, get_syslog_urls
 
     print("Updating from 0.33.x to 0.34.0")
@@ -206,8 +207,7 @@ async def task_0_33_x(image: str) -> None:
         if service.impl is None and await docker.service_exists(service.name):
             print(f"Removing the logspout service {service.name} for {service.url}")
             await docker.rm_syslog_service(service)
-    streaming = await docker.list_streaming_services()
-    for name in streaming:
+    for name in await get_running_syslogs():
         print(f"Removing the streaming collector {name} (clients reconnect)")
         await docker.rm_service(name)
     await docker.wait_for_cleanups()
