@@ -1,5 +1,7 @@
 """Vector configs for the log collectors (syslog destinations and `disco logs`)."""
 
+from __future__ import annotations
+
 import hashlib
 import re
 from dataclasses import dataclass
