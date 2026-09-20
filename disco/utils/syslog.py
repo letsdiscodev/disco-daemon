@@ -98,13 +98,6 @@ async def get_stream_buffer_bytes(dbsession: DBSession) -> int:
     return int(value)
 
 
-def _desired_service_name(
-    url: str, type: Literal["CORE", "GLOBAL"], buffer_bytes: int, disco_host: str
-) -> str:
-    config = vectorconfig.render_syslog_config(url, type, buffer_bytes, disco_host)
-    return docker.syslog_service_name(url, type, config)
-
-
 async def set_syslog_services(
     disco_host: str,
     syslog_urls: list[SyslogUrl],
@@ -126,7 +119,7 @@ async def set_syslog_services(
         untouched: set[tuple[str, str]] = set()
         for syslog_url in syslog_urls:
             try:
-                name = _desired_service_name(
+                config = vectorconfig.render_syslog_config(
                     syslog_url["url"], syslog_url["type"], buffer_bytes, disco_host
                 )
             except vectorconfig.InvalidSyslogUrl as e:
@@ -136,6 +129,9 @@ async def set_syslog_services(
                 )
                 untouched.add((syslog_url["url"], syslog_url["type"]))
                 continue
+            name = docker.syslog_service_name(
+                syslog_url["url"], syslog_url["type"], config
+            )
             desired[name] = syslog_url
         existing_names = {service.name for service in existing}
         for name, syslog_url in desired.items():
