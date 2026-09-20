@@ -147,11 +147,25 @@ def _alembic_upgrade(connection, version_hash: str) -> None:
 
 async def task_0_33_x(image: str) -> None:
     # logspout -> Vector: the daemon's boot reconcile pulls the Vector image on
-    # every node and replaces the logspout collectors; the per-session ones go here
-    from disco.utils.logs import remove_all_log_collectors
+    # every node and replaces the logspout collectors of the destinations. The
+    # per-session collectors of disco logs are removed here.
+    from disco.utils import docker
 
     print("Updating from 0.33.x to 0.34.0")
-    await remove_all_log_collectors()
+    stdout, _, _ = await check_call(
+        [
+            "docker",
+            "service",
+            "ls",
+            "--filter",
+            "label=disco.syslogs",
+            "--format",
+            "{{ .Name }}",
+        ]
+    )
+    for name in stdout:
+        print(f"Removing the log collector {name}")
+        await docker.rm_service(name)
     async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.34.0"

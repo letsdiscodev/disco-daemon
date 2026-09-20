@@ -223,24 +223,6 @@ async def remove_idle_log_collector() -> None:
             await docker.rm_service(COLLECTOR_NAME)
 
 
-async def remove_all_log_collectors() -> None:
-    # the 0.33 to 0.34 update: the per-session logspout collectors (label disco.syslogs)
-    stdout, _, _ = await check_call(
-        [
-            "docker",
-            "service",
-            "ls",
-            "--filter",
-            "label=disco.syslogs",
-            "--format",
-            "{{ .Name }}",
-        ]
-    )
-    for name in stdout:
-        log.info("Removing the log collector %s", name)
-        await docker.rm_service(name)
-
-
 def parse_stream_line(line: bytes) -> LogObject | None:
     try:
         json_str = line.decode("utf-8")
