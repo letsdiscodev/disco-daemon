@@ -41,7 +41,6 @@ async def _main() -> None:
         assert installed_version is not None
     if installed_version == disco.__version__:
         print(f"Current version is latest ({disco.__version__}), not updating.")
-        await _start_daemon_if_missing(image)
         async with Session.begin() as dbsession:
             await save_done_updating(dbsession)
         return
@@ -94,20 +93,6 @@ async def _main() -> None:
     await start_disco_daemon(host_home, image)
     async with Session.begin() as dbsession:
         await save_done_updating(dbsession)
-
-
-async def _start_daemon_if_missing(image: str) -> None:
-    # An update that died after writing the version but before restarting the
-    # daemon leaves the disco service removed
-    from disco.utils import docker
-
-    if await docker.service_exists("disco"):
-        return
-    print("The Disco service is missing, starting it")
-    async with ReadSession.begin() as dbsession:
-        host_home = await keyvalues.get_value(dbsession=dbsession, key="HOST_HOME")
-    assert host_home is not None
-    await start_disco_daemon(host_home, image)
 
 
 def _rerun_command(image: str) -> str:
