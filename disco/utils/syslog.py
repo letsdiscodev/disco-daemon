@@ -74,8 +74,6 @@ async def _save_syslog_urls(dbsession: DBSession, syslog_urls: list[SyslogUrl]) 
     await keyvalues.set_value(dbsession, SYSLOG_URLS_KEY, json.dumps(syslog_urls))
 
 
-# every destination is one more collector task per node reading the docker socket,
-# with its own disk buffer: a small server cannot take many (prd 2.2)
 MAX_DESTINATIONS = 10
 
 LOGGING_DESTINATION_BUFFER_KEY = "LOGGING_DESTINATION_BUFFER_BYTES"
@@ -103,16 +101,10 @@ async def set_syslog_services(
     syslog_urls: list[SyslogUrl],
     buffer_bytes: int = vectorconfig.DEFAULT_DESTINATION_BUFFER_BYTES,
 ) -> None:
-    """make the running collectors match the configured destinations.
-
-    identity of a collector = url + type + rendered config (image, buffer size and
-    hostname included) = its service name. a destination whose collector exists under that
-    exact name is left alone; anything else (a logspout service from before 0.34.0,
-    a collector rendered with an older config, a removed destination) is replaced:
-    new services are created BEFORE old ones are removed, so a destination never
-    goes without a collector. serialized with a lock so two api calls cannot create
-    the same service twice; safe to run at any time, including at daemon startup.
-    """
+    # A collector's service name is derived from its rendered config (which
+    # includes the hostname and buffer size). Anything running under another
+    # name (logspout, an older config, a removed destination) is replaced.
+    # New collectors are created before the old ones are removed.
     async with _reconcile_lock:
         existing = await docker.list_syslog_services()
         desired: dict[str, SyslogUrl] = {}
@@ -123,7 +115,7 @@ async def set_syslog_services(
                     syslog_url["url"], syslog_url["type"], buffer_bytes, disco_host
                 )
             except vectorconfig.InvalidSyslogUrl as e:
-                # stored before 0.34.0 and not renderable: whatever runs for it stays
+                # Stored before 0.34.0, leave whatever runs for it alone
                 log.warning(
                     "Leaving the collector of %s as it is: %s", syslog_url["url"], e
                 )
@@ -150,9 +142,6 @@ async def set_syslog_services(
         ]
         not_ready: set[tuple[str, str]] = set()
         replaced = {(s.url, s.type) for s in to_remove}
-        # every replacement, created now or left by an earlier attempt, must run on
-        # every node before the collector it replaces goes; then a settle (the task
-        # runs a few seconds before vector is attached, measured: a 4s gap otherwise)
         replacements = [
             name
             for name, syslog_url in desired.items()
@@ -166,8 +155,6 @@ async def set_syslog_services(
             await asyncio.sleep(docker.COLLECTOR_SETTLE_SECONDS)
         for service in to_remove:
             if (service.url, service.type) in not_ready:
-                # the replacement is not running everywhere: the old collector stays
-                # (the next reconcile tries again), no destination goes dark
                 log.warning(
                     "Keeping %s: its replacement is not running on every node",
                     service.name,
@@ -178,7 +165,6 @@ async def set_syslog_services(
 
 
 async def reconcile_syslog_services_on_disco_boot() -> None:
-    """repair a partial state left by a crash between two docker calls."""
     from disco.models.db import ReadSession
     from disco.utils.logs import remove_all_log_collectors
 
