@@ -97,7 +97,6 @@ async def read_logs(
         project_name=project_name,
         service_name=service_name,
     )
-    # listen before the collector exists: the first lines have somewhere to go
     await server.start()
     await monitor_syslog(collector_name)
     config_name = docker.stream_config_name(config)
@@ -114,11 +113,9 @@ async def read_logs(
         await server.close()
         raise
     try:
-        # the last lines docker retained, then live. the history is read once one
-        # collector task per node has connected (their docker sources are up by then),
-        # so a line lands in the history or in the live stream; lines in both are shown
-        # once, and a queued live line older than the history's last line is dropped
-        # (it is older than the last 100 lines by definition)
+        # History is read once every node's collector is connected, so that a
+        # line is either in the history or in the live stream. Lines in both
+        # are sent once, live lines older than the history are dropped.
         nodes = await docker.get_node_count()
         if not await server.wait_for_connections(nodes, timeout=60):
             log.warning(
@@ -149,12 +146,9 @@ async def read_logs(
             )
     finally:
         log.info("HTTP Connection for logs disconnected")
-        # the session leaves the list of live sessions (which the rogue-collector
-        # sweep compares against)
         await release_syslog(collector_name)
-        # scheduled on the loop directly, and first: the response's background tasks
-        # are not run when a streaming client goes away (measured: collectors were
-        # left behind), and closing the server must not stand in the way
+        # Not a BackgroundTasks task: those don't run when a streaming client
+        # goes away
         _cleanups.add(
             asyncio.get_running_loop().create_task(
                 remove_log_collector(collector_name, config_name)
