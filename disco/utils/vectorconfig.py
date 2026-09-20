@@ -22,12 +22,8 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-# pinned; multi-arch (linux/amd64, linux/arm64, arm/v7, arm/v6). the digest is the
-# manifest list, checked on docker hub on 2026-09-17. bump both together.
+# pinned; multi-arch (linux/amd64, linux/arm64, arm/v7, arm/v6)
 VECTOR_IMAGE = "timberio/vector:0.58.0-alpine"
-VECTOR_IMAGE_DIGEST = (
-    "sha256:5dcf67db0ee378caa87f3395cb9484ebe3e97bb0334d119f2ac33116e00c5773"
-)
 VECTOR_CONFIG_PATH = "/etc/vector/vector.yaml"
 VECTOR_DATA_DIR = "/var/lib/vector"
 HOSTNAME_ENV = "SYSLOG_HOSTNAME"
