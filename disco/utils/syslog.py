@@ -98,6 +98,7 @@ async def set_syslog_services(disco_host: str, syslog_urls: list[SyslogUrl]) -> 
                 await docker.rm_service(service.name)
             else:
                 extras.append(service)
+        created = []
         for name, (syslog_url, _) in desired.items():
             if name not in kept:
                 await docker.start_syslog_service(
@@ -105,7 +106,13 @@ async def set_syslog_services(disco_host: str, syslog_urls: list[SyslogUrl]) -> 
                     url=syslog_url["url"],
                     type=syslog_url["type"],
                 )
-        # a collector under another name (logspout) forwards until its replacement runs
+                created.append(name)
+        # a collector under another name (logspout) forwards until its replacement
+        # runs and has attached to the containers: an overlap, not a gap
+        if len(extras) > 0 and len(created) > 0:
+            for name in created:
+                await docker.wait_for_service_running(name, timeout=120)
+            await asyncio.sleep(docker.COLLECTOR_SETTLE_SECONDS)
         for service in extras:
             log.info("Stopping Syslog service %s (%s)", service.name, service.url)
             await docker.rm_service(service.name)

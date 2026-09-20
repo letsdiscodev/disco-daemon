@@ -733,6 +733,43 @@ async def pull_image_on_all_nodes(image: str) -> None:
     await call(["docker", "service", "rm", PULL_SERVICE_NAME])
 
 
+# a collector attaches to the containers a few seconds after its task runs
+COLLECTOR_SETTLE_SECONDS = 10
+
+
+async def wait_for_service_running(name: str, timeout: float) -> bool:
+    # a task running on every eligible node, or the timeout
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        nodes = await eligible_nodes()
+        stdout, _, _ = await check_call(
+            [
+                "docker",
+                "service",
+                "ps",
+                name,
+                "--filter",
+                "desired-state=running",
+                "--format",
+                "{{ .Node }} {{ .CurrentState }}",
+                "--no-trunc",
+            ]
+        )
+        running = {
+            line.split(" ", 1)[0]
+            for line in stdout
+            if line.split(" ", 1)[1].startswith("Running")
+        }
+        if len(nodes) > 0 and nodes <= running:
+            return True
+        if asyncio.get_running_loop().time() > deadline:
+            log.warning(
+                "Service %s is not running on every node after %ss", name, timeout
+            )
+            return False
+        await asyncio.sleep(2)
+
+
 async def eligible_nodes() -> set[str]:
     # the nodes a global service gets a task on
     stdout, _, _ = await check_call(
