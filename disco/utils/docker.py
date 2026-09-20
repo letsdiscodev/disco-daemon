@@ -652,29 +652,30 @@ async def get_service_labels(service_name: str) -> dict[str, str]:
     return labels or {}
 
 
-async def list_project_services_with_labels(
-    project_name: str | None,
-) -> list[LabelledService]:
-    label = (
-        "disco.project.name"
-        if project_name is None
-        else f"disco.project.name={project_name}"
-    )
+async def list_services_with_labels(project_name: str | None) -> list[LabelledService]:
+    # every service, or the services of one project
+    args = ["docker", "service", "ls", "-q"]
+    if project_name is not None:
+        args += ["--filter", f"label=disco.project.name={project_name}"]
+    ids, _, _ = await check_call(args)
+    ids = [line.strip() for line in ids if len(line.strip()) > 0]
+    if len(ids) == 0:
+        return []
     stdout, _, _ = await check_call(
         [
             "docker",
             "service",
-            "ls",
-            "--filter",
-            f"label={label}",
+            "inspect",
             "--format",
-            "{{ .Name }}",
+            "{{ .Spec.Name }}\t{{ json .Spec.Labels }}",
+            *ids,
         ]
     )
     services = []
-    for name in stdout:
+    for line in stdout:
+        name, _, labels_json = line.partition("\t")
         services.append(
-            LabelledService(name=name, labels=await get_service_labels(name))
+            LabelledService(name=name, labels=json.loads(labels_json) or {})
         )
     return services
 

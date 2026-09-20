@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from disco.utils import docker, vectorconfig
-from disco.utils.subprocess import call, check_call
+from disco.utils.subprocess import check_call, decode_output
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +60,8 @@ def log_matches(
 
 
 HISTORY_LINES = 100
+HISTORY_TIMEOUT_SECONDS = 5
+HISTORY_PARALLEL_READS = 8
 # <rfc 3339 ns timestamp> <task name>@<node>    | <message>
 _SERVICE_LOG_LINE = re.compile(
     r"^(?P<ts>\S+) (?P<task>\S+)@(?P<node>\S+)\s+\| ?(?P<msg>.*)$"
@@ -89,27 +91,38 @@ def _nanoseconds(ts: str) -> str:
     return f"{head}.{frac.ljust(9, '0')}Z"
 
 
-async def read_service_history(service_name: str, lines: int) -> list[LogObject]:
-    stdout, stderr, process = await call(
-        [
-            "docker",
-            "service",
-            "logs",
-            "--timestamps",
-            "--no-trunc",
-            "--tail",
-            str(lines),
-            service_name,
-        ]
+async def read_service_history(
+    service: docker.LabelledService, lines: int
+) -> list[LogObject]:
+    process = await asyncio.create_subprocess_exec(
+        "docker",
+        "service",
+        "logs",
+        "--timestamps",
+        "--no-trunc",
+        "--tail",
+        str(lines),
+        service.name,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
-    if process.returncode != 0:
-        log.warning("Could not read the history of %s", service_name)
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(), HISTORY_TIMEOUT_SECONDS
+        )
+    except TimeoutError:
+        # "docker service logs" sometimes hangs (see docker.get_log_for_service)
+        process.kill()
+        await process.wait()
+        log.warning("Timed out reading the history of %s", service.name)
         return []
-    labels = await docker.get_service_labels(service_name)
+    if process.returncode != 0:
+        log.warning("Could not read the history of %s", service.name)
+        return []
     out = []
-    for stream, lines_ in (("stdout", stdout), ("stderr", stderr)):
-        for line in lines_:
-            log_obj = parse_service_log_line(line, labels, stream)
+    for stream, output in (("stdout", stdout), ("stderr", stderr)):
+        for line in decode_output(output):
+            log_obj = parse_service_log_line(line, service.labels, stream)
             if log_obj is not None:
                 out.append(log_obj)
     out.sort(key=lambda o: str(o["timestamp"]))
@@ -119,14 +132,20 @@ async def read_service_history(service_name: str, lines: int) -> list[LogObject]
 async def read_history(
     project_name: str | None, service_name: str | None, lines: int = HISTORY_LINES
 ) -> list[LogObject]:
-    services = await docker.list_project_services_with_labels(project_name)
+    services = await docker.list_services_with_labels(project_name)
     if service_name is not None:
         services = [
             s for s in services if s.labels.get("disco.service.name") == service_name
         ]
+    semaphore = asyncio.Semaphore(HISTORY_PARALLEL_READS)
+
+    async def read(service: docker.LabelledService) -> list[LogObject]:
+        async with semaphore:
+            return await read_service_history(service, lines)
+
     history: list[LogObject] = []
-    for service in services:
-        history += await read_service_history(service.name, lines)
+    for objs in await asyncio.gather(*(read(service) for service in services)):
+        history += objs
     history.sort(key=lambda o: str(o["timestamp"]))
     return history[-lines:]
 
