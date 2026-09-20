@@ -199,6 +199,7 @@ async def run_ws(
         # Labels for identification and cleanup
         args += ["--label", f"disco.project.name={project_name}"]
         args += ["--label", "disco.run=true"]  # Easy filter
+        args += ["--label", "disco.log.exclude=true"]
         args += ["--label", f"disco.run.created={created}"]
         args += ["--label", f"disco.run.expires={expires}"]
 
