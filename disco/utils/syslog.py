@@ -89,12 +89,15 @@ async def set_syslog_services(disco_host: str, syslog_urls: list[SyslogUrl]) -> 
             name = docker.syslog_service_name(syslog_url["url"], syslog_url["type"])
             desired[name] = (syslog_url, vectorconfig.config_hash(config))
         kept = set()
+        extras = []
         for service in await docker.list_syslog_services():
             if service.name in desired and desired[service.name][1] == service.config:
                 kept.add(service.name)
-            else:
+            elif service.name in desired:
                 log.info("Stopping Syslog service %s (%s)", service.name, service.url)
                 await docker.rm_service(service.name)
+            else:
+                extras.append(service)
         for name, (syslog_url, _) in desired.items():
             if name not in kept:
                 await docker.start_syslog_service(
@@ -102,6 +105,10 @@ async def set_syslog_services(disco_host: str, syslog_urls: list[SyslogUrl]) -> 
                     url=syslog_url["url"],
                     type=syslog_url["type"],
                 )
+        # a collector under another name (logspout) forwards until its replacement runs
+        for service in extras:
+            log.info("Stopping Syslog service %s (%s)", service.name, service.url)
+            await docker.rm_service(service.name)
 
 
 async def reconcile_syslog_services_on_disco_boot() -> None:
