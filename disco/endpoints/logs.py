@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import random
-from collections import Counter
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sse_starlette import ServerSentEvent
@@ -15,7 +14,6 @@ from disco.utils.logs import (
     STREAM_QUEUE_MAX,
     LogObject,
     LogStreamServer,
-    history_key,
     monitor_syslog,
     read_history,
     release_syslog,
@@ -117,19 +115,19 @@ async def read_logs(
                 port,
             )
         history = await read_history(project_name, service_name)
-        seen: Counter[tuple[str, str, str]] = Counter(
-            history_key(log_obj) for log_obj in history
-        )
-        last_ts = str(history[-1]["timestamp"]) if history else ""
+        # Per container and stream, docker's timestamps only go up: a live
+        # line at or below the newest history line of its container and
+        # stream was in the history
+        watermark: dict[tuple[str, str], str] = {}
         for log_obj in history:
+            watermark[(str(log_obj["container"]), str(log_obj["stream"]))] = str(
+                log_obj["timestamp"]
+            )
             yield ServerSentEvent(event="output", data=json.dumps(log_obj))
         while True:
             log_obj = await log_queue.get()
-            key = history_key(log_obj)
-            if seen[key] > 0:
-                seen[key] -= 1
-                continue
-            if last_ts and str(log_obj["timestamp"]) < last_ts:
+            key = (str(log_obj["container"]), str(log_obj.get("stream", "")))
+            if key in watermark and str(log_obj["timestamp"]) <= watermark[key]:
                 continue
             yield ServerSentEvent(event="output", data=json.dumps(log_obj))
     finally:

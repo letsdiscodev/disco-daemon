@@ -150,14 +150,6 @@ async def read_history(
     return history[-lines:]
 
 
-def history_key(log_obj: LogObject) -> tuple[str, str, str]:
-    return (
-        str(log_obj["container"]),
-        str(log_obj["timestamp"]),
-        str(log_obj["message"]),
-    )
-
-
 class LogStreamServer:
     def __init__(
         self,
