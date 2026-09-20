@@ -115,6 +115,9 @@ async def reconcile_syslog_services_on_disco_boot() -> None:
     from disco.models.db import ReadSession
 
     try:
+        if not await docker.image_exists(vectorconfig.VECTOR_IMAGE):
+            # a new Vector image: the running collectors forward while it is pulled
+            await docker.pull_image_on_all_nodes(vectorconfig.VECTOR_IMAGE)
         async with ReadSession.begin() as dbsession:
             disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
             syslog_urls = await get_syslog_urls(dbsession)

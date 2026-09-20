@@ -57,9 +57,10 @@ async def lifespan(app: FastAPI):
     await cleanup_deployments_on_disco_boot()
     await clean_up_pending_files_on_disco_boot()
     await enqueue_deployments_on_disco_boot()
-    await reconcile_syslog_services_on_disco_boot()
+    reconcile_task = loop.create_task(reconcile_syslog_services_on_disco_boot())
     await log_listener.start()
     yield
+    reconcile_task.cancel()
     worker.stop()
     await worker_task
     await log_listener.stop()

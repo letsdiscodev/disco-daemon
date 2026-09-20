@@ -682,6 +682,57 @@ async def list_services_with_labels(project_name: str | None) -> list[LabelledSe
     return services
 
 
+async def image_exists(image: str) -> bool:
+    _, _, process = await call(["docker", "image", "inspect", image])
+    return process.returncode == 0
+
+
+PULL_SERVICE_NAME = "disco-pull"
+PULL_TIMEOUT_SECONDS = 300
+
+
+async def pull_image_on_all_nodes(image: str) -> None:
+    # a global service that exits at once: every node pulls the image for its task
+    await call(["docker", "service", "rm", PULL_SERVICE_NAME])
+    log.info("Pulling %s on every node", image)
+    await check_call(
+        [
+            "docker",
+            "service",
+            "create",
+            "--name",
+            PULL_SERVICE_NAME,
+            "--detach",
+            "--mode",
+            "global",
+            "--restart-condition",
+            "none",
+            "--entrypoint",
+            "true",
+            image,
+        ]
+    )
+    deadline = asyncio.get_running_loop().time() + PULL_TIMEOUT_SECONDS
+    while True:
+        states, _, _ = await check_call(
+            [
+                "docker",
+                "service",
+                "ps",
+                PULL_SERVICE_NAME,
+                "--format",
+                "{{ .CurrentState }}",
+            ]
+        )
+        if len(states) > 0 and all(state.startswith("Complete") for state in states):
+            break
+        if asyncio.get_running_loop().time() > deadline:
+            log.warning("Giving up waiting for %s to be pulled on every node", image)
+            break
+        await asyncio.sleep(2)
+    await call(["docker", "service", "rm", PULL_SERVICE_NAME])
+
+
 async def eligible_nodes() -> set[str]:
     # the nodes a global service gets a task on
     stdout, _, _ = await check_call(
