@@ -72,8 +72,8 @@ _STREAM_VRL = """\
       . = {
         "container": to_string(.container_name) ?? "",
         "labels": object(.label) ?? {},
-        "timestamp": format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%SZ") ?? "",
-        "ts": format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%S%.3fZ") ?? "",
+        "timestamp": format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%S%.9fZ") ?? "",
+        "stream": to_string(.stream) ?? "",
         "message": to_string(.message) ?? ""
       }
 """

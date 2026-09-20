@@ -66,19 +66,27 @@ _SERVICE_LOG_LINE = re.compile(
 )
 
 
-def parse_service_log_line(line: str, labels: dict[str, str]) -> LogObject | None:
+def parse_service_log_line(
+    line: str, labels: dict[str, str], stream: str
+) -> LogObject | None:
     m = _SERVICE_LOG_LINE.match(line)
     if m is None:
         return None
-    ts = m.group("ts")
-    ms = ts[:23] + "Z" if len(ts) > 24 and ts.endswith("Z") else ts
     return {
         "container": m.group("task"),
         "labels": labels,
-        "timestamp": ms[:19] + "Z" if len(ms) >= 20 else ms,
-        "ts": ms,
+        "timestamp": _nanoseconds(m.group("ts")),
+        "stream": stream,
         "message": m.group("msg"),
     }
+
+
+def _nanoseconds(ts: str) -> str:
+    # docker trims the trailing zeros of the fraction; the live lines have 9 digits
+    if not ts.endswith("Z"):
+        return ts
+    head, _, frac = ts[:-1].partition(".")
+    return f"{head}.{frac.ljust(9, '0')}Z"
 
 
 async def read_service_history(service_name: str, lines: int) -> list[LogObject]:
@@ -99,11 +107,12 @@ async def read_service_history(service_name: str, lines: int) -> list[LogObject]
         return []
     labels = await docker.get_service_labels(service_name)
     out = []
-    for line in stdout + stderr:
-        log_obj = parse_service_log_line(line, labels)
-        if log_obj is not None:
-            out.append(log_obj)
-    out.sort(key=lambda o: str(o.get("ts", o["timestamp"])))
+    for stream, lines_ in (("stdout", stdout), ("stderr", stderr)):
+        for line in lines_:
+            log_obj = parse_service_log_line(line, labels, stream)
+            if log_obj is not None:
+                out.append(log_obj)
+    out.sort(key=lambda o: str(o["timestamp"]))
     return out[-lines:]
 
 
@@ -118,21 +127,16 @@ async def read_history(
     history: list[LogObject] = []
     for service in services:
         history += await read_service_history(service.name, lines)
-    history.sort(key=lambda o: str(o.get("ts", o["timestamp"])))
+    history.sort(key=lambda o: str(o["timestamp"]))
     return history[-lines:]
 
 
 def history_key(log_obj: LogObject) -> tuple[str, str, str]:
     return (
         str(log_obj["container"]),
-        str(log_obj.get("ts", log_obj["timestamp"])),
+        str(log_obj["timestamp"]),
         str(log_obj["message"]),
     )
-
-
-def for_client(log_obj: LogObject) -> LogObject:
-    # "ts" (milliseconds) is only used to order and dedupe history against live
-    return {k: v for k, v in log_obj.items() if k != "ts"}
 
 
 class LogStreamServer:

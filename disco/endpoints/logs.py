@@ -15,7 +15,6 @@ from disco.utils.logs import (
     STREAM_QUEUE_MAX,
     LogObject,
     LogStreamServer,
-    for_client,
     history_key,
     monitor_syslog,
     read_history,
@@ -121,23 +120,18 @@ async def read_logs(
         seen: Counter[tuple[str, str, str]] = Counter(
             history_key(log_obj) for log_obj in history
         )
-        last_ts = (
-            str(history[-1].get("ts", history[-1]["timestamp"])) if history else ""
-        )
+        last_ts = str(history[-1]["timestamp"]) if history else ""
         for log_obj in history:
-            yield ServerSentEvent(event="output", data=json.dumps(for_client(log_obj)))
+            yield ServerSentEvent(event="output", data=json.dumps(log_obj))
         while True:
             log_obj = await log_queue.get()
             key = history_key(log_obj)
             if seen[key] > 0:
                 seen[key] -= 1
                 continue
-            if last_ts and str(log_obj.get("ts", log_obj["timestamp"])) < last_ts:
+            if last_ts and str(log_obj["timestamp"]) < last_ts:
                 continue
-            yield ServerSentEvent(
-                event="output",
-                data=json.dumps(for_client(log_obj)),
-            )
+            yield ServerSentEvent(event="output", data=json.dumps(log_obj))
     finally:
         log.info("HTTP Connection for logs disconnected")
         await release_syslog(collector_name)
