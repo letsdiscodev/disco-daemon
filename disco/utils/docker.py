@@ -717,7 +717,8 @@ async def prune_logging_configs() -> None:
         for name in await list_configs(prefix):
             if await _config_age_seconds(name) < 600:
                 continue
-            await _config_removed(name)
+            if not await _config_removed(name):
+                log.warning("Could not remove Docker config %s", name)
 
 
 async def _config_age_seconds(name: str) -> float:
