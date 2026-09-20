@@ -5,30 +5,20 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-# Multi-arch (amd64, arm64, arm/v7, arm/v6)
 VECTOR_IMAGE = "timberio/vector:0.58.0-alpine"
 VECTOR_CONFIG_PATH = "/etc/vector/vector.yaml"
 VECTOR_DATA_DIR = "/var/lib/vector"
 HOSTNAME_ENV = "SYSLOG_HOSTNAME"
+# Bump when spec changes to update services
+SERVICE_SPEC_REVISION = 4
 
 DEFAULT_DESTINATION_BUFFER_BYTES = 512 * 1024 * 1024
 DEFAULT_STREAM_BUFFER_BYTES = 100 * 1024 * 1024
-# Vector refuses disk buffers smaller than this
 MIN_DISK_BUFFER_BYTES = 268_435_488
-
-# Bump when the service spec built around the config changes (mounts, limits, ...).
-# The config hash is the service name, so this makes the reconciler replace the
-# running collectors.
-SERVICE_SPEC_REVISION = 4
-
-# At the default level (info), Vector logs every container it starts/stops
-# tailing, and those lines get forwarded like any other container output.
 VECTOR_LOG_ENV = "VECTOR_LOG=warn"
 
 SyslogType = Literal["CORE", "GLOBAL"]
 
-# The endpoint accepted any non-space host before 0.34.0. URLs stored back then
-# must still parse, hence underscores and bracketed IPv6.
 _SYSLOG_URL_RE = re.compile(
     r"^syslog(?P<tls>\+tls)?://"
     r"(?P<host>\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9_](?:[A-Za-z0-9_.-]*[A-Za-z0-9_])?)"
