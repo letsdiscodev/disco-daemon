@@ -33,6 +33,7 @@ from disco.utils.deployments import (
     cleanup_deployments_on_disco_boot,
     enqueue_deployments_on_disco_boot,
 )
+from disco.utils.logs import log_listener
 from disco.utils.pendingfiles import clean_up_pending_files_on_disco_boot
 from disco.utils.syslog import reconcile_syslog_services_on_disco_boot
 from disco.utils.worker import worker
@@ -57,6 +58,7 @@ async def lifespan(app: FastAPI):
     await clean_up_pending_files_on_disco_boot()
     await enqueue_deployments_on_disco_boot()
     await reconcile_syslog_services_on_disco_boot()
+    await log_listener.start()
     yield
     worker.stop()
     await worker_task

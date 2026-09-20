@@ -2,32 +2,232 @@ import asyncio
 import json
 import logging
 import re
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+import time
+from datetime import datetime, timezone
 
 from disco.utils import docker, vectorconfig
 from disco.utils.subprocess import check_call, decode_output
 
 log = logging.getLogger(__name__)
 
-
-@dataclass
-class ActiveSyslog:
-    expires: datetime
-    service_name: str
-
-
-syslog_list_lock = asyncio.Lock()
-_active_syslogs: list[ActiveSyslog] = []
-
-# Lines waiting for the SSE writer. When full, the server stops reading and
-# the collector holds them.
-STREAM_QUEUE_MAX = 500
+# One collector service on every node, sending every container's lines to the
+# daemon on this port of the disco-logging network; the daemon fans them out
+# to the open disco logs sessions
+LOGS_PORT = 10514
+COLLECTOR_NAME = "disco-logs"
+# Removed by the hourly cron once no session used it for this long
+COLLECTOR_IDLE_SECONDS = 3600
+COLLECTOR_CONNECT_TIMEOUT_SECONDS = 15
+# Lines waiting for a session's SSE writer; the oldest are dropped when full
+SESSION_QUEUE_MAX = 5000
 # Docker records are at most 16 KB but Vector merges partial records
 STREAM_LINE_LIMIT = 256 * 1024
-
+HISTORY_LINES = 100
+HISTORY_TIMEOUT_SECONDS = 5
+HISTORY_PARALLEL_READS = 8
 
 LogObject = dict[str, str | dict[str, str]]
+
+
+class LogSession:
+    def __init__(self, project_name: str | None, service_name: str | None) -> None:
+        self.project_name = project_name
+        self.service_name = service_name
+        self.queue: asyncio.Queue[LogObject] = asyncio.Queue(maxsize=SESSION_QUEUE_MAX)
+        self.dropped = 0
+        self._notice_at = 0.0
+
+    def offer(self, log_obj: LogObject) -> None:
+        if not log_matches(log_obj, self.project_name, self.service_name):
+            return
+        if self.queue.full():
+            self.queue.get_nowait()
+            self.dropped += 1
+        self.queue.put_nowait(log_obj)
+
+    async def get(self) -> LogObject:
+        # the drop count as a log line, at most one a second
+        now = time.monotonic()
+        if self.dropped > 0 and now - self._notice_at >= 1:
+            dropped, self.dropped, self._notice_at = self.dropped, 0, now
+            return {
+                "container": "disco",
+                "labels": {},
+                "timestamp": datetime.now(timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%S.%f000Z"
+                ),
+                "stream": "stderr",
+                "message": f"[disco] {dropped} lines dropped, the client is too slow",
+            }
+        return await self.queue.get()
+
+
+class LogListener:
+    def __init__(self) -> None:
+        self.server: asyncio.AbstractServer | None = None
+        self.sessions: set[LogSession] = set()
+        self._peers: dict[asyncio.StreamWriter, str] = {}
+        self._changed = asyncio.Condition()
+
+    async def start(self) -> None:
+        self.server = await asyncio.start_server(
+            self._handle, "0.0.0.0", LOGS_PORT, limit=STREAM_LINE_LIMIT
+        )
+
+    async def _handle(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        peer = writer.get_extra_info("peername")
+        address = peer[0] if peer else "?"
+        log.info("Log collector connected from %s", address)
+        self._peers[writer] = address
+        async with self._changed:
+            self._changed.notify_all()
+        try:
+            while True:
+                try:
+                    line = await reader.readuntil(b"\n")
+                except asyncio.LimitOverrunError as e:
+                    await _skip_record(reader, e)
+                    log.warning(
+                        "Skipped a log record over %d bytes from %s",
+                        STREAM_LINE_LIMIT,
+                        address,
+                    )
+                    continue
+                except asyncio.IncompleteReadError as e:
+                    if len(e.partial) == 0:
+                        break
+                    line = e.partial
+                log_obj = parse_stream_line(line.rstrip(b"\n"))
+                if log_obj is None:
+                    continue
+                for session in self.sessions:
+                    session.offer(log_obj)
+        except ConnectionResetError:
+            pass
+        finally:
+            del self._peers[writer]
+            writer.close()
+            log.info("Log collector from %s disconnected", address)
+
+    def connected_nodes(self) -> int:
+        return len(set(self._peers.values()))
+
+    async def wait_for_nodes(self, count: int, timeout: float) -> bool:
+        try:
+            async with self._changed:
+                await asyncio.wait_for(
+                    self._changed.wait_for(lambda: self.connected_nodes() >= count),
+                    timeout=timeout,
+                )
+            return True
+        except TimeoutError:
+            return False
+
+    def subscribe(self, session: LogSession) -> None:
+        global _idle_since
+        self.sessions.add(session)
+        _idle_since = None
+
+    def unsubscribe(self, session: LogSession) -> None:
+        global _idle_since
+        self.sessions.discard(session)
+        if len(self.sessions) == 0:
+            _idle_since = time.monotonic()
+
+
+log_listener = LogListener()
+# no session since boot, until one subscribes
+_idle_since: float | None = time.monotonic()
+_collector_lock = asyncio.Lock()
+
+
+async def _skip_record(reader: asyncio.StreamReader, e: asyncio.LimitOverrunError):
+    # the bytes up to the newline of the record that went over the limit
+    while True:
+        await reader.readexactly(e.consumed)
+        try:
+            await reader.readuntil(b"\n")
+            return
+        except asyncio.LimitOverrunError as again:
+            e = again
+
+
+async def ensure_log_collector() -> None:
+    config = vectorconfig.render_streaming_config(LOGS_PORT)
+    config_hash = vectorconfig.config_hash(config)
+    async with _collector_lock:
+        if await docker.service_exists(COLLECTOR_NAME):
+            labels = await docker.get_service_labels(COLLECTOR_NAME)
+            if labels.get("disco.syslog.config") == config_hash:
+                return
+            log.info("Replacing the disco logs collector, its config changed")
+            await docker.rm_service(COLLECTOR_NAME)
+        log.info("Starting the disco logs collector")
+        args = [
+            "docker",
+            "service",
+            "create",
+            "--name",
+            COLLECTOR_NAME,
+            "--detach",
+            "--mode",
+            "global",
+            "--label",
+            "disco.syslogs",
+            "--label",
+            f"disco.syslog.config={config_hash}",
+            "--mount",
+            "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
+            "--network",
+            "disco-logging",
+            "--env",
+            f"{vectorconfig.CONFIG_ENV}={config}",
+            "--env",
+            vectorconfig.VECTOR_LOG_ENV,
+            "--log-driver",
+            "json-file",
+            "--log-opt",
+            "max-size=20m",
+            "--log-opt",
+            "max-file=5",
+            "--entrypoint",
+            "sh",
+            vectorconfig.VECTOR_IMAGE,
+            "-c",
+            vectorconfig.VECTOR_COMMAND,
+        ]
+        await check_call(args)
+
+
+async def remove_idle_log_collector() -> None:
+    async with _collector_lock:
+        if len(log_listener.sessions) > 0 or _idle_since is None:
+            return
+        if time.monotonic() - _idle_since < COLLECTOR_IDLE_SECONDS:
+            return
+        if await docker.service_exists(COLLECTOR_NAME):
+            log.info("Removing the disco logs collector, no session for an hour")
+            await docker.rm_service(COLLECTOR_NAME)
+
+
+async def remove_all_log_collectors() -> None:
+    # the 0.33 to 0.34 update: the per-session logspout collectors
+    stdout, _, _ = await check_call(
+        [
+            "docker",
+            "service",
+            "ls",
+            "--filter",
+            "label=disco.syslogs",
+            "--format",
+            "{{ .Name }}",
+        ]
+    )
+    for name in stdout:
+        log.info("Removing the log collector %s", name)
+        await docker.rm_service(name)
 
 
 def parse_stream_line(line: bytes) -> LogObject | None:
@@ -59,9 +259,6 @@ def log_matches(
     return True
 
 
-HISTORY_LINES = 100
-HISTORY_TIMEOUT_SECONDS = 5
-HISTORY_PARALLEL_READS = 8
 # <rfc 3339 ns timestamp> <task name>@<node>    | <message>
 _SERVICE_LOG_LINE = re.compile(
     r"^(?P<ts>\S+) (?P<task>\S+)@(?P<node>\S+)\s+\| ?(?P<msg>.*)$"
@@ -148,211 +345,3 @@ async def read_history(
         history += objs
     history.sort(key=lambda o: str(o["timestamp"]))
     return history[-lines:]
-
-
-class LogStreamServer:
-    def __init__(
-        self,
-        port: int,
-        log_queue: "asyncio.Queue[LogObject]",
-        project_name: str | None,
-        service_name: str | None,
-    ) -> None:
-        self.port = port
-        self.log_queue = log_queue
-        self.project_name = project_name
-        self.service_name = service_name
-        self.server: asyncio.AbstractServer | None = None
-        self._writers: set[asyncio.StreamWriter] = set()
-        self._handlers: set[asyncio.Task] = set()
-        self.connections = 0
-        self.connected = asyncio.Condition()
-
-    async def start(self) -> None:
-        self.server = await asyncio.start_server(
-            self._handle, "0.0.0.0", self.port, limit=STREAM_LINE_LIMIT
-        )
-
-    async def _handle(
-        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
-        peer = writer.get_extra_info("peername")
-        log.info("Log collector connected from %s on port %d", peer, self.port)
-        self._writers.add(writer)
-        task = asyncio.current_task()
-        if task is not None:
-            self._handlers.add(task)
-        async with self.connected:
-            self.connections += 1
-            self.connected.notify_all()
-        try:
-            while True:
-                try:
-                    line = await reader.readuntil(b"\n")
-                except asyncio.LimitOverrunError:
-                    await _skip_line(reader)
-                    log.warning(
-                        "Skipped a log record over %d bytes from %s",
-                        STREAM_LINE_LIMIT,
-                        peer,
-                    )
-                    continue
-                except asyncio.IncompleteReadError as e:
-                    line = e.partial
-                    if len(line) == 0:
-                        break
-                log_obj = parse_stream_line(line.rstrip(b"\n"))
-                if log_obj is None:
-                    continue
-                if not log_matches(log_obj, self.project_name, self.service_name):
-                    continue
-                await self.log_queue.put(log_obj)
-        except ConnectionResetError:
-            pass
-        except asyncio.CancelledError:
-            pass
-        finally:
-            self._writers.discard(writer)
-            if task is not None:
-                self._handlers.discard(task)
-            writer.close()
-            log.info("Log collector from %s disconnected", peer)
-
-    async def wait_for_connections(self, count: int, timeout: float) -> bool:
-        try:
-            async with self.connected:
-                await asyncio.wait_for(
-                    self.connected.wait_for(lambda: self.connections >= count),
-                    timeout=timeout,
-                )
-            return True
-        except TimeoutError:
-            return False
-
-    async def close(self) -> None:
-        if self.server is None:
-            return
-        self.server.close()
-        # wait_closed() waits for the connections, and the collectors keep
-        # theirs until they are removed
-        for writer in list(self._writers):
-            writer.close()
-        for handler in list(self._handlers):
-            handler.cancel()
-        try:
-            await asyncio.wait_for(self.server.wait_closed(), timeout=5)
-        except TimeoutError:
-            log.warning("Log stream server on port %d did not close in time", self.port)
-
-
-async def monitor_syslog(service_name: str) -> None:
-    global _active_syslogs
-    log.info("Adding %s to the list of monitored syslogs", service_name)
-    async with syslog_list_lock:
-        _active_syslogs.append(
-            ActiveSyslog(
-                service_name=service_name,
-                expires=datetime.now(timezone.utc) + timedelta(hours=24),
-            )
-        )
-
-
-async def release_syslog(service_name: str) -> None:
-    global _active_syslogs
-    async with syslog_list_lock:
-        _active_syslogs = [
-            sl for sl in _active_syslogs if sl.service_name != service_name
-        ]
-
-
-async def get_active_syslogs() -> list[str]:
-    global _active_syslogs
-    async with syslog_list_lock:
-        _active_syslogs = [
-            sl for sl in _active_syslogs if sl.expires > datetime.now(timezone.utc)
-        ]
-        return [sl.service_name for sl in _active_syslogs]
-
-
-async def get_running_syslogs() -> list[str]:
-    args = [
-        "docker",
-        "service",
-        "ls",
-        "--filter",
-        "label=disco.syslogs",
-        "--format",
-        "{{ .Name }}",
-    ]
-    stdout, _, _ = await check_call(args)
-    return stdout
-
-
-async def clean_up_rogue_syslogs() -> None:
-    active_syslogs = set(await get_active_syslogs())
-    running_syslogs = await get_running_syslogs()
-    for running_syslog in running_syslogs:
-        if running_syslog not in active_syslogs:
-            log.warning("Killing rogue syslog %s", running_syslog)
-            await docker.rm_service(running_syslog)
-
-
-async def start_log_collector(service_name: str, config: str) -> None:
-    args = [
-        "docker",
-        "service",
-        "create",
-        "--name",
-        service_name,
-        "--detach",
-        "--mode",
-        "global",
-        "--label",
-        "disco.syslogs",
-        "--mount",
-        "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
-        "--network",
-        "disco-logging",
-        "--env",
-        f"{vectorconfig.CONFIG_ENV}={config}",
-        "--env",
-        vectorconfig.VECTOR_LOG_ENV,
-        "--log-driver",
-        "json-file",
-        "--log-opt",
-        "max-size=20m",
-        "--log-opt",
-        "max-file=5",
-        "--entrypoint",
-        "sh",
-        vectorconfig.VECTOR_IMAGE,
-        "-c",
-        vectorconfig.VECTOR_COMMAND,
-    ]
-    await check_call(args)
-
-
-async def remove_log_collector(service_name: str) -> None:
-    # A "docker service create" cancelled mid-way can still commit after this
-    for _ in range(10):
-        if await docker.service_exists(service_name):
-            await docker.rm_service(service_name)
-            break
-        await asyncio.sleep(3)
-
-
-async def _skip_line(reader: asyncio.StreamReader) -> None:
-    while True:
-        chunk = await reader.read(64 * 1024)
-        if not chunk or b"\n" in chunk:
-            return
-
-
-async def remove_all_log_collectors() -> None:
-    # At boot, no client is attached: every streaming collector is an orphan
-    for name in await get_running_syslogs():
-        log.info("Removing the streaming collector %s", name)
-        try:
-            await docker.rm_service(name)
-        except Exception:
-            log.exception("Could not remove %s", name)

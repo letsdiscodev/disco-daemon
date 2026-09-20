@@ -106,10 +106,8 @@ async def set_syslog_services(disco_host: str, syslog_urls: list[SyslogUrl]) -> 
 
 async def reconcile_syslog_services_on_disco_boot() -> None:
     from disco.models.db import ReadSession
-    from disco.utils.logs import remove_all_log_collectors
 
     try:
-        await remove_all_log_collectors()
         async with ReadSession.begin() as dbsession:
             disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
             syslog_urls = await get_syslog_urls(dbsession)

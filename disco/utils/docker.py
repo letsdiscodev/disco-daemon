@@ -680,6 +680,22 @@ async def list_services_with_labels(project_name: str | None) -> list[LabelledSe
     return services
 
 
+async def eligible_nodes() -> set[str]:
+    # the nodes a global service gets a task on
+    stdout, _, _ = await check_call(
+        [
+            "docker",
+            "node",
+            "ls",
+            "--format",
+            "{{ .Hostname }} {{ .Status }} {{ .Availability }}",
+        ]
+    )
+    return {
+        line.split()[0] for line in stdout if line.split()[1:] == ["Ready", "Active"]
+    }
+
+
 async def get_node_count() -> int:
     log.info("Getting Docker Swarm node count")
     args = [
