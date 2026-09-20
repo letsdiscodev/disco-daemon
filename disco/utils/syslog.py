@@ -80,51 +80,30 @@ _reconcile_lock = asyncio.Lock()
 
 
 async def set_syslog_services(disco_host: str, syslog_urls: list[SyslogUrl]) -> None:
-    # A collector's service name is derived from its rendered config (which
-    # includes the hostname). Anything running under another
-    # name (logspout, an older config, a removed destination) is replaced.
-    # New collectors are created before the old ones are removed.
+    # A collector whose config changed (hostname, image, config itself) is
+    # replaced, with a few seconds without forwarding, as with logspout.
     async with _reconcile_lock:
-        existing = await docker.list_syslog_services()
-        desired: dict[str, SyslogUrl] = {}
+        desired: dict[str, tuple[SyslogUrl, str]] = {}
         for syslog_url in syslog_urls:
             config = vectorconfig.render_syslog_config(
                 syslog_url["url"], syslog_url["type"], disco_host
             )
-            name = docker.syslog_service_name(
-                syslog_url["url"], syslog_url["type"], config
-            )
-            desired[name] = syslog_url
-        existing_names = {service.name for service in existing}
-        for name, syslog_url in desired.items():
-            if name not in existing_names:
+            name = docker.syslog_service_name(syslog_url["url"], syslog_url["type"])
+            desired[name] = (syslog_url, vectorconfig.config_hash(config))
+        kept = set()
+        for service in await docker.list_syslog_services():
+            if service.name in desired and desired[service.name][1] == service.config:
+                kept.add(service.name)
+            else:
+                log.info("Stopping Syslog service %s", service.url)
+                await docker.rm_service(service.name)
+        for name, (syslog_url, _) in desired.items():
+            if name not in kept:
                 await docker.start_syslog_service(
                     disco_host=disco_host,
                     url=syslog_url["url"],
                     type=syslog_url["type"],
                 )
-        to_remove = [service for service in existing if service.name not in desired]
-        not_ready: set[tuple[str, str]] = set()
-        replaced = {(s.url, s.type) for s in to_remove}
-        replacements = [
-            name
-            for name, syslog_url in desired.items()
-            if (syslog_url["url"], syslog_url["type"]) in replaced
-        ]
-        if replacements:
-            for name in replacements:
-                if not await docker.wait_for_global_service(name, timeout=180):
-                    syslog_url = desired[name]
-                    not_ready.add((syslog_url["url"], syslog_url["type"]))
-            await asyncio.sleep(docker.COLLECTOR_SETTLE_SECONDS)
-        for service in to_remove:
-            if (service.url, service.type) in not_ready:
-                log.warning(
-                    "Keeping %s: its replacement is not running on every node",
-                    service.name,
-                )
-                continue
-            await docker.rm_syslog_service(service)
 
 
 async def reconcile_syslog_services_on_disco_boot() -> None:

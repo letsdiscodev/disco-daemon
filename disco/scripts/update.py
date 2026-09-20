@@ -146,12 +146,11 @@ def _alembic_upgrade(connection, version_hash: str) -> None:
 
 
 async def task_0_33_x(image: str) -> None:
-    # logspout -> Vector. For each destination, the Vector collector is created
-    # and running on every node before the logspout service is removed.
-    # Idempotent: a run that dies can be run again.
+    # logspout -> Vector: the reconciler replaces the logspout collectors (their
+    # names never match), the disco logs collectors are removed (clients reconnect)
     from disco.utils import docker
-    from disco.utils.logs import get_running_syslogs
-    from disco.utils.syslog import get_syslog_urls
+    from disco.utils.logs import remove_all_log_collectors
+    from disco.utils.syslog import get_syslog_urls, set_syslog_services
 
     print("Updating from 0.33.x to 0.34.0")
     async with ReadSession.begin() as dbsession:
@@ -159,72 +158,12 @@ async def task_0_33_x(image: str) -> None:
         syslog_urls = await get_syslog_urls(dbsession)
     print(f"Pulling {docker.vectorconfig.VECTOR_IMAGE}")
     await docker.pull(docker.vectorconfig.VECTOR_IMAGE)
-    existing = await docker.list_syslog_services()
-    for syslog_url in syslog_urls:
-        url, type = syslog_url["url"], syslog_url["type"]
-        config = docker.vectorconfig.render_syslog_config(url, type, disco_host)
-        name = docker.syslog_service_name(url, type, config)
-        if name not in {service.name for service in existing}:
-            print(f"Starting the Vector collector for {url} ({type})")
-            await docker.start_syslog_service(disco_host=disco_host, url=url, type=type)
-        else:
-            print(f"Vector collector for {url} ({type}) already exists")
-        ready = await docker.wait_for_global_service(name, timeout=300)
-        if not ready:
-            raise Exception(
-                f"The Vector collector {name} for {url} is not running on every node"
-            )
-        await _emit_logging_migration_marker(url, type)
-        await asyncio.sleep(docker.COLLECTOR_SETTLE_SECONDS)
-        for service in existing:
-            if service.url == url and service.type == type and service.impl is None:
-                print(f"Removing the logspout service {service.name} for {url}")
-                await docker.rm_syslog_service(service)
-    # logspout services for destinations that are no longer configured
-    for service in existing:
-        if service.impl is None and await docker.service_exists(service.name):
-            print(f"Removing the logspout service {service.name} for {service.url}")
-            await docker.rm_syslog_service(service)
-    for name in await get_running_syslogs():
-        print(f"Removing the streaming collector {name} (clients reconnect)")
-        await docker.rm_service(name)
+    await set_syslog_services(disco_host, syslog_urls)
+    await remove_all_log_collectors()
     async with Session.begin() as dbsession:
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.34.0"
         )
-
-
-async def _emit_logging_migration_marker(url: str, type: str) -> None:
-    # A line that should show up at the destination through the new collector.
-    # The updater is labelled disco.log.core=true, so printing is enough for
-    # CORE destinations. Not --rm: an auto-removed container that exits at
-    # once is gone before the collector attaches to it.
-    from disco.config import BUSYBOX_VERSION
-    from disco.utils import docker
-
-    marker = f"disco logging migration to vector 0.34.0: {type} {url}"
-    print(marker)
-    if type != "GLOBAL":
-        return
-    name = f"disco-logging-migration-{docker.vectorconfig.destination_id(url, type)}"
-    await call(["docker", "rm", "-f", name])
-    await check_call(
-        [
-            "docker",
-            "run",
-            "--detach",
-            "--name",
-            name,
-            "--label",
-            "disco.log.migration=true",
-            f"busybox:{BUSYBOX_VERSION}",
-            "sh",
-            "-c",
-            f"echo '{marker}'; sleep 5",
-        ]
-    )
-    await asyncio.sleep(6)
-    await call(["docker", "rm", "-f", name])
 
 
 async def task_0_32_x(image: str) -> None:

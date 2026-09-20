@@ -543,9 +543,7 @@ class SyslogService:
     name: str
     type: str
     url: str
-    # None for logspout services (before 0.34.0)
-    impl: str | None = None
-    image: str | None = None
+    # hash of the rendered config, None for logspout services (before 0.34.0)
     config: str | None = None
 
 
@@ -577,8 +575,6 @@ async def list_syslog_services() -> list[SyslogService]:
             name=service_data["Spec"]["Name"],
             type=labels["disco.syslog.type"],
             url=labels["disco.syslog.url"],
-            impl=labels.get("disco.syslog.impl"),
-            image=labels.get("disco.syslog.image"),
             config=labels.get("disco.syslog.config"),
         )
         services.append(service)
@@ -586,22 +582,19 @@ async def list_syslog_services() -> list[SyslogService]:
 
 
 SYSLOG_TASK_MEMORY_LIMIT = "512m"
-# Vector attaches to the containers a few seconds after its task starts
-COLLECTOR_SETTLE_SECONDS = 10
 
 
-def syslog_service_name(url: str, type: Literal["CORE", "GLOBAL"], config: str) -> str:
-    dest = vectorconfig.destination_id(url, type)
-    return f"disco-syslog-{dest}-{vectorconfig.config_hash(config)}"
+def syslog_service_name(url: str, type: Literal["CORE", "GLOBAL"]) -> str:
+    return f"disco-syslog-{vectorconfig.destination_id(url, type)}"
 
 
 async def start_syslog_service(
     disco_host: str,
     url: str,
     type: Literal["CORE", "GLOBAL"],
-) -> str:
+) -> None:
     config = vectorconfig.render_syslog_config(url, type, disco_host)
-    name = syslog_service_name(url, type, config)
+    name = syslog_service_name(url, type)
     log.info("Starting Syslog service %s for %s %s", name, url, type)
     log.info("Vector config for %s %s:\n%s", url, type, config)
     args = [
@@ -617,10 +610,6 @@ async def start_syslog_service(
         f"disco.syslog.url={url}",
         "--label",
         f"disco.syslog.type={type}",
-        "--label",
-        "disco.syslog.impl=vector",
-        "--label",
-        f"disco.syslog.image={vectorconfig.VECTOR_IMAGE}",
         "--label",
         f"disco.syslog.config={vectorconfig.config_hash(config)}",
         "--mount",
@@ -648,14 +637,6 @@ async def start_syslog_service(
         vectorconfig.VECTOR_COMMAND,
     ]
     await check_call(args)
-    return name
-
-
-async def rm_syslog_service(service: SyslogService) -> None:
-    log.info(
-        "Stopping Syslog service %s (%s %s)", service.name, service.url, service.type
-    )
-    await rm_service(service.name)
 
 
 @dataclass
@@ -704,61 +685,6 @@ async def list_project_services_with_labels(
             LabelledService(name=name, labels=await get_service_labels(name))
         )
     return services
-
-
-async def running_task_nodes(service_name: str) -> set[str]:
-    stdout, _, _ = await check_call(
-        [
-            "docker",
-            "service",
-            "ps",
-            service_name,
-            "--filter",
-            "desired-state=running",
-            "--format",
-            "{{ .Node }} {{ .CurrentState }}",
-            "--no-trunc",
-        ]
-    )
-    return {
-        line.split(" ", 1)[0]
-        for line in stdout
-        if line.split(" ", 1)[1].startswith("Running")
-    }
-
-
-async def eligible_nodes() -> set[str]:
-    stdout, _, _ = await check_call(
-        [
-            "docker",
-            "node",
-            "ls",
-            "--format",
-            "{{ .Hostname }} {{ .Status }} {{ .Availability }}",
-        ]
-    )
-    return {
-        line.split()[0] for line in stdout if line.split()[1:] == ["Ready", "Active"]
-    }
-
-
-async def wait_for_global_service(service_name: str, timeout: float = 180) -> bool:
-    deadline = asyncio.get_running_loop().time() + timeout
-    while True:
-        nodes = await eligible_nodes()
-        running = await running_task_nodes(service_name)
-        if len(nodes) > 0 and nodes <= running:
-            return True
-        if asyncio.get_running_loop().time() > deadline:
-            log.warning(
-                "Service %s not running everywhere after %ss: nodes=%s running=%s",
-                service_name,
-                timeout,
-                sorted(nodes),
-                sorted(running),
-            )
-            return False
-        await asyncio.sleep(2)
 
 
 async def get_node_count() -> int:

@@ -19,6 +19,7 @@ from disco.utils.meta import set_disco_host, update_disco
 from disco.utils.projectdomains import DOMAIN_REGEX
 from disco.utils.projects import get_project_by_domain
 from disco.utils.stats import DockerStats
+from disco.utils.syslog import get_syslog_urls, set_syslog_services
 
 log = logging.getLogger(__name__)
 
@@ -91,13 +92,17 @@ async def host_post(
         await set_disco_host(
             dbsession=dbsession, host=req_body.host, by_api_key=api_key
         )
-        return {
+        syslog_urls = await get_syslog_urls(dbsession)
+        response = {
             "version": disco.__version__,
             "discoHost": await keyvalues.get_value_str(dbsession, "DISCO_HOST"),
             "registry": await keyvalues.get_value(dbsession, "REGISTRY"),
             # registryHost for backward compat, remove after 2027-02-01
             "registryHost": await keyvalues.get_value(dbsession, "REGISTRY"),
         }
+    # the hostname is in the collectors' config: they are replaced
+    await set_syslog_services(req_body.host, syslog_urls)
+    return response
 
 
 @router.get("/api/disco/stats-experimental")
