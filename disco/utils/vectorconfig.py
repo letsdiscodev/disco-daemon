@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-import re
-from dataclasses import dataclass
+import json
 from typing import Literal
 
 VECTOR_IMAGE = "timberio/vector:0.58.0-alpine"
@@ -22,42 +21,6 @@ SERVICE_SPEC_REVISION = 4
 VECTOR_LOG_ENV = "VECTOR_LOG=warn"
 
 SyslogType = Literal["CORE", "GLOBAL"]
-
-_SYSLOG_URL_RE = re.compile(
-    r"^syslog(?P<tls>\+tls)?://"
-    r"(?P<host>\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9_](?:[A-Za-z0-9_.-]*[A-Za-z0-9_])?)"
-    r":(?P<port>\d{1,5})\Z"
-)
-
-
-class InvalidSyslogUrl(ValueError):
-    pass
-
-
-@dataclass(frozen=True)
-class SyslogDestination:
-    host: str
-    port: int
-    tls: bool
-
-    @property
-    def address(self) -> str:
-        return f"{self.host}:{self.port}"
-
-
-def parse_syslog_url(url: str) -> SyslogDestination:
-    m = _SYSLOG_URL_RE.match(url)
-    if m is None:
-        raise InvalidSyslogUrl(
-            f"invalid syslog url {url!r}: expected syslog://host:port "
-            "or syslog+tls://host:port"
-        )
-    port = int(m.group("port"))
-    if not 1 <= port <= 65535:
-        raise InvalidSyslogUrl(f"invalid syslog url {url!r}: port out of range")
-    return SyslogDestination(
-        host=m.group("host"), port=port, tls=m.group("tls") is not None
-    )
 
 
 def destination_id(url: str, type: str) -> str:
@@ -123,7 +86,8 @@ def _vrl_string(value: str) -> str:
 
 
 def render_syslog_config(url: str, type: SyslogType, disco_host: str = "") -> str:
-    dest = parse_syslog_url(url)
+    tls = url.startswith("syslog+tls://")
+    address = json.dumps(url.split("://", 1)[1])
     vrl = _SYSLOG_VRL.replace("{hostname}", _vrl_string(disco_host))
     if type == "CORE":
         condition = f"{_CORE_CONDITION} && {_EXCLUDE_CONDITION}"
@@ -131,10 +95,10 @@ def render_syslog_config(url: str, type: SyslogType, disco_host: str = "") -> st
         condition = _EXCLUDE_CONDITION
     else:
         raise ValueError(f"unknown syslog type {type!r}")
-    if dest.tls:
+    if tls:
         transport = f"""\
     mode: tcp
-    address: "{dest.address}"
+    address: {address}
     tls:
       enabled: true
       verify_certificate: true
@@ -147,7 +111,7 @@ def render_syslog_config(url: str, type: SyslogType, disco_host: str = "") -> st
     else:
         transport = f"""\
     mode: udp
-    address: "{dest.address}"
+    address: {address}
     framing:
       method: bytes
     buffer:

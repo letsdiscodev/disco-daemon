@@ -87,19 +87,10 @@ async def set_syslog_services(disco_host: str, syslog_urls: list[SyslogUrl]) -> 
     async with _reconcile_lock:
         existing = await docker.list_syslog_services()
         desired: dict[str, SyslogUrl] = {}
-        untouched: set[tuple[str, str]] = set()
         for syslog_url in syslog_urls:
-            try:
-                config = vectorconfig.render_syslog_config(
-                    syslog_url["url"], syslog_url["type"], disco_host
-                )
-            except vectorconfig.InvalidSyslogUrl as e:
-                # Stored before 0.34.0, leave whatever runs for it alone
-                log.warning(
-                    "Leaving the collector of %s as it is: %s", syslog_url["url"], e
-                )
-                untouched.add((syslog_url["url"], syslog_url["type"]))
-                continue
+            config = vectorconfig.render_syslog_config(
+                syslog_url["url"], syslog_url["type"], disco_host
+            )
             name = docker.syslog_service_name(
                 syslog_url["url"], syslog_url["type"], config
             )
@@ -112,12 +103,7 @@ async def set_syslog_services(disco_host: str, syslog_urls: list[SyslogUrl]) -> 
                     url=syslog_url["url"],
                     type=syslog_url["type"],
                 )
-        to_remove = [
-            service
-            for service in existing
-            if service.name not in desired
-            and (service.url, service.type) not in untouched
-        ]
+        to_remove = [service for service in existing if service.name not in desired]
         not_ready: set[tuple[str, str]] = set()
         replaced = {(s.url, s.type) for s in to_remove}
         replacements = [
