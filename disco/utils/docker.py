@@ -543,7 +543,7 @@ class SyslogService:
     name: str
     type: str
     url: str
-    # None on a logspout service (before 0.34.0)
+    # None for logspout services (before 0.34.0)
     impl: str | None = None
     image: str | None = None
     config: str | None = None
@@ -588,17 +588,12 @@ async def list_syslog_services() -> list[SyslogService]:
 SYSLOG_CONFIG_PREFIX = "disco-syslog-cfg-"
 STREAM_CONFIG_PREFIX = "disco-stream-cfg-"
 SYSLOG_BUFFER_VOLUME_PREFIX = "disco-vector-buffer-"
-# hard caps for one collector task per node (observed under a 50k lines/s burst on
-# 0.58.0: ~140 MB udp, ~80 MB tls); the disk buffer survives an oom restart
 SYSLOG_TASK_MEMORY_LIMIT = "512m"
-# seconds between a replacement collector's task running and the old collector's
-# removal: vector attaches to the containers a few seconds after its task starts
+# Vector attaches to the containers a few seconds after its task starts
 COLLECTOR_SETTLE_SECONDS = 10
 
 
 def syslog_service_name(url: str, type: Literal["CORE", "GLOBAL"], config: str) -> str:
-    """deterministic: the same destination with the same rendered config has one name,
-    a config change gets a new name so the new service can overlap the old one."""
     dest = vectorconfig.destination_id(url, type)
     return f"disco-syslog-{dest}-{vectorconfig.config_hash(config)}"
 
@@ -629,7 +624,6 @@ async def config_exists(name: str) -> bool:
 
 
 async def create_config(name: str, content: str) -> None:
-    """swarm configs are immutable: creating an existing name is a no-op here."""
     if await config_exists(name):
         return
     log.info("Creating Docker config %s", name)
@@ -667,8 +661,8 @@ async def _retry_cleanup(
     attempts: int = 20,
     delay: float = 3,
 ) -> None:
-    """docker keeps a removed service's config and volume "in use" for a moment after
-    `service rm`; try again for a while before giving up (the daily cron prunes)."""
+    # Docker reports a removed service's config and volume as in use for a
+    # moment after "service rm"
     for i in range(attempts):
         try:
             if await attempt():
@@ -689,7 +683,6 @@ def cleanup_in_background(
 
 
 async def wait_for_cleanups() -> None:
-    """for scripts (the updater): background cleanups die with the event loop."""
     if _cleanup_tasks:
         await asyncio.gather(*_cleanup_tasks, return_exceptions=True)
 
@@ -718,11 +711,8 @@ async def _volume_removed(volume: str) -> bool:
 
 
 async def prune_logging_configs() -> None:
-    """configs of collectors that no longer exist (a crash between rm and cleanup).
-
-    a config younger than a few minutes is left alone: it may belong to a collector
-    whose service is being created right now (config first, then the service).
-    """
+    # Configs left behind by a crash between "service rm" and the cleanup.
+    # Recent ones may belong to a service that is being created right now.
     for prefix in (SYSLOG_CONFIG_PREFIX, STREAM_CONFIG_PREFIX):
         for name in await list_configs(prefix):
             if await _config_age_seconds(name) < 600:
@@ -753,12 +743,10 @@ async def start_syslog_service(
     type: Literal["CORE", "GLOBAL"],
     buffer_bytes: int = vectorconfig.DEFAULT_DESTINATION_BUFFER_BYTES,
 ) -> str:
-    """create the vector collector for one destination; returns the service name."""
     config = vectorconfig.render_syslog_config(url, type, buffer_bytes, disco_host)
     name = syslog_service_name(url, type, config)
     config_name = syslog_config_name(config)
     log.info("Starting Syslog service %s for %s %s", name, url, type)
-    # the rendered config is logged so it exists somewhere other than the swarm store
     log.info("Vector config for %s %s:\n%s", url, type, config)
     await create_config(config_name, config)
     args = [
@@ -793,11 +781,6 @@ async def start_syslog_service(
         vectorconfig.VECTOR_LOG_ENV,
         "--mode",
         "global",
-        # no start-first: a global service runs one task per node, the new task ran
-        # beside the old one and exited (78, the buffer directory in use) and swarm
-        # paused the update. a forced restart of a collector loses the seconds between
-        # its tasks (the docker source reads from its own start); hostname changes
-        # and upgrades replace the collector with an overlap instead (see syslog.py)
         "--limit-memory",
         SYSLOG_TASK_MEMORY_LIMIT,
         "--log-driver",
@@ -825,10 +808,8 @@ async def rm_syslog_service(service: SyslogService) -> None:
             f"config {config_name}", lambda: _config_removed(config_name)
         )
     if service.impl == "vector":
-        # the buffer volume of the destination is shared by its collectors (a
-        # replacement overlaps the one it replaces, each in its own directory): it
-        # goes with the last one. on this node only; on worker nodes the local volume
-        # stays until the node is pruned (a global service leaves one per node)
+        # The buffer volume is shared by the collectors of a destination
+        # (a replacement overlaps the one it replaces), remove it with the last one.
         others = [
             s
             for s in await list_syslog_services()
@@ -865,7 +846,6 @@ async def get_service_labels(service_name: str) -> dict[str, str]:
 async def list_project_services_with_labels(
     project_name: str | None,
 ) -> list[LabelledService]:
-    """every project service (label disco.project.name), or those of one project."""
     label = (
         "disco.project.name"
         if project_name is None
@@ -891,7 +871,6 @@ async def list_project_services_with_labels(
 
 
 async def running_task_nodes(service_name: str) -> set[str]:
-    """node ids with a running task of the service."""
     stdout, _, _ = await check_call(
         [
             "docker",
@@ -913,7 +892,6 @@ async def running_task_nodes(service_name: str) -> set[str]:
 
 
 async def eligible_nodes() -> set[str]:
-    """nodes a global service gets a task on: ready and active."""
     stdout, _, _ = await check_call(
         [
             "docker",
@@ -929,7 +907,6 @@ async def eligible_nodes() -> set[str]:
 
 
 async def wait_for_global_service(service_name: str, timeout: float = 180) -> bool:
-    """true once the service has a running task on every eligible node."""
     deadline = asyncio.get_running_loop().time() + timeout
     while True:
         nodes = await eligible_nodes()
