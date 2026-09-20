@@ -636,14 +636,6 @@ async def create_config(name: str, content: str) -> None:
     await check_call(["docker", "config", "create", name, "-"], stdin=content)
 
 
-async def rm_config(name: str) -> None:
-    """a config that is already gone (removed by a concurrent cleanup) is fine."""
-    log.info("Removing Docker config %s", name)
-    _, stderr, process = await call(["docker", "config", "rm", name])
-    if process.returncode != 0 and not any("not found" in line for line in stderr):
-        raise Exception(f"docker config rm {name} failed: {' '.join(stderr)}")
-
-
 async def list_configs(prefix: str) -> list[str]:
     stdout, _, _ = await check_call(
         ["docker", "config", "ls", "--format", "{{ .Name }}"]
@@ -664,13 +656,6 @@ async def services_using_config(config_name: str) -> list[str]:
         ]
     )
     return stdout
-
-
-async def rm_config_if_unused(config_name: str) -> None:
-    if len(await services_using_config(config_name)) > 0:
-        return
-    if await config_exists(config_name):
-        await rm_config(config_name)
 
 
 _cleanup_tasks: set[asyncio.Task] = set()
@@ -742,7 +727,7 @@ async def prune_logging_configs() -> None:
         for name in await list_configs(prefix):
             if await _config_age_seconds(name) < 600:
                 continue
-            await rm_config_if_unused(name)
+            await _config_removed(name)
 
 
 async def _config_age_seconds(name: str) -> float:
