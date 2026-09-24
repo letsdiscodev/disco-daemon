@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -18,6 +19,38 @@ class ActiveSyslog:
 
 syslog_list_lock = asyncio.Lock()
 _active_syslogs: list[ActiveSyslog] = []
+
+MAX_QUEUED_LINES = 5000
+
+LogObject = dict[str, str | dict[str, str]]
+
+
+class LogSession:
+    def __init__(self) -> None:
+        self.queue: asyncio.Queue[LogObject] = asyncio.Queue(maxsize=MAX_QUEUED_LINES)
+        self.dropped_lines = 0
+        self._notice_at = 0.0
+
+    def offer(self, log_obj: LogObject) -> None:
+        if self.queue.full():
+            self.queue.get_nowait()
+            self.dropped_lines += 1
+        self.queue.put_nowait(log_obj)
+
+    async def get(self) -> LogObject:
+        now = time.monotonic()
+        if self.dropped_lines > 0 and now - self._notice_at >= 1:
+            dropped_lines = self.dropped_lines
+            self.dropped_lines = 0
+            self._notice_at = now
+            return {
+                "container": "disco",
+                "labels": {},
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "message": f"[disco] {dropped_lines} lines dropped",
+            }
+        return await self.queue.get()
+
 
 LOGSPOUT_CMD = [
     "docker",
@@ -56,11 +89,11 @@ LOGSPOUT_CMD = [
 class JsonLogServer(asyncio.DatagramProtocol):
     def __init__(
         self,
-        log_queue,
+        session: LogSession,
         project_name: str | None = None,
         service_name: str | None = None,
     ):
-        self.log_queue = log_queue
+        self.session = session
         self.project_name = project_name
         self.service_name = service_name
 
@@ -84,7 +117,7 @@ class JsonLogServer(asyncio.DatagramProtocol):
         if self.service_name is not None:
             if log_obj["labels"].get("disco.service.name") != self.service_name:
                 return
-        self.log_queue.put_nowait(log_obj)
+        self.session.offer(log_obj)
 
     def connection_lost(self, exception):
         try:

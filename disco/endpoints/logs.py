@@ -10,7 +10,7 @@ from sse_starlette.sse import EventSourceResponse
 from disco.auth import get_api_key_wo_tx
 from disco.models.db import ReadSession
 from disco.utils import docker
-from disco.utils.logs import LOGSPOUT_CMD, JsonLogServer, monitor_syslog
+from disco.utils.logs import LOGSPOUT_CMD, JsonLogServer, LogSession, monitor_syslog
 from disco.utils.projects import get_project_by_name
 
 log = logging.getLogger(__name__)
@@ -77,18 +77,18 @@ async def read_logs(
     logspout_cmd[4] = syslog_service_name
     logspout_cmd[-1] = logspout_cmd[-1].format(port=port)
     transport = None
-    log_queue: asyncio.Queue[dict[str, str | dict[str, str]]] = asyncio.Queue()
+    session = LogSession()
     await asyncio.create_subprocess_exec(*logspout_cmd)
     loop = asyncio.get_running_loop()
     transport, _ = await loop.create_datagram_endpoint(
         lambda: JsonLogServer(
-            log_queue=log_queue, project_name=project_name, service_name=service_name
+            session=session, project_name=project_name, service_name=service_name
         ),
         local_addr=("0.0.0.0", port),
     )
     try:
         while True:
-            log_obj = await log_queue.get()
+            log_obj = await session.get()
             yield ServerSentEvent(
                 event="output",
                 data=json.dumps(log_obj),
