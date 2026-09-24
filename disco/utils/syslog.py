@@ -96,3 +96,15 @@ async def set_syslog_services(disco_host: str, syslog_urls: list[SyslogUrl]) -> 
         if not should_still_exist:
             log.info("Stopping Syslog service %s", existing_service.url)
             await docker.rm_service(existing_service.name)
+
+
+async def reconcile_syslog_services_on_disco_boot() -> None:
+    from disco.models.db import ReadSession
+
+    try:
+        async with ReadSession.begin() as dbsession:
+            disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
+            syslog_urls = await get_syslog_urls(dbsession)
+        await set_syslog_services(disco_host, syslog_urls)
+    except Exception:
+        log.exception("Failed to reconcile syslog services on boot")
