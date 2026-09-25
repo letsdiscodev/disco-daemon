@@ -130,6 +130,31 @@ def _alembic_upgrade(connection, version_hash: str) -> None:
     command.upgrade(config, version_hash)
 
 
+async def task_0_33_x(image: str) -> None:
+    # disco logs: one shared collector since 0.34.0, the per-session ones go
+    from disco.utils import docker
+
+    print("Updating from 0.33.x to 0.34.0")
+    stdout, _, _ = await check_call(
+        [
+            "docker",
+            "service",
+            "ls",
+            "--filter",
+            "label=disco.syslogs",
+            "--format",
+            "{{ .Name }}",
+        ]
+    )
+    for name in stdout:
+        print(f"Removing the log collector {name}")
+        await docker.rm_service(name)
+    async with Session.begin() as dbsession:
+        await keyvalues.set_value(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.34.0"
+        )
+
+
 async def task_0_32_x(image: str) -> None:
     from disco.scripts.init import start_caddy
     from disco.utils import docker
@@ -1026,7 +1051,9 @@ def get_update_function_for_version(version: str) -> Callable[[str], Awaitable[N
     if version.startswith("0.32."):
         return task_0_32_x
     if version.startswith("0.33."):
-        assert disco.__version__.startswith("0.33.")
+        return task_0_33_x
+    if version.startswith("0.34."):
+        assert disco.__version__.startswith("0.34.")
         return task_patch
     raise NotImplementedError(f"Updating from version {version} is not supported")
 

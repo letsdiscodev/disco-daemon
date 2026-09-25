@@ -60,20 +60,20 @@ async def cron_minute() -> None:
 async def cron_hour() -> None:
     from disco.utils.commandoutputs import clean_up_db_connections
     from disco.utils.commands import clean_up_orphan_commands
+    from disco.utils.logs import remove_idle_log_collector
     from disco.utils.tunnels import clean_up_rogue_tunnels
 
     log.info("Disco hour cron")
     await clean_up_db_connections()
     await clean_up_rogue_tunnels()
     await clean_up_orphan_commands()
+    await remove_idle_log_collector()
 
 
 async def cron_day() -> None:
-    from disco.utils.logs import clean_up_rogue_syslogs
     from disco.utils.networkcleanup import remove_unused_networks
 
     log.info("Disco day cron")
-    await clean_up_rogue_syslogs()
     await remove_unused_images()
     await docker.builder_prune()
     await remove_unused_networks()

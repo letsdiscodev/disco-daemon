@@ -635,6 +635,37 @@ async def update_syslog_hostname(service_name: str, disco_host: str) -> None:
     await check_call(args)
 
 
+async def get_service_labels(service_name: str) -> dict[str, str]:
+    stdout, _, _ = await check_call(
+        [
+            "docker",
+            "service",
+            "inspect",
+            "--format",
+            "{{ json .Spec.Labels }}",
+            service_name,
+        ]
+    )
+    labels = json.loads("\n".join(stdout) or "{}")
+    return labels or {}
+
+
+async def schedulable_nodes() -> set[str]:
+    # nodes where services can run
+    stdout, _, _ = await check_call(
+        [
+            "docker",
+            "node",
+            "ls",
+            "--format",
+            "{{ .Hostname }} {{ .Status }} {{ .Availability }}",
+        ]
+    )
+    return {
+        line.split()[0] for line in stdout if line.split()[1:] == ["Ready", "Active"]
+    }
+
+
 async def get_node_count() -> int:
     log.info("Getting Docker Swarm node count")
     args = [
