@@ -3,7 +3,7 @@ import json
 import logging
 import random
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sse_starlette import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
@@ -17,20 +17,17 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(get_api_key_wo_tx)])
 
+_cleanups: set[asyncio.Task] = set()
+
 
 @router.get("/api/logs")
-async def logs_all(background_tasks: BackgroundTasks):
-    return EventSourceResponse(
-        read_logs(
-            project_name=None, service_name=None, background_tasks=background_tasks
-        )
-    )
+async def logs_all():
+    return EventSourceResponse(read_logs(project_name=None, service_name=None))
 
 
 @router.get("/api/logs/{project_name}")
 async def logs_project(
     project_name: str,
-    background_tasks: BackgroundTasks,
 ):
     async with ReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
@@ -40,7 +37,6 @@ async def logs_project(
         read_logs(
             project_name=project_name,
             service_name=None,
-            background_tasks=background_tasks,
         )
     )
 
@@ -49,7 +45,6 @@ async def logs_project(
 async def logs_project_service(
     project_name: str,
     service_name: str,
-    background_tasks: BackgroundTasks,
 ):
     async with ReadSession.begin() as dbsession:
         project = await get_project_by_name(dbsession, project_name)
@@ -59,7 +54,6 @@ async def logs_project_service(
         read_logs(
             project_name=project_name,
             service_name=service_name,
-            background_tasks=background_tasks,
         )
     )
 
@@ -67,7 +61,6 @@ async def logs_project_service(
 async def read_logs(
     project_name: str | None,
     service_name: str | None,
-    background_tasks: BackgroundTasks,
 ):
     port = random.randint(10000, 65535)
     logspout_cmd = LOGSPOUT_CMD.copy()
@@ -101,4 +94,22 @@ async def read_logs(
                 log.info("Closed datagram log endpoint")
             except Exception:
                 log.exception("Exception closing transport")
-        background_tasks.add_task(docker.rm_service, syslog_service_name)
+        task = asyncio.get_running_loop().create_task(
+            remove_log_collector(syslog_service_name)
+        )
+        _cleanups.add(task)
+        task.add_done_callback(_cleanups.discard)
+
+
+async def remove_log_collector(service_name: str) -> None:
+    # in case service would still be starting when we're doing the clean up,
+    # we run the clean up again for some time.
+    try:
+        for _ in range(10):
+            if await docker.service_exists(service_name):
+                await docker.rm_service(service_name)
+                return
+            await asyncio.sleep(3)
+        log.warning("Log collector %s not found, not removed", service_name)
+    except Exception:
+        log.exception("Failed to remove the log collector %s", service_name)
