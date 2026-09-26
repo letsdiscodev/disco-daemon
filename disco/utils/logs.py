@@ -1,18 +1,18 @@
 import asyncio
 import json
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import TypedDict
 
 from disco.utils import docker, vectorconfig
-from disco.utils.subprocess import check_call
+from disco.utils.subprocess import check_call, decode_output
 
 log = logging.getLogger(__name__)
 
 LOGS_PORT = 10514
 COLLECTOR_NAME = "disco-logs"
-COLLECTOR_CONNECT_TIMEOUT_SECONDS = 15
 STREAM_LINE_LIMIT = 64 * 1024
 
 
@@ -250,3 +250,89 @@ async def remove_idle_log_collector() -> None:
         if await docker.service_exists(COLLECTOR_NAME):
             log.info("Removing the disco logs collector, no session for an hour")
             await docker.rm_service(COLLECTOR_NAME)
+
+
+# <rfc 3339 ns timestamp> <task name>@<node>    | <message>
+_SERVICE_LOG_LINE = re.compile(
+    r"^(?P<ts>\S+) (?P<task>\S+)@(?P<node>\S+)\s+\| ?(?P<msg>.*)$"
+)
+
+
+def parse_service_log_line(
+    line: str, labels: dict[str, str], stream: str
+) -> LogLine | None:
+    m = _SERVICE_LOG_LINE.match(line)
+    if m is None:
+        return None
+    return LogLine(
+        container=m.group("task"),
+        labels=labels,
+        timestamp=_ts_with_nanoseconds(m.group("ts")),
+        stream=stream,
+        message=m.group("msg"),
+    )
+
+
+def _ts_with_nanoseconds(ts: str) -> str:
+    # Docker trims the trailing zeros. Vector does not.
+    # Add them to Docker output for consistency.
+    head, _, frac = ts[:-1].partition(".")
+    return f"{head}.{frac.ljust(9, '0')}Z"
+
+
+async def read_service_history(
+    service: docker.LabelledService, lines: int
+) -> list[LogLine]:
+    process = await asyncio.create_subprocess_exec(
+        "docker",
+        "service",
+        "logs",
+        "--timestamps",
+        "--no-trunc",
+        "--tail",
+        str(lines),
+        service.name,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), 5)
+    except TimeoutError:
+        # "docker service logs" sometimes hangs (see docker.get_log_for_service)
+        process.kill()
+        await process.wait()
+        log.warning("Timed out reading the history of %s", service.name)
+        return []
+    if process.returncode != 0:
+        log.warning("Could not read the history of %s", service.name)
+        return []
+    history = []
+    for stream, output in (("stdout", stdout), ("stderr", stderr)):
+        for line in decode_output(output):
+            log_line = parse_service_log_line(line, service.labels, stream)
+            if log_line is not None:
+                history.append(log_line)
+    history.sort(key=lambda log_line: log_line["timestamp"])
+    return history[-lines:]
+
+
+async def read_history(
+    project_name: str | None, service_name: str | None
+) -> list[LogLine]:
+    LINES = 100
+    services = await docker.list_services(project_name)
+    if service_name is not None:
+        services = [
+            s for s in services if s.labels.get("disco.service.name") == service_name
+        ]
+    semaphore = asyncio.Semaphore(8)
+
+    async def read(service: docker.LabelledService) -> list[LogLine]:
+        async with semaphore:
+            return await read_service_history(service, LINES)
+
+    history: list[LogLine] = []
+    for log_lines in await asyncio.gather(*(read(service) for service in services)):
+        history += log_lines
+    history.sort(key=lambda log_line: log_line["timestamp"])
+    return history[-LINES:]

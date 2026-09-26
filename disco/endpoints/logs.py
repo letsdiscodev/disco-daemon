@@ -9,10 +9,10 @@ from disco.auth import get_api_key_wo_tx
 from disco.models.db import ReadSession
 from disco.utils import docker
 from disco.utils.logs import (
-    COLLECTOR_CONNECT_TIMEOUT_SECONDS,
     LogSession,
     ensure_log_collector,
     log_listener,
+    read_history,
 )
 from disco.utils.projects import get_project_by_name
 
@@ -52,16 +52,23 @@ async def read_logs(project_name: str | None, service_name: str | None):
     try:
         await ensure_log_collector()
         nodes = await docker.schedulable_nodes()
-        if not await log_listener.wait_for_nodes(
-            len(nodes), timeout=COLLECTOR_CONNECT_TIMEOUT_SECONDS
-        ):
+        if not await log_listener.wait_for_nodes(len(nodes), timeout=15):
             log.warning(
                 "The log collector is connected from %d of %d nodes",
                 log_listener.connected_nodes(),
                 len(nodes),
             )
+        history = await read_history(project_name, service_name)
+        watermark: dict[tuple[str, str], str] = {}
+        for log_line in history:
+            key = (log_line["container"], log_line["stream"])
+            watermark[key] = log_line["timestamp"]
+            yield ServerSentEvent(event="output", data=json.dumps(log_line))
         while True:
             log_line = await session.get()
+            key = (log_line["container"], log_line["stream"])
+            if key in watermark and log_line["timestamp"] <= watermark[key]:
+                continue
             yield ServerSentEvent(event="output", data=json.dumps(log_line))
     finally:
         log.info("HTTP Connection for logs disconnected")

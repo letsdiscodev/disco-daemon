@@ -682,6 +682,31 @@ async def pull_image_on_all_nodes(image: str) -> None:
     await call(["docker", "service", "rm", name])
 
 
+@dataclass
+class LabelledService:
+    name: str
+    labels: dict[str, str]
+
+
+async def list_services(project_name: str | None) -> list[LabelledService]:
+    # every service, or the services of one project
+    args = ["docker", "service", "ls", "-q"]
+    if project_name is not None:
+        args += ["--filter", f"label=disco.project.name={project_name}"]
+    service_ids, _, _ = await check_call(args)
+    if len(service_ids) == 0:
+        return []
+    stdout, _, _ = await call(["docker", "service", "inspect"] + service_ids)
+    services_data = json.loads("\n".join(stdout) or "[]")
+    return [
+        LabelledService(
+            name=service_data["Spec"]["Name"],
+            labels=service_data["Spec"].get("Labels") or {},
+        )
+        for service_data in services_data
+    ]
+
+
 async def get_service_labels(service_name: str) -> dict[str, str]:
     stdout, _, _ = await check_call(
         [
