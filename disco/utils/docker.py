@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -6,7 +7,6 @@ import re
 import shlex
 import signal
 import subprocess
-import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from multiprocessing import cpu_count
@@ -15,6 +15,7 @@ from typing import AsyncGenerator, Awaitable, Callable, Literal
 import disco
 from disco.config import BUSYBOX_VERSION
 from disco.errors import ProcessStatusError
+from disco.utils import vectorconfig
 from disco.utils.discofile import DiscoFile
 from disco.utils.discofile import Service as DiscoService
 from disco.utils.filesystem import project_path
@@ -543,6 +544,8 @@ class SyslogService:
     name: str
     type: str
     url: str
+    # hash of the rendered config
+    config: str
 
 
 async def list_syslog_services() -> list[SyslogService]:
@@ -568,33 +571,35 @@ async def list_syslog_services() -> list[SyslogService]:
     services_data = json.loads(services_json)
     services = []
     for service_data in services_data:
+        labels = service_data["Spec"]["Labels"]
         service = SyslogService(
             name=service_data["Spec"]["Name"],
-            type=service_data["Spec"]["Labels"]["disco.syslog.type"],
-            url=service_data["Spec"]["Labels"]["disco.syslog.url"],
+            type=labels["disco.syslog.type"],
+            url=labels["disco.syslog.url"],
+            config=labels["disco.syslog.config"],
         )
         services.append(service)
     return services
 
 
-def _logspout_url(url: str, type: Literal["CORE", "GLOBAL"]) -> str:
-    if type == "CORE":
-        return f"{url}?filter.labels=disco.log.core:true"
-    assert type == "GLOBAL"
-    return url
+def syslog_service_name(url: str, type: Literal["CORE", "GLOBAL"]) -> str:
+    return f"disco-syslog-{vectorconfig.destination_id(url, type)}"
 
 
 async def start_syslog_service(
-    disco_host: str, url: str, type: Literal["CORE", "GLOBAL"]
+    disco_host: str,
+    url: str,
+    type: Literal["CORE", "GLOBAL"],
 ) -> None:
-    log.info("Starting Syslog service %s %s", url, type)
-    syslog_url = _logspout_url(url=url, type=type)
+    config = vectorconfig.render_syslog_config(url, type, disco_host)
+    name = syslog_service_name(url, type)
+    log.info("Starting Syslog service %s for %s %s", name, url, type)
     args = [
         "docker",
         "service",
         "create",
         "--name",
-        f"disco-syslog-{uuid.uuid4().hex}",
+        name,
         "--detach",
         "--label",
         "disco.syslog",
@@ -602,12 +607,14 @@ async def start_syslog_service(
         f"disco.syslog.url={url}",
         "--label",
         f"disco.syslog.type={type}",
+        "--label",
+        f"disco.syslog.config={vectorconfig.config_hash(config)}",
         "--mount",
         "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
         "--env",
-        f"SYSLOG_HOSTNAME={disco_host}",
+        f"{vectorconfig.CONFIG_ENV}={config}",
         "--env",
-        "EXCLUDE_LABELS=disco.log.exclude",
+        vectorconfig.VECTOR_LOG_ENV,
         "--mode",
         "global",
         "--log-driver",
@@ -616,23 +623,63 @@ async def start_syslog_service(
         "max-size=20m",
         "--log-opt",
         "max-file=5",
-        "gliderlabs/logspout:latest",
-        syslog_url,
+        "--entrypoint",
+        "sh",
+        vectorconfig.VECTOR_IMAGE,
+        "-c",
+        vectorconfig.VECTOR_COMMAND,
     ]
     await check_call(args)
 
 
-async def update_syslog_hostname(service_name: str, disco_host: str) -> None:
-    args = [
-        "docker",
-        "service",
-        "update",
-        service_name,
-        "--env-add",
-        f"SYSLOG_HOSTNAME={disco_host}",
-        "--detach",
-    ]
-    await check_call(args)
+async def image_exists(image: str) -> bool:
+    _, _, process = await call(["docker", "image", "inspect", image])
+    return process.returncode == 0
+
+
+PULL_TIMEOUT_SECONDS = 300
+
+
+async def pull_image_on_all_nodes(image: str) -> None:
+    name = f"disco-pull-{hashlib.sha256(image.encode()).hexdigest()[:12]}"
+    await call(["docker", "service", "rm", name])
+    log.info("Pulling %s on every node", image)
+    await check_call(
+        [
+            "docker",
+            "service",
+            "create",
+            "--name",
+            name,
+            "--detach",
+            "--mode",
+            "global",
+            "--restart-condition",
+            "none",
+            "--entrypoint",
+            "true",
+            image,
+        ]
+    )
+    deadline = asyncio.get_running_loop().time() + PULL_TIMEOUT_SECONDS
+    while True:
+        states, _, _ = await check_call(
+            [
+                "docker",
+                "service",
+                "ps",
+                name,
+                "--format",
+                "{{ .CurrentState }}",
+            ]
+        )
+        if len(states) > 0 and all(state.startswith("Complete") for state in states):
+            break
+        if asyncio.get_running_loop().time() > deadline:
+            log.warning("Giving up waiting for %s to be pulled on every node", image)
+            break
+        await asyncio.sleep(2)
+    await call(["docker", "service", "rm", name])
 
 
 async def get_service_labels(service_name: str) -> dict[str, str]:

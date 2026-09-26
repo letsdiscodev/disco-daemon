@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from typing import Literal, TypedDict
@@ -5,7 +6,7 @@ from typing import Literal, TypedDict
 from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 
 from disco.models import ApiKey
-from disco.utils import docker, keyvalues
+from disco.utils import docker, keyvalues, vectorconfig
 
 log = logging.getLogger(__name__)
 
@@ -73,35 +74,42 @@ async def _save_syslog_urls(dbsession: DBSession, syslog_urls: list[SyslogUrl]) 
     await keyvalues.set_value(dbsession, SYSLOG_URLS_KEY, json.dumps(syslog_urls))
 
 
+_reconcile_lock = asyncio.Lock()
+
+
 async def set_syslog_services(disco_host: str, syslog_urls: list[SyslogUrl]) -> None:
-    existing_services = await docker.list_syslog_services()
-    # add missing services
-    for syslog_url in syslog_urls:
-        already_exists = False
-        for existing_service in existing_services:
-            if syslog_url["url"] == existing_service.url:
-                already_exists = True
-        if not already_exists:
-            await docker.start_syslog_service(
-                disco_host=disco_host,
-                url=syslog_url["url"],
-                type=syslog_url["type"],
-            )
-    # remove extra services
-    for existing_service in existing_services:
-        should_still_exist = False
+    async with _reconcile_lock:
+        desired: dict[str, SyslogUrl] = {}
+        config_hashes: dict[str, str] = {}
         for syslog_url in syslog_urls:
-            if syslog_url["url"] == existing_service.url:
-                should_still_exist = True
-        if not should_still_exist:
-            log.info("Stopping Syslog service %s", existing_service.url)
-            await docker.rm_service(existing_service.name)
+            name = docker.syslog_service_name(syslog_url["url"], syslog_url["type"])
+            config = vectorconfig.render_syslog_config(
+                syslog_url["url"], syslog_url["type"], disco_host
+            )
+            desired[name] = syslog_url
+            config_hashes[name] = vectorconfig.config_hash(config)
+        kept = set()
+        for service in await docker.list_syslog_services():
+            if config_hashes.get(service.name) == service.config:
+                kept.add(service.name)
+            else:
+                log.info("Stopping Syslog service %s (%s)", service.name, service.url)
+                await docker.rm_service(service.name)
+        for name, syslog_url in desired.items():
+            if name not in kept:
+                await docker.start_syslog_service(
+                    disco_host=disco_host,
+                    url=syslog_url["url"],
+                    type=syslog_url["type"],
+                )
 
 
 async def reconcile_syslog_services_on_disco_boot() -> None:
     from disco.models.db import ReadSession
 
     try:
+        if not await docker.image_exists(vectorconfig.VECTOR_IMAGE):
+            await docker.pull_image_on_all_nodes(vectorconfig.VECTOR_IMAGE)
         async with ReadSession.begin() as dbsession:
             disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
             syslog_urls = await get_syslog_urls(dbsession)

@@ -131,28 +131,83 @@ def _alembic_upgrade(connection, version_hash: str) -> None:
 
 
 async def task_0_33_x(image: str) -> None:
-    # disco logs: one shared collector since 0.34.0, the per-session ones go
-    from disco.utils import docker
+    from disco.utils import docker, vectorconfig
+    from disco.utils.syslog import get_syslog_urls
 
     print("Updating from 0.33.x to 0.34.0")
+    async with ReadSession.begin() as dbsession:
+        disco_host = await keyvalues.get_value_str(dbsession, "DISCO_HOST")
+        syslog_urls = await get_syslog_urls(dbsession)
+    print(f"Pulling {vectorconfig.VECTOR_IMAGE} on every node")
+    await docker.pull_image_on_all_nodes(vectorconfig.VECTOR_IMAGE)
+    logspout = set(await _service_names("disco.syslog"))
+    created = []
+    for syslog_url in syslog_urls:
+        url, type = syslog_url["url"], syslog_url["type"]
+        name = docker.syslog_service_name(url, type)
+        created.append(name)
+        if name in logspout or await docker.service_exists(name):
+            logspout.discard(name)
+            continue
+        print(f"Starting the vector collector for {url} ({type})")
+        await docker.start_syslog_service(disco_host=disco_host, url=url, type=type)
+    for name in created:
+        if not await _wait_for_global_service_running(name, timeout=120):
+            print(f"{name} is not running on every node yet, going on")
+    await asyncio.sleep(10)  # wait collector to start collecting
+    for name in sorted(logspout) + await _service_names("disco.syslogs"):
+        print(f"Removing the logspout collector {name}")
+        await docker.rm_service(name)
+    async with Session.begin() as dbsession:
+        await keyvalues.set_value(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.34.0"
+        )
+
+
+async def _service_names(label: str) -> list[str]:
     stdout, _, _ = await check_call(
         [
             "docker",
             "service",
             "ls",
             "--filter",
-            "label=disco.syslogs",
+            f"label={label}",
             "--format",
             "{{ .Name }}",
         ]
     )
-    for name in stdout:
-        print(f"Removing the log collector {name}")
-        await docker.rm_service(name)
-    async with Session.begin() as dbsession:
-        await keyvalues.set_value(
-            dbsession=dbsession, key="DISCO_VERSION", value="0.34.0"
+    return [line for line in stdout if len(line) > 0]
+
+
+async def _wait_for_global_service_running(name: str, timeout: float) -> bool:
+    from disco.utils import docker
+
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        nodes = await docker.schedulable_nodes()
+        stdout, _, _ = await check_call(
+            [
+                "docker",
+                "service",
+                "ps",
+                name,
+                "--filter",
+                "desired-state=running",
+                "--format",
+                "{{ .Node }} {{ .CurrentState }}",
+                "--no-trunc",
+            ]
         )
+        running = {
+            line.split(" ", 1)[0]
+            for line in stdout
+            if line.split(" ", 1)[1].startswith("Running")
+        }
+        if len(nodes) > 0 and nodes <= running:
+            return True
+        if asyncio.get_running_loop().time() > deadline:
+            return False
+        await asyncio.sleep(2)
 
 
 async def task_0_32_x(image: str) -> None:
