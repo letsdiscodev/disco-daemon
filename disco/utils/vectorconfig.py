@@ -1,4 +1,4 @@
-"""Vector configs for the syslog destination collectors."""
+"""Vector configs for the log collectors: syslog destinations and disco logs."""
 
 from __future__ import annotations
 
@@ -65,6 +65,18 @@ _SYSLOG_VRL = """\
 """
 
 
+# when reading logs through the daemon
+_STREAM_VRL = """\
+      . = {
+        "container": to_string(.container_name) ?? "",
+        "labels": object(.label) ?? {},
+        "timestamp": format_timestamp(.timestamp, "%Y-%m-%dT%H:%M:%S%.9fZ") ?? "",
+        "stream": to_string(.stream) ?? "",
+        "message": to_string(.message) ?? ""
+      }
+"""
+
+
 def _vrl_string(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
@@ -118,5 +130,30 @@ sinks:
 {transport}\
     encoding:
       codec: raw_message
+"""
+    return _DOCKER_SOURCE + body
+
+
+def render_streaming_config(port: int) -> str:
+    if not 1 <= port <= 65535:
+        raise ValueError(f"port out of range: {port}")
+    body = f"""\
+  json:
+    type: remap
+    inputs: [dedupe]
+    source: |
+{_STREAM_VRL}\
+sinks:
+  disco:
+    type: socket
+    inputs: [json]
+    mode: tcp
+    address: "disco:{port}"
+    framing:
+      method: newline_delimited
+    buffer:
+      when_full: block
+    encoding:
+      codec: json
 """
     return _DOCKER_SOURCE + body

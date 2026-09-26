@@ -1,12 +1,11 @@
 import asyncio
-import hashlib
 import json
 import logging
 import time
 from datetime import datetime, timezone
 from typing import TypedDict
 
-from disco.utils import docker
+from disco.utils import docker, vectorconfig
 from disco.utils.subprocess import check_call
 
 log = logging.getLogger(__name__)
@@ -16,20 +15,12 @@ COLLECTOR_NAME = "disco-logs"
 COLLECTOR_CONNECT_TIMEOUT_SECONDS = 15
 STREAM_LINE_LIMIT = 64 * 1024
 
-COLLECTOR_IMAGE = "gliderlabs/logspout:latest"
-COLLECTOR_ROUTE = f"raw+tcp://disco:{LOGS_PORT}"
-RAW_FORMAT = (
-    'RAW_FORMAT={ "container" : "{{`{{ .Container.Name }}`}}", '
-    '"labels": {{`{{ toJSON .Container.Config.Labels }}`}}, '
-    '"timestamp": "{{`{{ .Time.Format "2006-01-02T15:04:05Z07:00" }}`}}", '
-    '"message": {{`{{ toJSON .Data }}`}} }\n'
-)
-
 
 class LogLine(TypedDict):
     container: str
     labels: dict[str, str]
-    timestamp: str
+    timestamp: str  # docker's, rfc 3339 with nanoseconds
+    stream: str  # "stdout", "stderr" or "console" (tty)
     message: str
 
 
@@ -66,10 +57,12 @@ class LogSession:
             dropped_lines = self.dropped_lines
             self.dropped_lines = 0
             self._notice_at = now
+            now_utc = datetime.now(timezone.utc)
             return {
                 "container": "disco",
                 "labels": {},
-                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "timestamp": now_utc.strftime("%Y-%m-%dT%H:%M:%S.%f000Z"),
+                "stream": "stdout",
                 "message": f"[disco] {dropped_lines} lines dropped",
             }
         return await self.queue.get()
@@ -196,18 +189,14 @@ def parse_stream_line(line: bytes) -> LogLine | None:
         container=str(parsed.get("container", "")),
         labels=parsed["labels"],
         timestamp=str(parsed.get("timestamp", "")),
+        stream=str(parsed.get("stream", "")),
         message=str(parsed.get("message", "")),
     )
 
 
-def collector_config_hash() -> str:
-    # what the collector is made of: a change replaces the running one
-    config = f"{COLLECTOR_IMAGE} {COLLECTOR_ROUTE} {RAW_FORMAT}"
-    return hashlib.sha256(config.encode()).hexdigest()[:12]
-
-
 async def ensure_log_collector() -> None:
-    config_hash = collector_config_hash()
+    config = vectorconfig.render_streaming_config(LOGS_PORT)
+    config_hash = vectorconfig.config_hash(config)
     async with _collector_lock:
         if await docker.service_exists(COLLECTOR_NAME):
             labels = await docker.get_service_labels(COLLECTOR_NAME)
@@ -229,36 +218,27 @@ async def ensure_log_collector() -> None:
             "disco.logs",
             "--label",
             f"disco.logs.config={config_hash}",
-            "--env",
-            "BACKLOG=false",
-            "--env",
-            RAW_FORMAT,
-            "--env",
-            "ALLOW_TTY=true",
             "--mount",
             "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock",
             "--network",
             "disco-logging",
+            "--env",
+            f"{vectorconfig.CONFIG_ENV}={config}",
+            "--env",
+            vectorconfig.VECTOR_LOG_ENV,
             "--log-driver",
             "json-file",
             "--log-opt",
             "max-size=20m",
             "--log-opt",
             "max-file=5",
-            COLLECTOR_IMAGE,
-            COLLECTOR_ROUTE,
+            "--entrypoint",
+            "sh",
+            vectorconfig.VECTOR_IMAGE,
+            "-c",
+            vectorconfig.VECTOR_COMMAND,
         ]
         await check_call(args)
-
-
-async def remove_log_collector_on_disco_boot() -> None:
-    try:
-        async with _collector_lock:
-            if await docker.service_exists(COLLECTOR_NAME):
-                log.info("Removing the disco logs collector of the previous daemon")
-                await docker.rm_service(COLLECTOR_NAME)
-    except Exception:
-        log.exception("Failed to remove the disco logs collector on boot")
 
 
 async def remove_idle_log_collector() -> None:
