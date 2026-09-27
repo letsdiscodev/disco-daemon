@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 
 LOGS_PORT = 10514
 COLLECTOR_NAME = "disco-logs"
-STREAM_LINE_LIMIT = 64 * 1024
+STREAM_LINE_LIMIT = 256 * 1024
 
 
 class LogLine(TypedDict):
