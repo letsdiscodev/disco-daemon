@@ -738,18 +738,6 @@ async def schedulable_nodes() -> set[str]:
     }
 
 
-async def get_node_count() -> int:
-    log.info("Getting Docker Swarm node count")
-    args = [
-        "docker",
-        "info",
-        "--format",
-        "{{ .Swarm.Nodes }}",
-    ]
-    stdout, _, _ = await check_call(args)
-    return int(stdout[0])
-
-
 async def get_node_list() -> list[str]:
     log.info("Getting Docker Swarm node ID list")
     args = [
