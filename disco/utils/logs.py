@@ -299,7 +299,10 @@ async def read_service_history(
         stdout, stderr = await asyncio.wait_for(process.communicate(), 5)
     except TimeoutError:
         # "docker service logs" sometimes hangs (see docker.get_log_for_service)
-        process.kill()
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
         await process.wait()
         log.warning("Timed out reading the history of %s", service.name)
         return []
