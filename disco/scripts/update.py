@@ -639,12 +639,10 @@ async def task_0_24_x(image: str) -> None:
 
 async def task_0_23_x(image: str) -> None:
     from disco.utils import docker
-    from disco.utils.syslog import SyslogUrl, set_syslog_services
+    from disco.utils.syslog import SyslogUrl
 
     print("Updating from 0.23.x to 0.24.0")
     async with Session.begin() as dbsession:
-        disco_host = await keyvalues.get_value(dbsession, "DISCO_HOST")
-        assert disco_host is not None
         urls_str = await keyvalues.get_value(dbsession, "SYSLOG_URLS")
         if urls_str is not None:
             urls = json.loads(urls_str)
@@ -657,9 +655,8 @@ async def task_0_23_x(image: str) -> None:
             ]
             new_urls = json.dumps(syslog_urls)
             await keyvalues.set_value(dbsession, "SYSLOG_URLS", new_urls)
-    if urls_str is not None:
-        assert syslog_urls is not None
-        await set_syslog_services(disco_host=disco_host, syslog_urls=syslog_urls)
+    # just get rid of all syslogs,
+    # update 0.33.0 will take care of starting new ones
     old_syslog_is_running = await docker.service_exists("disco-syslog")
     if old_syslog_is_running:
         await docker.rm_service("disco-syslog")
