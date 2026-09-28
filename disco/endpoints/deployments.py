@@ -284,7 +284,7 @@ async def files_get(
         except OSError:
             continue  # a deployment moved the files while they were read
         if (number, status) == await _files_deployment_for_download(project_name):
-            break # deployment didn't change while generating file, continue with that
+            break  # deployment didn't change while generating file, continue with that
         # deployment changed while generating file, start over
         await path_unlink(archive_path)
     else:
