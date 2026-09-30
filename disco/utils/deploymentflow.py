@@ -894,6 +894,10 @@ async def stop_conflicting_port_services(
 ) -> None:
     if prev_deployment_info is None:
         return
+    if recovery and prev_deployment_info.disco_file is None:
+        # rolling back a deployment stopped before its disco.json was read: it
+        # started no services, so none of its ports can conflict
+        return
     assert new_deployment_info.disco_file is not None
     assert prev_deployment_info.disco_file is not None
     new_ports = set()
