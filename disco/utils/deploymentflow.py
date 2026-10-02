@@ -195,6 +195,14 @@ async def process_deployment(deployment_id: str) -> None:
     if not should_continue:
         return
 
+    # Set before the try: a cancel or an exception can land at any await, including
+    # before the previous deployment and its scale are read. `started` is set right
+    # before anything is changed; until then there is nothing to restore.
+    project_name: str | None = None
+    prev_deployment_id: str | None = None
+    prev_deployment_number: int | None = None
+    scale: defaultdict[str, int] = defaultdict(lambda: 1)
+    started = False
     try:
         await log_output("Starting deployment\n")
         async with Session.begin() as dbsession:
@@ -230,6 +238,7 @@ async def process_deployment(deployment_id: str) -> None:
             )
         else:
             scale = defaultdict(lambda: 1)
+        started = True
         await prepare_deployment(
             new_deployment_id=deployment_id,
             prev_deployment_id=prev_deployment_id,
@@ -261,13 +270,14 @@ async def process_deployment(deployment_id: str) -> None:
     except asyncio.CancelledError:
         await log_output("Cancelling\n")
         await set_current_deployment_status("CANCELLING")
-        await replace_deployment(
-            new_deployment_id=prev_deployment_id,
-            prev_deployment_id=deployment_id,
-            recovery=True,
-            scale=scale,
-            log_output=log_output,
-        )
+        if started:
+            await replace_deployment(
+                new_deployment_id=prev_deployment_id,
+                prev_deployment_id=deployment_id,
+                recovery=True,
+                scale=scale,
+                log_output=log_output,
+            )
         await log_output("Cancelled\n")
         await set_current_deployment_status("CANCELLED")
     except Exception as ex:
@@ -277,14 +287,15 @@ async def process_deployment(deployment_id: str) -> None:
         else:
             log.exception("Exception while deploying")
         await log_output("Deployment failed\n")
-        await log_output("Restoring previous deployment\n")
-        await replace_deployment(
-            new_deployment_id=prev_deployment_id,
-            prev_deployment_id=deployment_id,
-            recovery=True,
-            scale=scale,
-            log_output=log_output,
-        )
+        if started:
+            await log_output("Restoring previous deployment\n")
+            await replace_deployment(
+                new_deployment_id=prev_deployment_id,
+                prev_deployment_id=deployment_id,
+                recovery=True,
+                scale=scale,
+                log_output=log_output,
+            )
     finally:
         log.info("Finished processing build %s", deployment_id)
         await log_output_terminate()
@@ -293,6 +304,10 @@ async def process_deployment(deployment_id: str) -> None:
         deployment = await get_deployment_by_id(dbsession, deployment_id)
         assert deployment is not None
         project_id = deployment.project_id
+        if project_name is None:
+            # stopped before the project was read in the try
+            project = await deployment.awaitable_attrs.project
+            project_name = project.name
         if deployment.status == "COMPLETE":
             if prev_deployment_number is not None:
                 await pendingfiles.remove(project_name, prev_deployment_number)
@@ -878,6 +893,10 @@ async def stop_conflicting_port_services(
     log_output: Callable[[str], Awaitable[None]],
 ) -> None:
     if prev_deployment_info is None:
+        return
+    if recovery and prev_deployment_info.disco_file is None:
+        # rolling back a deployment stopped before its disco.json was read: it
+        # started no services, so none of its ports can conflict
         return
     assert new_deployment_info.disco_file is not None
     assert prev_deployment_info.disco_file is not None
