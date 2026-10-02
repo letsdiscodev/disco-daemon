@@ -1371,11 +1371,15 @@ async def host_df() -> DiskFree:
         "/:/hostroot:ro",
         f"busybox:{BUSYBOX_VERSION}",
         "df",
+        # POSIX output: one line per filesystem. without it busybox wraps a long
+        # device name (ubuntu lvm: /dev/mapper/ubuntu--vg-ubuntu--lv) onto its
+        # own line and the numbers end up on line 3
+        "-P",
         "/hostroot",
     ]
     stdout, _, _ = await check_call(args)
-    # Filesystem           1K-blocks      Used Available Use% Mounted on
-    # /dev/sda1            235972036  32875864 193451672  15% /hostroot
+    # Filesystem           1024-blocks    Used Available Capacity Mounted on
+    # /dev/mapper/ubuntu--vg-ubuntu--lv   489592144  94620480 373965964  20% /hostroot
     _, _, used, available, _, _ = stdout[1].split()
     return DiskFree(
         used=int(used),
