@@ -1,4 +1,4 @@
-aiohttp==3.14.3
+aiohttp==3.14.4
 aiofiles==25.1.0
 aiosqlite==0.22.1
 alembic==1.19.1
@@ -10,7 +10,7 @@ friendlywords==1.3.0
 greenlet==3.5.5
 mypy==2.3.1
 pydantic==2.13.4
-PyJWT==2.13.0
+PyJWT==2.15.0
 PyJWT[crypto]
 requests==2.34.2
 ruff==0.16.4
