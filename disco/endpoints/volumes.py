@@ -80,6 +80,11 @@ async def volume_get(
             f"type=volume,source={source},destination=/volume",
             "--label",
             "disco.log.exclude=true",
+            # the archive goes to the client over the attached stdout; nothing of
+            # it may reach docker's log of the container, where every collector
+            # (syslog destinations, `disco logs`) would read it as log lines
+            "--log-driver",
+            "none",
             f"busybox:{config.BUSYBOX_VERSION}",
             "tar",
             "--create",
@@ -192,6 +197,11 @@ async def volume_set(
             f"type=volume,source={internal_volume_name},destination=/volume",
             "--label",
             "disco.log.exclude=true",
+            # the archive goes to the client over the attached stdout; nothing of
+            # it may reach docker's log of the container, where every collector
+            # (syslog destinations, `disco logs`) would read it as log lines
+            "--log-driver",
+            "none",
             f"busybox:{config.BUSYBOX_VERSION}",
             "tar",
             "--extract",
