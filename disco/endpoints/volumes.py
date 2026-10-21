@@ -194,8 +194,6 @@ async def volume_set(
             f"type=volume,source={internal_volume_name},destination=/volume",
             "--label",
             "disco.log.exclude=true",
-            "--log-driver",
-            "none",
             f"busybox:{config.BUSYBOX_VERSION}",
             "tar",
             "--extract",
