@@ -95,6 +95,14 @@ async def volume_get(
                 yield chunk
         finally:
             await process.wait()
+        if process.returncode != 0:
+            log.error(
+                "Exporting volume %s of project %s: tar exited with %s",
+                volume_name,
+                project_name,
+                process.returncode,
+            )
+            raise Exception(f"Volume export failed: tar exited with {process.returncode}")
 
     return StreamingResponse(iterfile(), media_type="application/x-tar")
 
