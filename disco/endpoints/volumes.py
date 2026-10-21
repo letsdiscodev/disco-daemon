@@ -80,6 +80,8 @@ async def volume_get(
             f"type=volume,source={source},destination=/volume",
             "--label",
             "disco.log.exclude=true",
+            "--log-driver",
+            "none",
             f"busybox:{config.BUSYBOX_VERSION}",
             "tar",
             "--create",
