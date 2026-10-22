@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -85,6 +86,38 @@ async def remove_project_static_deployments_if_any(project_name: str) -> None:
     path = static_site_deployments_path(project_name)
     if await aiofiles.os.path.isdir(path):
         await rmtree(path)
+
+
+# deployment numbers start at 1 (get_next_deployment_number)
+DEPLOYMENT_NUMBER_RE = re.compile(r"^[1-9][0-9]*$")
+
+
+def removable_static_deployment_numbers(
+    entries: list[str],
+    live: int,
+    keep: set[int],
+    served_root: str | None,
+    project_name: str,
+) -> list[int]:
+    """The deployment numbers whose directories are not needed anymore.
+
+    `entries` are the names in the project's static deployments directory.
+    Returned, oldest first: those below the live deployment, except the
+    ones to keep and the directory Caddy serves. Entries that aren't a
+    deployment number are not deployment directories, they're left alone.
+
+    """
+    numbers = []
+    for entry in entries:
+        if DEPLOYMENT_NUMBER_RE.match(entry) is None:
+            continue
+        number = int(entry)
+        if number >= live or number in keep:
+            continue
+        if served_root == static_site_deployment_path(project_name, number):
+            continue
+        numbers.append(number)
+    return sorted(numbers)
 
 
 def static_site_src_public_path(project_name: str, public_path: str) -> str:

@@ -10,7 +10,6 @@ and whatever Caddy serves, and removes the rest.
 import asyncio
 import logging
 import os
-import re
 import uuid
 
 import aiofiles.os
@@ -20,7 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 from disco.models import Deployment, Project
 from disco.models.db import ReadSession
 from disco.utils import caddy
+from disco.utils.deployments import DEPLOYMENT_STATUS
 from disco.utils.filesystem import (
+    removable_static_deployment_numbers,
     rmtree,
     static_site_deployment_path,
     static_site_deployments_path,
@@ -31,14 +32,16 @@ from disco.utils.worker import worker
 
 log = logging.getLogger(__name__)
 
-# deployment numbers start at 1 (get_next_deployment_number)
-DEPLOYMENT_DIR_RE = re.compile(r"^[1-9][0-9]*$")
-# the project name pattern of ProjectCreateRequest
-PROJECT_DIR_RE = re.compile(r"^[a-z][a-z0-9\-]*$")
-# a deployment is being worked on, or will be. The recovery of a failed or
-# cancelled deployment runs after the status says FAILED or CANCELLING, so
-# the task still running is checked too.
-DEPLOYING_STATUSES = ["QUEUED", "PREPARING", "REPLACING", "CANCELLING"]
+# a deployment is being worked on, or will be (the same statuses
+# cancel_deployment accepts). The recovery of a failed or cancelled
+# deployment runs after the status says FAILED or CANCELLING, so the task
+# still running is checked too.
+DEPLOYING_STATUSES: list[DEPLOYMENT_STATUS] = [
+    "QUEUED",
+    "PREPARING",
+    "REPLACING",
+    "CANCELLING",
+]
 MAX_REMOVALS_PER_RUN = 100
 
 _lock = asyncio.Lock()
@@ -65,9 +68,7 @@ async def _remove_old_static_deployments() -> None:
     await _empty_trash()
     removed = 0
     for entry in entries:
-        if PROJECT_DIR_RE.match(entry) is None:
-            if entry != os.path.basename(trash_path()):
-                log.info("Not a project directory, leaving %s alone", entry)
+        if entry == os.path.basename(trash_path()):
             continue
         if removed >= MAX_REMOVALS_PER_RUN:
             log.info(
@@ -106,7 +107,7 @@ async def _clean_up_project(project_name: str, limit: int) -> int:
         entries = await aiofiles.os.listdir(static_site_deployments_path(project_name))
     except FileNotFoundError:
         return 0  # the project was removed meanwhile
-    numbers = removable_deployment_numbers(
+    numbers = removable_static_deployment_numbers(
         entries=entries,
         live=complete[0],
         keep=set(complete),
@@ -142,33 +143,6 @@ async def _clean_up_project(project_name: str, limit: int) -> int:
         await _rmtree(trash)
         removed += 1
     return removed
-
-
-def removable_deployment_numbers(
-    entries: list[str],
-    live: int,
-    keep: set[int],
-    served_root: str | None,
-    project_name: str,
-) -> list[int]:
-    """The deployment numbers whose directories are not needed anymore.
-
-    Those below the live deployment, except the ones to keep and the
-    directory Caddy serves. Oldest first. Entries that aren't a deployment
-    number are not deployment directories, they're left alone.
-
-    """
-    numbers = []
-    for entry in entries:
-        if DEPLOYMENT_DIR_RE.match(entry) is None:
-            continue
-        number = int(entry)
-        if number >= live or number in keep:
-            continue
-        if served_root == static_site_deployment_path(project_name, number):
-            continue
-        numbers.append(number)
-    return sorted(numbers)
 
 
 async def _is_deploying(dbsession: DBSession, project: Project) -> bool:

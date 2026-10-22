@@ -222,8 +222,10 @@ class CaddyError(Exception):
 async def get_static_site_root(project_name: str) -> str | None:
     """The directory Caddy serves the project from.
 
-    None when it serves the project from no directory: the project has no
-    domain, or it's a container behind a reverse proxy.
+    None when Caddy serves no directory for the project: there is no route
+    (the project has no domain), or the handler is a reverse proxy (the web
+    service is a container now, or the project got a domain before its
+    first deployment: _add_project_route starts with a proxy to disco:80).
 
     """
     url = f"{BASE_URL}/id/disco-project-handler-{project_name}"
