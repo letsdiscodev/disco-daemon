@@ -63,7 +63,7 @@ async def get_active_projects() -> list[ActiveProject]:
             ] = await project.awaitable_attrs.deployments
             for deployment in deployments:
                 if deployment.status in [
-                    "QUEUEUD",
+                    "QUEUED",
                     "PREPARING",
                     "REPLACING",
                     "COMPLETE",
