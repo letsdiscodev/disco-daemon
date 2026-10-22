@@ -215,6 +215,39 @@ async def get_served_service_for_project(project_name: str) -> str | None:
         return None
 
 
+class CaddyError(Exception):
+    pass
+
+
+async def get_static_site_root(project_name: str) -> str | None:
+    """The directory Caddy serves the project from.
+
+    None when Caddy serves no directory for the project: there is no route
+    (the project has no domain), or the handler is a reverse proxy (the web
+    service is a container now, or the project got a domain before its
+    first deployment: _add_project_route starts with a proxy to disco:80).
+
+    """
+    url = f"{BASE_URL}/id/disco-project-handler-{project_name}"
+    session = _get_session()
+
+    def query() -> requests.Response:
+        return session.get(url, headers=HEADERS, timeout=10)
+
+    response = await asyncio.get_event_loop().run_in_executor(None, query)
+    if response.status_code == 404:
+        return None  # no route: the project has no domain
+    if response.status_code != 200:
+        raise CaddyError(f"Caddy returned {response.status_code}: {response.text}")
+    handler = response.json()
+    if not isinstance(handler, dict) or handler.get("handler") != "file_server":
+        return None
+    root = handler.get("root")
+    if not isinstance(root, str):
+        raise CaddyError(f"Unexpected file_server root: {root!r}")
+    return root
+
+
 async def serve_static_site(project_name: str, deployment_number: int) -> None:
     url = f"{BASE_URL}/id/disco-project-handler-{project_name}"
     req_body = {
