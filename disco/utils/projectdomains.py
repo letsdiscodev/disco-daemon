@@ -161,5 +161,5 @@ async def serve_live_deployment(dbsession: DBSession, project: Project) -> None:
             internal_service_name,
             port=disco_file.services["web"].port or 8000,
         )
-    elif disco_file.services["web"].type == ServiceType.static:
+    elif disco_file.services["web"].type in [ServiceType.static, ServiceType.generator]:
         await caddy.serve_static_site(project.name, deployment.number)
