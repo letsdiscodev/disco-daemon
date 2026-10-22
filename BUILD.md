@@ -18,6 +18,14 @@ bin/ruff format .
 bin/mypy .
 ```
 
+## Tests
+
+On a database created as below (the dev container's `data/disco.sqlite3`):
+
+```
+bin/test
+```
+
 ## Generating an Alembic revision
 
 ```
