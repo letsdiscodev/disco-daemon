@@ -26,7 +26,7 @@ attrs==25.1.0
     # via aiohttp
 bcrypt==5.0.0
     # via -r requirements.in
-certifi==2026.7.22
+certifi==2026.10.23
     # via requests
 cffi==2.0.0
     # via cryptography
