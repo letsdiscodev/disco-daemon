@@ -290,8 +290,11 @@ async def create_docker_config(host_home: str) -> None:
     await asyncio.get_event_loop().run_in_executor(None, makedirs)
 
 
+CLOUDFLARED_CONTAINER = "cloudflared"
+
+
 async def setup_cloudflare_tunnel(
-    cloudflare_tunnel_token: str, name: str = "cloudflared"
+    cloudflare_tunnel_token: str, name: str = CLOUDFLARED_CONTAINER
 ) -> None:
     await run_and_print(
         [

@@ -18,6 +18,7 @@ import disco
 from disco import config
 from disco.models.db import ReadSession, Session, build_engines, get_engine
 from disco.scripts.init import (
+    CLOUDFLARED_CONTAINER,
     run_and_print,
     setup_cloudflare_tunnel,
     start_disco_daemon,
@@ -131,7 +132,6 @@ async def stop_disco_daemon() -> None:
     )
 
 
-CLOUDFLARED_CONTAINER = "cloudflared"
 CLOUDFLARED_NEXT_CONTAINER = "cloudflared-next"
 
 
@@ -141,8 +141,9 @@ async def update_cloudflared(cloudflare_tunnel_token: str) -> None:
 
     The tunnel stays up: a second connector is registered before the old
     one is stopped. The tag is "latest", so image IDs are compared."""
-    latest = await _image_id(config.CLOUDFLARED_IMAGE)
-    running = await _container_image_id(CLOUDFLARED_CONTAINER)
+    await _finish_previous_cloudflared_update()
+    latest = await _docker_inspect("image", "{{ .Id }}", config.CLOUDFLARED_IMAGE)
+    running = await _docker_inspect("container", "{{ .Image }}", CLOUDFLARED_CONTAINER)
     if latest is None or running is None:
         print("cloudflared image or container not found, not updating cloudflared")
         return
@@ -150,8 +151,6 @@ async def update_cloudflared(cloudflare_tunnel_token: str) -> None:
         print("cloudflared is up to date")
         return
     print("Updating cloudflared")
-    # leftover of a previous failed update
-    await call(["docker", "rm", "-f", CLOUDFLARED_NEXT_CONTAINER])
     await setup_cloudflare_tunnel(
         cloudflare_tunnel_token, name=CLOUDFLARED_NEXT_CONTAINER
     )
@@ -159,28 +158,40 @@ async def update_cloudflared(cloudflare_tunnel_token: str) -> None:
         print("New cloudflared connector did not register, keeping the current one")
         await run_and_print(["docker", "rm", "-f", CLOUDFLARED_NEXT_CONTAINER])
         return
-    # -t 30: let cloudflared drain in-flight requests (its default grace period)
-    await run_and_print(["docker", "stop", "-t", "30", CLOUDFLARED_CONTAINER])
-    await run_and_print(["docker", "rm", CLOUDFLARED_CONTAINER])
+    await _replace_cloudflared_with_next()
+
+
+async def _finish_previous_cloudflared_update() -> None:
+    """A previous update may have failed between starting the new connector
+    and renaming it: keep it if it's running, otherwise get rid of it."""
+    next_running = await _docker_inspect(
+        "container", "{{ .State.Running }}", CLOUDFLARED_NEXT_CONTAINER
+    )
+    if next_running is None:
+        return
+    if next_running == "true":
+        print("Finishing previous cloudflared update")
+        await _replace_cloudflared_with_next()
+    else:
+        await run_and_print(["docker", "rm", "-f", CLOUDFLARED_NEXT_CONTAINER])
+
+
+async def _replace_cloudflared_with_next() -> None:
+    if await _docker_inspect("container", "{{ .Id }}", CLOUDFLARED_CONTAINER):
+        # -t 30: let cloudflared drain in-flight requests (its default grace period)
+        await run_and_print(["docker", "stop", "-t", "30", CLOUDFLARED_CONTAINER])
+        await run_and_print(["docker", "rm", CLOUDFLARED_CONTAINER])
     await run_and_print(
         ["docker", "rename", CLOUDFLARED_NEXT_CONTAINER, CLOUDFLARED_CONTAINER]
     )
 
 
-async def _image_id(image: str) -> str | None:
+async def _docker_inspect(kind: str, format: str, name: str) -> str | None:
+    """None if the image or container doesn't exist"""
     stdout, _, process = await call(
-        ["docker", "image", "inspect", "--format", "{{ .Id }}", image]
+        ["docker", kind, "inspect", "--format", format, name]
     )
-    if process.returncode != 0:
-        return None
-    return stdout[0].strip()
-
-
-async def _container_image_id(container: str) -> str | None:
-    stdout, _, process = await call(
-        ["docker", "container", "inspect", "--format", "{{ .Image }}", container]
-    )
-    if process.returncode != 0:
+    if process.returncode != 0 or len(stdout) == 0:
         return None
     return stdout[0].strip()
 
@@ -189,7 +200,13 @@ async def _wait_for_tunnel_registered(container: str, timeout: float) -> bool:
     deadline = asyncio.get_running_loop().time() + timeout
     while True:
         stdout, stderr, _ = await call(["docker", "logs", container])
-        if any("Registered tunnel connection" in line for line in stdout + stderr):
+        registered = any(
+            "Registered tunnel connection" in line for line in stdout + stderr
+        )
+        still_running = await _docker_inspect(
+            "container", "{{ .State.Running }}", container
+        )
+        if registered and still_running == "true":
             return True
         if asyncio.get_running_loop().time() > deadline:
             return False

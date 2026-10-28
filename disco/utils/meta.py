@@ -26,12 +26,11 @@ async def update_disco(
     # pull while the daemon is still running to minimize downtime: the update
     # script doesn't pull cloudflared, it only swaps the container if the
     # image changed (see disco.scripts.update.update_cloudflared)
-    pulls = []
-    if pull:
-        pulls.append(docker.pull(image))
-    if cloudflare_tunnel_token is not None:
-        pulls.append(_pull_cloudflared())
-    await asyncio.gather(*pulls)
+    async with asyncio.TaskGroup() as pulls:
+        if pull:
+            pulls.create_task(docker.pull(image))
+        if cloudflare_tunnel_token is not None:
+            pulls.create_task(_pull_cloudflared())
     await _run_cmd(
         [
             "docker",
