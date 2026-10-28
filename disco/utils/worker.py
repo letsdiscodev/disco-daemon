@@ -61,6 +61,7 @@ async def cron_hour() -> None:
     from disco.utils.commandoutputs import clean_up_db_connections
     from disco.utils.commands import clean_up_orphan_commands
     from disco.utils.logs import remove_idle_log_collector
+    from disco.utils.staticcleanup import remove_old_static_deployments
     from disco.utils.tunnels import clean_up_rogue_tunnels
 
     log.info("Disco hour cron")
@@ -68,6 +69,10 @@ async def cron_hour() -> None:
     await clean_up_rogue_tunnels()
     await clean_up_orphan_commands()
     await remove_idle_log_collector()
+    try:
+        await remove_old_static_deployments()
+    except Exception:
+        log.exception("Failed to clean up old static deployments")
 
 
 async def cron_day() -> None:
@@ -277,6 +282,9 @@ class Worker:
         except KeyError as ex:
             raise TaskNotFoundError() from ex
         task.cancel()
+
+    def running_task_ids(self) -> list[str]:
+        return list(self._queue_tasks.keys())
 
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
