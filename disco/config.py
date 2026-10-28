@@ -2,6 +2,7 @@ import functools
 import os
 
 CADDY_VERSION = "2.9.1"
+CLOUDFLARED_IMAGE = "cloudflare/cloudflared:latest"
 DISCO_TUNNEL_VERSION = "1.0.0"
 BUSYBOX_VERSION = "1.37.0"
 

@@ -20,8 +20,18 @@ async def update_disco(
     if await is_updating(dbsession):
         raise Exception("An update is already in progress")
     await save_is_updating(dbsession)
+    cloudflare_tunnel_token = await keyvalues.get_value(
+        dbsession, "CLOUDFLARE_TUNNEL_TOKEN"
+    )
+    # pull while the daemon is still running to minimize downtime: the update
+    # script doesn't pull cloudflared, it only swaps the container if the
+    # image changed (see disco.scripts.update.update_cloudflared)
+    pulls = []
     if pull:
-        await docker.pull(image)
+        pulls.append(docker.pull(image))
+    if cloudflare_tunnel_token is not None:
+        pulls.append(_pull_cloudflared())
+    await asyncio.gather(*pulls)
     await _run_cmd(
         [
             "docker",
@@ -41,6 +51,16 @@ async def update_disco(
             "disco_update",
         ]
     )
+
+
+async def _pull_cloudflared() -> None:
+    try:
+        await docker.pull(config.CLOUDFLARED_IMAGE)
+    except Exception:
+        log.exception(
+            "Failed to pull %s, cloudflared will not be updated",
+            config.CLOUDFLARED_IMAGE,
+        )
 
 
 async def _run_cmd(args: list[str]) -> str:
