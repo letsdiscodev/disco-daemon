@@ -290,13 +290,18 @@ async def create_docker_config(host_home: str) -> None:
     await asyncio.get_event_loop().run_in_executor(None, makedirs)
 
 
-async def setup_cloudflare_tunnel(cloudflare_tunnel_token: str) -> None:
+CLOUDFLARED_CONTAINER = "cloudflared"
+
+
+async def setup_cloudflare_tunnel(
+    cloudflare_tunnel_token: str, name: str = CLOUDFLARED_CONTAINER
+) -> None:
     await run_and_print(
         [
             "docker",
             "run",
             "--name",
-            "cloudflared",
+            name,
             "--detach",
             "--restart",
             "always",
@@ -308,7 +313,7 @@ async def setup_cloudflare_tunnel(cloudflare_tunnel_token: str) -> None:
             "max-size=20m",
             "--log-opt",
             "max-file=5",
-            "cloudflare/cloudflared:latest",
+            config.CLOUDFLARED_IMAGE,
             "tunnel",
             "--no-autoupdate",
             "run",

@@ -17,7 +17,12 @@ from sqlalchemy.ext.asyncio import create_async_engine
 import disco
 from disco import config
 from disco.models.db import ReadSession, Session, build_engines, get_engine
-from disco.scripts.init import run_and_print, start_disco_daemon
+from disco.scripts.init import (
+    CLOUDFLARED_CONTAINER,
+    run_and_print,
+    setup_cloudflare_tunnel,
+    start_disco_daemon,
+)
 from disco.utils import keyvalues
 from disco.utils.meta import save_done_updating
 from disco.utils.subprocess import call, check_call
@@ -39,6 +44,14 @@ async def _main() -> None:
             dbsession=dbsession, key="DISCO_VERSION"
         )
         assert installed_version is not None
+        cloudflare_tunnel_token = await keyvalues.get_value(
+            dbsession=dbsession, key="CLOUDFLARE_TUNNEL_TOKEN"
+        )
+    if cloudflare_tunnel_token is not None:
+        try:
+            await update_cloudflared(cloudflare_tunnel_token)
+        except Exception:
+            log.exception("Failed to update cloudflared, going on")
     if installed_version == disco.__version__:
         print(f"Current version is latest ({disco.__version__}), not updating.")
         async with Session.begin() as dbsession:
@@ -117,6 +130,87 @@ async def stop_disco_daemon() -> None:
             "disco",
         ]
     )
+
+
+CLOUDFLARED_NEXT_CONTAINER = "cloudflared-next"
+
+
+async def update_cloudflared(cloudflare_tunnel_token: str) -> None:
+    from disco.utils import docker
+
+    try:
+        await docker.pull(config.CLOUDFLARED_IMAGE)
+    except Exception:
+        log.exception(
+            "Failed to pull %s, going on with the local image", config.CLOUDFLARED_IMAGE
+        )
+    await _finish_previous_cloudflared_update()
+    latest = await _docker_inspect("image", "{{ .Id }}", config.CLOUDFLARED_IMAGE)
+    running = await _docker_inspect("container", "{{ .Image }}", CLOUDFLARED_CONTAINER)
+    if latest is None or running is None:
+        print("cloudflared image or container not found, not updating cloudflared")
+        return
+    if latest == running:
+        print("cloudflared is up to date")
+        return
+    print("Updating cloudflared")
+    await setup_cloudflare_tunnel(
+        cloudflare_tunnel_token, name=CLOUDFLARED_NEXT_CONTAINER
+    )
+    if not await _wait_for_tunnel_registered(CLOUDFLARED_NEXT_CONTAINER, timeout=60):
+        print("New cloudflared connector did not register, keeping the current one")
+        await run_and_print(["docker", "rm", "-f", CLOUDFLARED_NEXT_CONTAINER])
+        return
+    await _replace_cloudflared_with_next()
+
+
+async def _finish_previous_cloudflared_update() -> None:
+    next_running = await _docker_inspect(
+        "container", "{{ .State.Running }}", CLOUDFLARED_NEXT_CONTAINER
+    )
+    if next_running is None:
+        return
+    if next_running == "true":
+        print("Finishing previous cloudflared update")
+        await _replace_cloudflared_with_next()
+    else:
+        await run_and_print(["docker", "rm", "-f", CLOUDFLARED_NEXT_CONTAINER])
+
+
+async def _replace_cloudflared_with_next() -> None:
+    if await _docker_inspect("container", "{{ .Id }}", CLOUDFLARED_CONTAINER):
+        # -t 30: let cloudflared drain in-flight requests (its default grace period)
+        await run_and_print(["docker", "stop", "-t", "30", CLOUDFLARED_CONTAINER])
+        await run_and_print(["docker", "rm", CLOUDFLARED_CONTAINER])
+    await run_and_print(
+        ["docker", "rename", CLOUDFLARED_NEXT_CONTAINER, CLOUDFLARED_CONTAINER]
+    )
+
+
+async def _docker_inspect(kind: str, format: str, name: str) -> str | None:
+    stdout, _, process = await call(
+        ["docker", kind, "inspect", "--format", format, name]
+    )
+    if process.returncode != 0 or len(stdout) == 0:
+        return None
+    return stdout[0].strip()
+
+
+async def _wait_for_tunnel_registered(container: str, timeout: float) -> bool:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        stdout, stderr, _ = await call(["docker", "logs", container])
+        registered = any(
+            "Registered tunnel connection" in line for line in stdout + stderr
+        )
+        still_running = await _docker_inspect(
+            "container", "{{ .State.Running }}", container
+        )
+        if registered and still_running == "true":
+            return True
+        if asyncio.get_running_loop().time() > deadline:
+            return False
+        await asyncio.sleep(1)
 
 
 async def alembic_upgrade(version_hash: str) -> None:
