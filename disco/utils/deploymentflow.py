@@ -22,6 +22,7 @@ from disco.utils.deployments import (
     get_deployment_by_id,
     get_deployment_in_progress,
     get_live_deployment,
+    get_oldest_queued_deployment,
     get_superseding_deployment,
     set_deployment_commit_hash,
     set_deployment_disco_file,
@@ -171,6 +172,17 @@ async def process_deployment(deployment_id: str) -> None:
                     f"Deployment {deployment_in_progress.number} in progress, "
                     "waiting for build to complete "
                     f"before processing deployment {deployment.number}.\n"
+                )
+                return False
+            # Deployments go in order: this one waits while an older one of the
+            # project is still queued. Without this, a deployment created right
+            # after another one completed (before the queue moved on) started
+            # first, then the older queued one replaced it.
+            oldest_queued = await get_oldest_queued_deployment(dbsession, project)
+            if oldest_queued is not None and oldest_queued.number < deployment.number:
+                await log_output(
+                    f"Deployment {oldest_queued.number} is queued before, "
+                    f"waiting for it before processing deployment {deployment.number}.\n"
                 )
                 return False
             superseding = await get_superseding_deployment(dbsession, deployment)
