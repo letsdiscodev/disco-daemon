@@ -117,7 +117,7 @@ async def _dqlite_member_ready(node_name: str) -> bool:
         _, writer = await asyncio.wait_for(
             asyncio.open_connection(host, DQLITE_API_PORT), timeout=2
         )
-    except (OSError, TimeoutError):
+    except OSError, TimeoutError:
         return False
     writer.close()
     return True

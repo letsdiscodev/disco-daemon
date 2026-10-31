@@ -1,6 +1,7 @@
 [project]
 name = "disco"
 dynamic = ["version"]
+requires-python = "==3.14.7"
 
 [tool.setuptools]
 packages = ["disco"]
