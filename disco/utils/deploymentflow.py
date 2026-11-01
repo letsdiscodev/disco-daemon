@@ -5,6 +5,7 @@ import logging
 import os
 import random
 import time
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Mapping, Sequence
@@ -21,6 +22,7 @@ from disco.utils.deployments import (
     DEPLOYMENT_STATUS,
     get_deployment_by_id,
     get_deployment_in_progress,
+    get_deployments_with_status,
     get_live_deployment,
     get_superseding_deployment,
     set_deployment_commit_hash,
@@ -101,45 +103,84 @@ class DeploymentInfo:
         )
 
 
-async def enqueue_deployment(deployment_id: str) -> None:
-    """Must be called outside of an SQL transaction.
+async def enqueue_next_deployment(project_id: str) -> None:
+    """Have the worker run the next deployment of the project, if any.
 
-    Because it creates an SQL transaction of its own.
+    It is safe to call it more often than needed.
 
     """
-    log.info("Enqueueing deployment %s", deployment_id)
+    log.info("Enqueueing next deployment of project %s", project_id)
+    task_id = uuid.uuid4().hex
 
     async def task() -> None:
+        await process_next_deployment(project_id, task_id)
+
+    await worker.enqueue(task, task_id=task_id)
+
+
+async def process_next_deployment(project_id: str, task_id: str) -> None:
+    deployment_id = await start_next_deployment(project_id, task_id)
+    if deployment_id is None:
+        return
+    try:
         await process_deployment(deployment_id)
+    finally:
+        await enqueue_next_deployment(project_id)
 
-    task_id = await worker.enqueue(task)
+
+async def start_next_deployment(project_id: str, task_id: str) -> str | None:
+    """Mark the next deployment of the project as PREPARING and return its id.
+
+    Returns None when a deployment is already in progress or when nothing is queued.
+
+    The next one is the oldest queued deployment that is not superseded
+    by a newer queued one.
+
+    Superseded deployments are skipped on the way.
+
+    """
     async with Session.begin() as dbsession:
-        deployment = await get_deployment_by_id(dbsession, deployment_id)
-        assert deployment is not None
-        set_deployment_task_id(deployment, task_id)
-
-
-async def process_deployment_if_any(project_id: str) -> None:
-    """Must be called outside of an SQL transaction."""
-    from disco.utils.deployments import get_oldest_queued_deployment
-    from disco.utils.projects import get_project_by_id
-
-    async with ReadSession.begin() as dbsession:
         project = await get_project_by_id(dbsession, project_id)
         if project is None:
             log.warning(
                 "Project %s not found, not processing next deployment", project_id
             )
-            return
-        deployment = await get_oldest_queued_deployment(dbsession, project)
-        if deployment is None or deployment.status != "QUEUED":
+            return None
+        queued_deployments = await get_deployments_with_status(
+            dbsession, project, "QUEUED"
+        )
+        if len(queued_deployments) == 0:
             log.info(
                 "No more queued deployments for project %s, done for now.",
                 project.log(),
             )
-            return
-        deployment_id = deployment.id
-    await enqueue_deployment(deployment_id)
+            return None
+        deployment_in_progress = await get_deployment_in_progress(dbsession, project)
+        if deployment_in_progress is not None:
+            log.info(
+                "Deployment %s in progress, not starting another one for project %s",
+                deployment_in_progress.log(),
+                project.log(),
+            )
+            return None
+        for deployment in queued_deployments:
+            superseding = await get_superseding_deployment(dbsession, deployment)
+            if superseding is None:
+                await set_deployment_status(deployment, "PREPARING")
+                set_deployment_task_id(deployment, task_id)
+                return deployment.id
+            output_source = commandoutputs.deployment_source(deployment.id)
+            await commandoutputs.store_output(
+                output_source,
+                f"Deployment {superseding.number} is latest, "
+                f"skipping deployment {deployment.number}.\n",
+            )
+            await set_deployment_status(deployment, "SKIPPED")
+            if deployment.deployment_type == "FILES":
+                await pendingfiles.remove(project.name, deployment.number)
+            await commandoutputs.terminate(output_source)
+        # the newest queued deployment is never superseded
+        raise AssertionError("No deployment to start")
 
 
 async def process_deployment(deployment_id: str) -> None:
@@ -157,60 +198,24 @@ async def process_deployment(deployment_id: str) -> None:
             assert deployment is not None
             await set_deployment_status(deployment, status)
 
-    async def maybe_keep_queued_or_skip() -> bool:
-        process_deployment_of_project_id = None
-        async with Session.begin() as dbsession:
-            deployment = await get_deployment_by_id(dbsession, deployment_id)
-            assert deployment is not None
-            project: Project = await deployment.awaitable_attrs.project
-            deployment_in_progress = await get_deployment_in_progress(
-                dbsession, project
-            )
-            if deployment_in_progress is not None:
-                await log_output(
-                    f"Deployment {deployment_in_progress.number} in progress, "
-                    "waiting for build to complete "
-                    f"before processing deployment {deployment.number}.\n"
-                )
-                return False
-            superseding = await get_superseding_deployment(dbsession, deployment)
-            if superseding is not None:
-                await log_output(
-                    f"Deployment {superseding.number} is latest, "
-                    f"skipping deployment {deployment.number}.\n"
-                )
-                await set_deployment_status(deployment, "SKIPPED")
-                if deployment.deployment_type == "FILES":
-                    await pendingfiles.remove(project.name, deployment.number)
-                await log_output_terminate()
-                process_deployment_of_project_id = deployment.project_id
-            else:
-                await set_deployment_status(deployment, "PREPARING")
-        if process_deployment_of_project_id is not None:
-            await process_deployment_if_any(process_deployment_of_project_id)
-            return False
-        return True
-
-    should_continue = await asyncio.shield(maybe_keep_queued_or_skip())
-    if not should_continue:
-        return
-
+    prev_deployment_id: str | None = None
+    prev_deployment_number: int | None = None
+    scale: Mapping[str, int] = defaultdict(lambda: 1)
+    rollback_needed = False
     try:
         await log_output("Starting deployment\n")
         async with Session.begin() as dbsession:
             log.info("Getting data from database for deployment %s", deployment_id)
             deployment = await get_deployment_by_id(dbsession, deployment_id)
             assert deployment is not None
+            assert deployment.status == "PREPARING"
             project: Project = await deployment.awaitable_attrs.project
             assert project is not None
             project_name = project.name
             prev_deployment = await get_live_deployment(dbsession, project)
-            prev_deployment_id = (
-                prev_deployment.id if prev_deployment is not None else None
-            )
-            prev_deployment_number = (
-                prev_deployment.number if prev_deployment is not None else None
-            )
+            if prev_deployment is not None:
+                prev_deployment_id = prev_deployment.id
+                prev_deployment_number = prev_deployment.number
             if (
                 deployment.deployment_type == "ENV_VAR"
                 and prev_deployment is not None
@@ -228,8 +233,7 @@ async def process_deployment(deployment_id: str) -> None:
                     )
                 ],
             )
-        else:
-            scale = defaultdict(lambda: 1)
+        rollback_needed = True
         await prepare_deployment(
             new_deployment_id=deployment_id,
             prev_deployment_id=prev_deployment_id,
@@ -261,13 +265,14 @@ async def process_deployment(deployment_id: str) -> None:
     except asyncio.CancelledError:
         await log_output("Cancelling\n")
         await set_current_deployment_status("CANCELLING")
-        await replace_deployment(
-            new_deployment_id=prev_deployment_id,
-            prev_deployment_id=deployment_id,
-            recovery=True,
-            scale=scale,
-            log_output=log_output,
-        )
+        if rollback_needed:
+            await replace_deployment(
+                new_deployment_id=prev_deployment_id,
+                prev_deployment_id=deployment_id,
+                recovery=True,
+                scale=scale,
+                log_output=log_output,
+            )
         await log_output("Cancelled\n")
         await set_current_deployment_status("CANCELLED")
     except Exception as ex:
@@ -277,14 +282,15 @@ async def process_deployment(deployment_id: str) -> None:
         else:
             log.exception("Exception while deploying")
         await log_output("Deployment failed\n")
-        await log_output("Restoring previous deployment\n")
-        await replace_deployment(
-            new_deployment_id=prev_deployment_id,
-            prev_deployment_id=deployment_id,
-            recovery=True,
-            scale=scale,
-            log_output=log_output,
-        )
+        if rollback_needed:
+            await log_output("Restoring previous deployment\n")
+            await replace_deployment(
+                new_deployment_id=prev_deployment_id,
+                prev_deployment_id=deployment_id,
+                recovery=True,
+                scale=scale,
+                log_output=log_output,
+            )
     finally:
         log.info("Finished processing build %s", deployment_id)
         await log_output_terminate()
@@ -292,7 +298,7 @@ async def process_deployment(deployment_id: str) -> None:
     async with ReadSession.begin() as dbsession:
         deployment = await get_deployment_by_id(dbsession, deployment_id)
         assert deployment is not None
-        project_id = deployment.project_id
+        project_name = deployment.project_name
         if deployment.status == "COMPLETE":
             if prev_deployment_number is not None:
                 await pendingfiles.remove(project_name, prev_deployment_number)
@@ -304,7 +310,6 @@ async def process_deployment(deployment_id: str) -> None:
                     pass
             if deployment.deployment_type == "FILES":
                 await pendingfiles.remove(project_name, deployment.number)
-    await process_deployment_if_any(project_id)
 
 
 async def prepare_deployment(
@@ -879,8 +884,11 @@ async def stop_conflicting_port_services(
 ) -> None:
     if prev_deployment_info is None:
         return
+    if prev_deployment_info.disco_file is None:
+        # cancelled or failed before its disco file was read: nothing started
+        assert recovery
+        return
     assert new_deployment_info.disco_file is not None
-    assert prev_deployment_info.disco_file is not None
     new_ports = set()
     for service in new_deployment_info.disco_file.services.values():
         if service.type != ServiceType.container:

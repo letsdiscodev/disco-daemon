@@ -84,6 +84,14 @@ async def create_deployment(
         commandoutputs.deployment_source(deployment.id),
         f"Deployment {deployment.number} enqueued\n",
     )
+    deployment_in_progress = await get_deployment_in_progress(dbsession, project)
+    if deployment_in_progress is not None:
+        await commandoutputs.store_output(
+            commandoutputs.deployment_source(deployment.id),
+            f"Deployment {deployment_in_progress.number} in progress, "
+            "waiting for build to complete "
+            f"before processing deployment {deployment.number}.\n",
+        )
     events.deployment_created(
         project_name=project.name,
         deployment_number=deployment.number,
@@ -236,14 +244,14 @@ async def cleanup_deployments_on_disco_boot() -> None:
 
 
 async def enqueue_deployments_on_disco_boot() -> None:
-    from disco.utils.deploymentflow import process_deployment_if_any
+    from disco.utils.deploymentflow import enqueue_next_deployment
     from disco.utils.projects import get_all_projects
 
     async with ReadSession.begin() as dbsession:
         projects = await get_all_projects(dbsession)
         project_ids = [project.id for project in projects]
     for project_id in project_ids:
-        await process_deployment_if_any(project_id)
+        await enqueue_next_deployment(project_id)
 
 
 def set_deployment_disco_file(deployment: Deployment, disco_file: str) -> None:
@@ -350,20 +358,6 @@ async def get_deployment_in_progress(
         .where(Deployment.project == project)
         .where(Deployment.status.in_(["PREPARING", "REPLACING"]))
         .order_by(Deployment.number.desc())
-        .limit(1)
-    )
-    result = await dbsession.execute(stmt)
-    return result.scalars().first()
-
-
-async def get_oldest_queued_deployment(
-    dbsession: DBSession, project: Project
-) -> Deployment | None:
-    stmt = (
-        select(Deployment)
-        .where(Deployment.project == project)
-        .where(Deployment.status == "QUEUED")
-        .order_by(Deployment.number.asc())
         .limit(1)
     )
     result = await dbsession.execute(stmt)

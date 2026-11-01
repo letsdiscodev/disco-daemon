@@ -266,8 +266,14 @@ class Worker:
         self._queue_tasks: dict[str, asyncio.Task] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
 
-    async def enqueue(self, async_callable: Callable[[], Awaitable[None]]) -> str:
-        queue_task = QueueTask(id=uuid.uuid4().hex, run=async_callable)
+    async def enqueue(
+        self,
+        async_callable: Callable[[], Awaitable[None]],
+        task_id: str | None = None,
+    ) -> str:
+        if task_id is None:
+            task_id = uuid.uuid4().hex
+        queue_task = QueueTask(id=task_id, run=async_callable)
         await worker.queue.put(queue_task)
         return queue_task.id
 

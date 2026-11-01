@@ -8,7 +8,7 @@ from disco.auth import get_api_key_wo_tx
 from disco.endpoints.dependencies import get_project_name_from_url_wo_tx
 from disco.models.db import ReadSession, Session
 from disco.utils.apikeys import get_api_key_by_id
-from disco.utils.deploymentflow import enqueue_deployment
+from disco.utils.deploymentflow import enqueue_next_deployment
 from disco.utils.deployments import maybe_create_env_var_deployment
 from disco.utils.encryption import decrypt
 from disco.utils.envvariables import (
@@ -112,7 +112,7 @@ async def env_variables_post(
                 by_api_key=api_key,
             )
             if deployment is not None:
-                background_tasks.add_task(enqueue_deployment, deployment.id)
+                background_tasks.add_task(enqueue_next_deployment, project.id)
         return {
             "deployment": {
                 "number": deployment.number,
@@ -190,7 +190,7 @@ async def env_variable_delete(
         )
 
         if deployment is not None:
-            background_tasks.add_task(enqueue_deployment, deployment.id)
+            background_tasks.add_task(enqueue_next_deployment, project.id)
         return {
             "deployment": {
                 "number": deployment.number,

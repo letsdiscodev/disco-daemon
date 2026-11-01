@@ -14,7 +14,7 @@ from disco.models import Project, ProjectGithubRepo
 from disco.models.db import ReadSession, Session
 from disco.utils import docker, keyvalues
 from disco.utils.apikeys import get_api_key_by_id
-from disco.utils.deploymentflow import enqueue_deployment
+from disco.utils.deploymentflow import enqueue_next_deployment
 from disco.utils.deployments import (
     create_deployment,
     get_live_deployment,
@@ -303,7 +303,7 @@ async def projects_post(
                 disco_file=None,
                 by_api_key=api_key,
             )
-            background_tasks.add_task(enqueue_deployment, deployment.id)
+            background_tasks.add_task(enqueue_next_deployment, project.id)
         else:
             deployment = None
         return {

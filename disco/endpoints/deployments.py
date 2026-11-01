@@ -17,7 +17,7 @@ from disco.endpoints.dependencies import get_project_name_from_url_wo_tx
 from disco.models.db import ReadSession, Session
 from disco.utils import commandoutputs, pendingfiles
 from disco.utils.apikeys import get_api_key_by_id, get_valid_api_key_by_id
-from disco.utils.deploymentflow import enqueue_deployment, process_deployment_if_any
+from disco.utils.deploymentflow import enqueue_next_deployment
 from disco.utils.deployments import (
     cancel_deployment,
     create_deployment,
@@ -104,7 +104,7 @@ async def deployments_post(
             disco_file=None,
             by_api_key=api_key,
         )
-        background_tasks.add_task(enqueue_deployment, deployment.id)
+        background_tasks.add_task(enqueue_next_deployment, project.id)
         return {
             "deployment": {
                 "number": deployment.number,
@@ -155,7 +155,7 @@ async def _create_files_deployment(
             by_api_key=api_key,
         )
         await pendingfiles.set_pending(project_name, received_path, deployment.number)
-        background_tasks.add_task(enqueue_deployment, deployment.id)
+        background_tasks.add_task(enqueue_next_deployment, project.id)
         return {
             "deployment": {
                 "number": deployment.number,
@@ -222,7 +222,7 @@ async def deployment_delete(
                 start_next_deployment = True
             cancelled_deployments.append(single_deployment.number)
         if start_next_deployment:
-            await process_deployment_if_any(project_id)
+            await enqueue_next_deployment(project_id)
         return {
             "cancelledDeployments": [
                 {"number": number} for number in sorted(cancelled_deployments)

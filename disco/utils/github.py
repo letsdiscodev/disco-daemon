@@ -436,7 +436,7 @@ async def process_github_app_webhook(
     log.info("X-Hub-Signature-256 signature matched, continuing")
     log.info("Github event: %s", x_github_event)
     if x_github_event == "push":
-        from disco.utils.deploymentflow import enqueue_deployment
+        from disco.utils.deploymentflow import enqueue_next_deployment
         from disco.utils.deployments import create_deployment
         from disco.utils.github import get_commit_info_from_webhook_push
         from disco.utils.projects import get_projects_by_github_app_repo
@@ -451,7 +451,7 @@ async def process_github_app_webhook(
                     "from Github, skipping"
                 )
                 return
-            deployment_ids = []
+            project_ids = []
             async with Session.begin() as dbsession:
                 projects = await get_projects_by_github_app_repo(dbsession, full_name)
                 for project in projects:
@@ -472,7 +472,7 @@ async def process_github_app_webhook(
                             else "master and main",
                         )
                         continue
-                    deployment = await create_deployment(
+                    await create_deployment(
                         deployment_type="GITHUB",
                         dbsession=dbsession,
                         project=project,
@@ -480,10 +480,10 @@ async def process_github_app_webhook(
                         disco_file=None,
                         by_api_key=None,
                     )
-                    deployment_ids.append(deployment.id)
+                    project_ids.append(project.id)
 
-            for deployment_id in deployment_ids:
-                await enqueue_deployment(deployment_id)
+            for project_id in project_ids:
+                await enqueue_next_deployment(project_id)
         except KeyError:
             log.info("Not able to extract key info from Github webhook, skipping")
             return
