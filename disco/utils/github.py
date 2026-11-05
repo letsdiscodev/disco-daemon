@@ -170,7 +170,8 @@ async def remove_repo_from_filesystem(project_name: str) -> None:
 def _git_http_auth_env(access_token: str | None) -> dict[str, str] | None:
     """Env that authenticates git to GitHub over HTTPS with a per-process header.
 
-    To make sure we never leak any Github token.
+    So that we don't write them to the filesystem,
+    to avoid risks of leaking Github tokens.
 
     """
     if access_token is None:
