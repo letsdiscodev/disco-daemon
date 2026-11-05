@@ -1,8 +1,10 @@
 import asyncio
+import base64
 import hashlib
 import hmac
 import json
 import logging
+import os
 import re
 import subprocess
 import time
@@ -165,15 +167,36 @@ async def remove_repo_from_filesystem(project_name: str) -> None:
     await rmtree(project_path(project_name))
 
 
+def _git_http_auth_env(access_token: str | None) -> dict[str, str] | None:
+    """Env that authenticates git to GitHub over HTTPS with a per-process header.
+
+    The token is passed via GIT_CONFIG_* (http.extraheader) so it is never written
+    to the repo's .git/config. That file is copied into static/generator site
+    deployments and can be served publicly, so it must not carry credentials.
+    (Do not move this onto `git clone --config`: that WOULD persist the header.)
+    Returns None (inherit the current environment) when there is no token.
+    """
+    if access_token is None:
+        return None
+    basic = base64.b64encode(f"x-access-token:{access_token}".encode()).decode()
+    # Append to any GIT_CONFIG_* already in the environment rather than clobber it.
+    n = int(os.environ.get("GIT_CONFIG_COUNT", "0") or "0")
+    return {
+        **os.environ,
+        "GIT_CONFIG_COUNT": str(n + 1),
+        f"GIT_CONFIG_KEY_{n}": "http.https://github.com/.extraheader",
+        f"GIT_CONFIG_VALUE_{n}": f"Authorization: Basic {basic}",
+    }
+
+
 async def fetch(project_name: str, repo_full_name: str) -> None:
     log.info("Fetching from Github project %s", project_name)
     access_token = await get_access_token_for_github_app_repo(full_name=repo_full_name)
-    if access_token is not None:
-        log.info("Using access token to fetch repo %s", repo_full_name)
-        url = f"https://x-access-token:{access_token}@github.com/{repo_full_name}"
-    else:
-        log.info("Not using access token to fetch repo %s", repo_full_name)
-        url = f"https://github.com/{repo_full_name}"
+    # Keep the remote URL credential-free; authenticate per-process via env instead,
+    # so no token is persisted to .git/config. set-url also scrubs any token that an
+    # older daemon wrote into the url of an existing checkout.
+    url = f"https://github.com/{repo_full_name}"
+    env = _git_http_auth_env(access_token)
     args = ["git", "remote", "set-url", "origin", url]
     process = await asyncio.create_subprocess_exec(
         *args,
@@ -196,6 +219,7 @@ async def fetch(project_name: str, repo_full_name: str) -> None:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         cwd=project_path(project_name),
+        env=env,
     )
     assert process.stdout is not None
     async for line in process.stdout:
@@ -214,18 +238,16 @@ async def clone(
 ) -> None:
     log.info("Cloning from Github project %s (%s)", project_name, repo_full_name)
     access_token = await get_access_token_for_github_app_repo(full_name=repo_full_name)
-    if access_token is not None:
-        log.info("Using access token to clone repo %s", repo_full_name)
-        url = f"https://x-access-token:{access_token}@github.com/{repo_full_name}"
-    else:
-        log.info("Not using access token to clone repo %s", repo_full_name)
-        url = f"https://github.com/{repo_full_name}"
+    # Credential-free URL, auth via env, so the token is not written to .git/config.
+    url = f"https://github.com/{repo_full_name}"
+    env = _git_http_auth_env(access_token)
     args = ["git", "clone", url, project_path(project_name)]
     process = await asyncio.create_subprocess_exec(
         *args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         cwd=projects_root(),
+        env=env,
     )
     assert process.stdout is not None
     async for line in process.stdout:
