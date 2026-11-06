@@ -23,7 +23,7 @@ We do that for project networks we create for each deployment.
 import logging
 from datetime import datetime, timedelta, timezone
 
-from disco.models.db import ReadSession, Session
+from disco.models.db import Session
 from disco.utils import docker, keyvalues
 from disco.utils.imagecleanup import get_active_projects
 
@@ -35,15 +35,6 @@ ORPHAN_DURATION = timedelta(days=7)
 
 
 async def remove_unused_networks() -> None:
-    # Behind feature flag. To enable, run against the SQLite DB:
-    #   INSERT INTO key_values (key, value, created, updated)
-    #   VALUES ('FEATURE_NETWORK_CLEANUP', 'enabled',
-    #           datetime('now'), datetime('now'));
-    async with ReadSession.begin() as dbsession:
-        flag = await keyvalues.get_value(dbsession, "FEATURE_NETWORK_CLEANUP")
-    if flag != "enabled":
-        log.info("FEATURE_NETWORK_CLEANUP not enabled, skipping network clean-up")
-        return
     log.info("Cleaning up Docker project networks")
     network_names = await docker.list_project_networks()
     active_projects = await get_active_projects()

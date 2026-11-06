@@ -230,6 +230,7 @@ async def task_0_34_x(image: str) -> None:
         host_home = await keyvalues.get_value_str(dbsession=dbsession, key="HOST_HOME")
     await _move_git_dirs_out_of_working_trees(host_home, image)
     async with Session.begin() as dbsession:
+        await keyvalues.delete_value(dbsession=dbsession, key="FEATURE_NETWORK_CLEANUP")
         await keyvalues.set_value(
             dbsession=dbsession, key="DISCO_VERSION", value="0.35.0"
         )
