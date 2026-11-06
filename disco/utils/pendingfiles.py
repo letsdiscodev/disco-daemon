@@ -14,7 +14,12 @@ from sqlalchemy import select
 from disco.models import Deployment
 from disco.models.db import ReadSession
 from disco.utils.discofile import DiscoFile
-from disco.utils.filesystem import project_path, projects_root, rmtree
+from disco.utils.filesystem import (
+    project_path,
+    projects_root,
+    remove_git_dir,
+    rmtree,
+)
 
 log = logging.getLogger(__name__)
 
@@ -122,6 +127,7 @@ async def set_current(project_name: str, deployment_number: int) -> None:
     )
     if await aiofiles.os.path.isdir(project_path(project_name)):
         await rmtree(project_path(project_name))
+    await remove_git_dir(project_name)
     await aiofiles.os.rename(pending, project_path(project_name))
 
 
@@ -133,6 +139,7 @@ async def set_current_as_pending(
         return
     if deployment_number is None:
         await rmtree(project_path(project_name))
+        await remove_git_dir(project_name)
         return
     pending = pending_path(project_name, deployment_number)
     if await aiofiles.os.path.isdir(pending):

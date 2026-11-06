@@ -29,7 +29,14 @@ from disco.models import (
 )
 from disco.models.db import ReadSession, Session
 from disco.utils import events
-from disco.utils.filesystem import project_path, projects_root, rmtree
+from disco.utils.filesystem import (
+    git_dir_path,
+    git_dirs_root,
+    project_path,
+    projects_root,
+    remove_git_dir,
+    rmtree,
+)
 from disco.utils.subprocess import decode_text
 
 log = logging.getLogger(__name__)
@@ -39,70 +46,64 @@ class GithubException(Exception):
     pass
 
 
-async def checkout_commit(project_name: str, commit_hash: str) -> None:
-    log.info(
-        "Checking out commit from Github project %s: %s", project_name, commit_hash
-    )
-    args = ["git", "checkout", commit_hash]
+async def _run(
+    args: list[str], env: dict[str, str] | None = None, cwd: str | None = None
+) -> list[str]:
     process = await asyncio.create_subprocess_exec(
+        "git",
         *args,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        cwd=project_path(project_name),
+        cwd=cwd,
+        env=env,
     )
     assert process.stdout is not None
+    lines = []
     async for line in process.stdout:
         line_text = decode_text(line)
         if line_text.endswith("\n"):
             line_text = line_text[:-1]
         log.info("Output: %s", line_text)
-
+        lines.append(line_text)
     await process.wait()
     if process.returncode != 0:
         raise Exception(f"Git returned status {process.returncode}")
+    return lines
+
+
+async def _run_git(
+    project_name: str,
+    args: list[str],
+    env: dict[str, str] | None = None,
+) -> list[str]:
+    return await _run(
+        [
+            f"--git-dir={git_dir_path(project_name)}",
+            f"--work-tree={project_path(project_name)}",
+            *args,
+        ],
+        env=env,
+    )
+
+
+async def checkout_commit(project_name: str, commit_hash: str) -> None:
+    log.info(
+        "Checking out commit from Github project %s: %s", project_name, commit_hash
+    )
+    await _run_git(project_name, ["checkout", commit_hash])
 
 
 async def checkout_latest(project_name: str, branch: str | None) -> None:
     log.info("Checking out latest commit from Github project %s", project_name)
     if branch is None:
         branch = await main_or_master(project_name)
-    args = ["git", "checkout", f"origin/{branch}"]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        cwd=project_path(project_name),
-    )
-    assert process.stdout is not None
-    async for line in process.stdout:
-        line_text = decode_text(line)
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Git returned status {process.returncode}")
+    await _run_git(project_name, ["checkout", f"origin/{branch}"])
 
 
 async def get_head_commit_hash(project_name: str) -> str:
     log.info("Getting head commit hash for %s", project_name)
-    args = ["git", "rev-parse", "HEAD"]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        cwd=project_path(project_name),
-    )
-    assert process.stdout is not None
-    async for line in process.stdout:
-        decoded_line = decode_text(line)
-        hash = decoded_line.replace("\n", "")
-
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Git returned status {process.returncode}")
-
+    lines = await _run_git(project_name, ["rev-parse", "HEAD"])
+    hash = lines[-1] if lines else ""
     if not re.match(r"^[a-f0-9]{40}$", hash):
         raise Exception(f"Invalid commit hash returned by 'git rev-parse HEAD': {hash}")
     return hash
@@ -110,31 +111,12 @@ async def get_head_commit_hash(project_name: str) -> str:
 
 async def main_or_master(project_name: str) -> str:
     log.info("Finding if origin/master or origin/main exists in %s", project_name)
-    args = [
-        "git",
-        "branch",
-        "--remote",
-        "-l",
-        "origin/master",
-        "origin/main",
-    ]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        cwd=project_path(project_name),
+    lines = await _run_git(
+        project_name,
+        ["branch", "--remote", "-l", "origin/master", "origin/main"],
     )
-    assert process.stdout is not None
-    main_exists = False
-    master_exists = False
-    async for line in process.stdout:
-        if "origin/main" in decode_text(line):
-            main_exists = True
-        if "origin/master" in decode_text(line):
-            master_exists = True
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Git returned status {process.returncode}")
+    main_exists = any("origin/main" in line for line in lines)
+    master_exists = any("origin/master" in line for line in lines)
     if master_exists:
         return "master"
     if main_exists:
@@ -159,12 +141,14 @@ def _branch_from_refs(refs: str) -> str:
 
 
 async def is_repo(project_name: str) -> bool:
-    return await aiofiles.os.path.isdir(f"{project_path(project_name)}/.git")
+    return await aiofiles.os.path.isdir(git_dir_path(project_name))
 
 
 async def remove_repo_from_filesystem(project_name: str) -> None:
     log.info("Removing Github repo of project %s from filesystem", project_name)
-    await rmtree(project_path(project_name))
+    if await aiofiles.os.path.isdir(project_path(project_name)):
+        await rmtree(project_path(project_name))
+    await remove_git_dir(project_name)
 
 
 def _git_http_auth_env(access_token: str | None) -> dict[str, str] | None:
@@ -191,39 +175,11 @@ async def fetch(project_name: str, repo_full_name: str) -> None:
     access_token = await get_access_token_for_github_app_repo(full_name=repo_full_name)
     url = f"https://github.com/{repo_full_name}"
     env = _git_http_auth_env(access_token)
-    args = ["git", "remote", "set-url", "origin", url]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        cwd=project_path(project_name),
-    )
-    assert process.stdout is not None
-    async for line in process.stdout:
-        line_text = decode_text(line)
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-    await process.wait()
-    if process.returncode != 0:
-        raise Exception(f"Git returned status {process.returncode}")
-    args = ["git", "fetch", "origin"]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        cwd=project_path(project_name),
-        env=env,
-    )
-    assert process.stdout is not None
-    async for line in process.stdout:
-        line_text = decode_text(line)
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-    await process.wait()
-    if process.returncode != 0:
-        raise GithubException(f"Git returned status {process.returncode}")
+    await _run_git(project_name, ["remote", "set-url", "origin", url])
+    try:
+        await _run_git(project_name, ["fetch", "origin"], env=env)
+    except Exception as ex:
+        raise GithubException(str(ex)) from ex
 
 
 async def clone(
@@ -234,24 +190,22 @@ async def clone(
     access_token = await get_access_token_for_github_app_repo(full_name=repo_full_name)
     url = f"https://github.com/{repo_full_name}"
     env = _git_http_auth_env(access_token)
-    args = ["git", "clone", url, project_path(project_name)]
-    process = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        cwd=projects_root(),
-        env=env,
-    )
-    assert process.stdout is not None
-    async for line in process.stdout:
-        line_text = decode_text(line)
-        if line_text.endswith("\n"):
-            line_text = line_text[:-1]
-        log.info("Output: %s", line_text)
-
-    await process.wait()
-    if process.returncode != 0:
-        raise GithubException(f"Git returned status {process.returncode}")
+    await remove_git_dir(project_name)  # left behind by a failed clone
+    await aiofiles.os.makedirs(git_dirs_root(), exist_ok=True)
+    try:
+        await _run(
+            [
+                "clone",
+                f"--separate-git-dir={git_dir_path(project_name)}",
+                url,
+                project_path(project_name),
+            ],
+            env=env,
+            cwd=projects_root(),
+        )
+        await aiofiles.os.remove(f"{project_path(project_name)}/.git")
+    except Exception as ex:
+        raise GithubException(str(ex)) from ex
 
 
 async def get_access_token_for_github_app_repo(full_name: str) -> str | None:

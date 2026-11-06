@@ -224,6 +224,55 @@ def _alembic_upgrade(connection, version_hash: str) -> None:
     command.upgrade(config, version_hash)
 
 
+async def task_0_34_x(image: str) -> None:
+    print("Updating from 0.34.x to 0.35.0")
+    async with ReadSession.begin() as dbsession:
+        host_home = await keyvalues.get_value_str(dbsession=dbsession, key="HOST_HOME")
+    await _move_git_dirs_out_of_working_trees(host_home, image)
+    async with Session.begin() as dbsession:
+        await keyvalues.set_value(
+            dbsession=dbsession, key="DISCO_VERSION", value="0.35.0"
+        )
+
+
+async def _move_git_dirs_out_of_working_trees(host_home: str, image: str) -> None:
+    from disco.utils.projects import get_all_projects
+
+    names = []
+    async with ReadSession.begin() as dbsession:
+        for project in await get_all_projects(dbsession):
+            if await project.awaitable_attrs.github_repo is not None:
+                names.append(project.name)
+    if not names:
+        return
+    print("Moving the git directories of the projects out of their working trees")
+    for name in names:
+        print(f"  {name}")
+    await check_call(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--mount",
+            f"type=bind,source={host_home}/disco/projects,target=/disco/projects",
+            image,
+            "sh",
+            "-c",
+            "cd /disco/projects && mkdir -p .git-dirs"
+            ' && for name in "$@"; do'
+            # a working tree set aside by a deployment in progress is cloned
+            # again when it is deployed
+            '   rm -rf "$name".pending-*/.git;'
+            '   [ -d "$name/.git" ] || continue;'
+            '   if [ -e ".git-dirs/$name" ]; then rm -rf "$name/.git";'
+            '   else mv "$name/.git" ".git-dirs/$name"; fi;'
+            " done",
+            "sh",
+            *names,
+        ]
+    )
+
+
 async def task_0_33_x(image: str) -> None:
     from disco.utils import docker, vectorconfig
     from disco.utils.syslog import get_syslog_urls
@@ -1199,7 +1248,11 @@ def get_update_function_for_version(version: str) -> Callable[[str], Awaitable[N
     if version.startswith("0.33."):
         return task_0_33_x
     if version.startswith("0.34."):
-        assert disco.__version__.startswith("0.34.")
+        if disco.__version__.startswith("0.34."):
+            return task_patch
+        return task_0_34_x
+    if version.startswith("0.35."):
+        assert disco.__version__.startswith("0.35.")
         return task_patch
     raise NotImplementedError(f"Updating from version {version} is not supported")
 

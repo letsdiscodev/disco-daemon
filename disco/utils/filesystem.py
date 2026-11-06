@@ -32,6 +32,21 @@ def project_path(project_name: str) -> str:
     return f"/disco/projects/{project_name}"
 
 
+def git_dirs_root() -> str:
+    return "/disco/projects/.git-dirs"
+
+
+def git_dir_path(project_name: str) -> str:
+    return f"{git_dirs_root()}/{project_name}"
+
+
+async def remove_git_dir(project_name: str) -> None:
+    git_dir = git_dir_path(project_name)
+    if await aiofiles.os.path.isdir(git_dir):
+        log.info("Removing git directory %s", git_dir)
+        await rmtree(git_dir)
+
+
 def project_path_on_host(host_home: str, project_name: str) -> str:
     return f"{host_home}{project_path(project_name)}"
 
