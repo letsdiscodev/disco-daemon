@@ -3,7 +3,7 @@ import os
 
 CADDY_VERSION = "2.9.1"
 CLOUDFLARED_IMAGE = "cloudflare/cloudflared:latest"
-DISCO_TUNNEL_VERSION = "1.0.0"
+DISCO_TUNNEL_VERSION = "1.0.1"
 BUSYBOX_VERSION = "1.37.0"
 
 SQLITE_PATH = "/disco/data/disco.sqlite3"
